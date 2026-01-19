@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Fl ask
 from threading import Thread
 import os
 
@@ -13,12 +13,11 @@ import logging
 import base64
 import os
 import sqlite3
+import re
 import requests
-import asyncio
-import hashlib
-from datetime import datetime, timedelta
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from datetime import timedelta
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 
 # --- الإعدادات ---
 TOKEN = "7324911542:AAFqB9NRegwE2_bG5rCTaEWocbh8N3vgWeo"
@@ -26,49 +25,25 @@ MISTRAL_KEY = "EABRT5zGsHYhezkaJJomt15VR2iBrPWq"
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 DB_NAME = "abood-gpt.db"
 
-# قوائم الإعدادات
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
-TRADE_TIMES = ["S3", "S15", "S30", "M1", "M3", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1"]
+TRADE_TIMES = ["S3", "S15", "S30", "M1", "M3", "M5", "M30", "H1", "H4", "H24", "⏱️ وقت يدوي"]
 
 # حالات المحادثة
-MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, MONITORING_MODE = range(6)
-
-# تخزين حالات المراقبة النشطة
-active_monitoring = {}
+MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, SETTINGS_MANUAL_TIME, CHAT_MODE, ANALYZE_MODE = range(6)
 
 # --- قاعدة البيانات ---
 def init_db():
-    """تهيئة قاعدة البيانات"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    
-    # جدول المستخدمين
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY, 
             candle TEXT DEFAULT 'M5', 
             trade_time TEXT DEFAULT 'H1',
-            chat_context TEXT DEFAULT '',
-            last_analysis_result TEXT DEFAULT '',
-            monitoring_active INTEGER DEFAULT 0,
-            monitoring_end_time TEXT,
-            current_chart_image TEXT DEFAULT ''
+            manual_time TEXT DEFAULT '',
+            chat_context TEXT DEFAULT ''
         )
     ''')
-    
-    # جدول سجل المراقبة
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS monitoring_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            result_hash TEXT,
-            result_data TEXT,
-            status TEXT
-        )
-    ''')
-    
-    # جدول سجل الدردشة
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS chat_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,12 +53,10 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
     conn.commit()
     conn.close()
 
 def save_user_setting(user_id, col, val):
-    """حفظ إعدادات المستخدم"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute(f"INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
@@ -92,76 +65,501 @@ def save_user_setting(user_id, col, val):
     conn.close()
 
 def get_user_setting(user_id):
-    """الحصول على إعدادات المستخدم"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT candle, trade_time, monitoring_active, monitoring_end_time, current_chart_image, last_analysis_result FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT candle, trade_time, manual_time FROM users WHERE user_id = ?", (user_id,))
     res = cursor.fetchone()
     conn.close()
-    
     if res:
         return res
-    return ("M5", "H1", 0, None, "", "")
+    # إرجاع قيم افتراضية إذا لم يكن المستخدم موجوداً
+    return ("M5", "H1", "")
 
-def update_last_analysis(user_id, result):
-    """تحديث نتيجة التحليل الأخيرة"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET last_analysis_result = ? WHERE user_id = ?", (result, user_id))
-    conn.commit()
-    conn.close()
+# --- دوال معالجة الوقت اليدوي ---
+def parse_manual_time(time_str):
+    """تحويل النص المدخل إلى وقت بالتنسيق 00:00:00"""
+    try:
+        # تحقق من تنسيق HH:MM:SS
+        if re.match(r'^\d{1,2}:\d{2}:\d{2}$', time_str):
+            hours, minutes, seconds = map(int, time_str.split(':'))
+            if 0 <= hours <= 23 and 0 <= minutes <= 59 and 0 <= seconds <= 59:
+                return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        
+        # تحقق من عدد الأيام
+        elif 'يوم' in time_str or 'يومين' in time_str or 'أيام' in time_str:
+            days = 0
+            if 'يومين' in time_str:
+                days = 2
+            elif 'يوم' in time_str:
+                # استخراج الرقم من النص
+                numbers = re.findall(r'\d+', time_str)
+                if numbers:
+                    days = int(numbers[0])
+                else:
+                    days = 1
+            return f"{days} يوم"
+        
+        # تحقق من عدد الساعات
+        elif 'ساعة' in time_str or 'ساعات' in time_str:
+            hours = 0
+            numbers = re.findall(r'\d+', time_str)
+            if numbers:
+                hours = int(numbers[0])
+            else:
+                hours = 1
+            return f"{hours} ساعة"
+        
+        # تحقق من عدد الدقائق
+        elif 'دقيقة' in time_str or 'دقائق' in time_str:
+            minutes = 0
+            numbers = re.findall(r'\d+', time_str)
+            if numbers:
+                minutes = int(numbers[0])
+            else:
+                minutes = 1
+            return f"{minutes} دقيقة"
+        
+        # تحقق من عدد الثواني
+        elif 'ثانية' in time_str or 'ثواني' in time_str:
+            seconds = 0
+            numbers = re.findall(r'\d+', time_str)
+            if numbers:
+                seconds = int(numbers[0])
+            else:
+                seconds = 1
+            return f"{seconds} ثانية"
+        
+        # إذا كان رقم فقط، تعتبره ساعات
+        elif time_str.isdigit():
+            hours = int(time_str)
+            return f"{hours} ساعة"
+            
+    except Exception as e:
+        logging.error(f"Error parsing manual time: {e}")
+    
+    return None
 
-def start_monitoring(user_id, end_time):
-    """بدء وضع المراقبة في قاعدة البيانات"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET monitoring_active = 1, monitoring_end_time = ? WHERE user_id = ?", (end_time, user_id))
-    conn.commit()
-    conn.close()
-
-def stop_monitoring(user_id):
-    """إيقاف وضع المراقبة في قاعدة البيانات"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET monitoring_active = 0, monitoring_end_time = NULL WHERE user_id = ?", (user_id,))
-    conn.commit()
-    conn.close()
-
-def save_monitoring_result(user_id, result_hash, result_data, status="new"):
-    """حفظ نتيجة المراقبة"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO monitoring_history (user_id, result_hash, result_data, status) VALUES (?, ?, ?, ?)",
-                   (user_id, result_hash, result_data, status))
-    conn.commit()
-    conn.close()
-
-def get_last_monitoring_hash(user_id):
-    """الحصول على آخر هاش للمراقبة"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT result_hash FROM monitoring_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT 1", (user_id,))
-    res = cursor.fetchone()
-    conn.close()
-    return res[0] if res else None
+def format_trade_time_for_prompt(trade_time, manual_time=""):
+    """تنسيق وقت الصفقة للبرومبت"""
+    if trade_time == "⏱️ وقت يدوي" and manual_time:
+        return f"مدة الصفقة المتوقعة: {manual_time} (مدخل يدوي)"
+    else:
+        return f"مدة الصفقة المتوقعة: {trade_time}"
 
 # --- معالجة الصور ---
 def encode_image(image_path):
-    """تشفير الصورة إلى base64"""
     with open(image_path, "rb") as f:
         return base64.b64encode(f.read()).decode('utf-8')
 
-def generate_result_hash(result_text):
-    """توليد هاش فريد للنتيجة"""
-    return hashlib.md5(result_text.encode()).hexdigest()[:16]
+# --- دوال المساعدة للتعامل مع النصوص ---
+def clean_repeated_text(text):
+    """تنظيف النص من التكرارات"""
+    # تقسيم النص إلى فقرات
+    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    
+    # إزالة الفقرات المكررة
+    unique_paragraphs = []
+    seen_paragraphs = set()
+    
+    for paragraph in paragraphs:
+        # اختصار الفقرة للتحقق من التكرار
+        simplified = paragraph[:100].strip()
+        if simplified not in seen_paragraphs:
+            unique_paragraphs.append(paragraph)
+            seen_paragraphs.add(simplified)
+    
+    # إعادة تجميع النص
+    cleaned_text = '\n\n'.join(unique_paragraphs)
+    
+    # إذا كان النص طويلاً جداً، نأخذ فقط أول 2000 حرف تقريباً
+    if len(cleaned_text) > 2000:
+        # نبحث عن مكان جيد للقطع (بعد فقرة كاملة)
+        if '\n\n' in cleaned_text[:2200]:
+            cut_point = cleaned_text[:2200].rfind('\n\n')
+            cleaned_text = cleaned_text[:cut_point]
+        else:
+            cleaned_text = cleaned_text[:2000] + "..."
+    
+    return cleaned_text
 
-# --- تحليل الصور مع Mistral ---
-async def analyze_image_with_mistral(image_path, candle, trade_time):
-    """تحليل الصورة باستخدام Mistral API"""
-    try:
-        base64_img = encode_image(image_path)
+def split_message(text, max_length=4000):
+    """تقسيم الرسالة الطويلة إلى أجزاء"""
+    parts = []
+    
+    # إذا كان النص أقصر من الحد الأقصى، إرجاعه كما هو
+    if len(text) <= max_length:
+        return [text]
+    
+    # تقسيم النص مع الحفاظ على الفقرات
+    while len(text) > max_length:
+        # البحث عن آخر فاصل فقرات قبل الحد الأقصى
+        split_point = text[:max_length].rfind('\n\n')
+        if split_point == -1:
+            split_point = text[:max_length].rfind('\n')
+        if split_point == -1:
+            split_point = max_length - 100  # فاصل طارئ
         
-        # برومبت التحليل الفني
+        # إضافة الجزء إلى القائمة
+        parts.append(text[:split_point])
+        text = text[split_point:].lstrip()
+    
+    # إضافة الجزء المتبقي
+    if text:
+        parts.append(text)
+    
+    return parts
+
+# --- الدردشة مع Mistral ---
+async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء وضع الدردشة"""
+    keyboard = [
+        ["ايقاف الدردشة"],
+        ["الرجوع للقائمة الرئيسية"]
+    ]
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="💬 **وضع الدردشة مع ABOOD GPT**\n\n"
+             "يمكنك الآن الدردشة مع الذكاء الاصطناعي.\n"
+             "أرسل رسالتك أو استخدم الأزرار أدناه:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+        parse_mode="Markdown"
+    )
+    return CHAT_MODE
+
+async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة رسائل الدردشة"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    # التحقق من الأوامر الخاصة
+    if user_message == "ايقاف الدردشة":
+        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        await update.message.reply_text(
+            "✅ تم إنهاء وضع الدردشة.",
+            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    elif user_message == "الرجوع للقائمة الرئيسية":
+        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    # إظهار حالة المعالجة
+    wait_msg = await update.message.reply_text("ABOOD GPT 🤔 ... ")
+    
+    try:
+        # نظام برومبت آمن
+        system_prompt = """ اسمك هو ABOOD GPT، وأنت مساعد ذكي مطور لتكون الشريك الفكري والمساعد التقني الأمثل. تتبع في أسلوبك القواعد التالية:
+الشخصية: أنت ذكي، مبدع، وودود جداً. تتحدث بوضوح وتتجنب التعقيد غير المبرر.
+الأسلوب: تستخدم التنسيق الجميل (عناوين، نقاط، وجداول) لتجعل إجابتك سهلة القراءة.
+الذكاء: لا تكتفي بالإجابة المباشرة، بل فكر في "ما وراء السؤال" لتقديم نصائح إضافية تهم المستخدم.
+اللغة: تتحدث باللغة العربية بطلاقة (أو أي لغة يطلبها المستخدم) مع لمسة من الحماس والتشجيع.
+المهمة: هدفك هو حل المشكلات، كتابة الأكواد، تلخيص النصوص، أو حتى مجرد الدردشة الممتعة، مع الحفاظ على دقة عالية.
+الآن، ابدأ بالترحيب بي باسمي "عبود" وأخبرني كيف يمكنك مساعدتي اليوم كـ ABOOD GPT. """
+        
+        # استدعاء واجهة Mistral
+        payload = {
+            "model": "mistral-medium",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ],
+            "max_tokens": 500,
+            "temperature": 0.7
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        # إضافة timeout للاتصال
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()['choices'][0]['message']['content']
+            
+            # تنظيف النص من التكرارات
+            result = clean_repeated_text(result)
+            
+            # عرض الرد مع إبقاء أزرار الدردشة
+            chat_keyboard = [["ايقاف الدردشة"], ["الرجوع للقائمة الرئيسية"]]
+            
+            # تقسيم الرسالة الطويلة إذا كانت طويلة جداً
+            if len(result) > 4000:
+                parts = split_message(result, max_length=4000)
+                for part in parts:
+                    await wait_msg.edit_text(
+                        f"💭 **رد ABOOD GPT:**\n\n{part}",
+                        parse_mode="Markdown"
+                    )
+                    wait_msg = await update.message.reply_text("...")
+            else:
+                await wait_msg.edit_text(
+                    f"💭 **رد ABOOD GPT:**\n\n{result}",
+                    parse_mode="Markdown"
+                )
+            
+        else:
+            logging.error(f"Mistral API Error: {response.status_code} - {response.text}")
+            await wait_msg.edit_text(f"❌ حدث خطأ في التواصل مع الذكاء الاصطناعي. الرمز: {response.status_code}")
+    
+    except requests.exceptions.Timeout:
+        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد للاتصال. حاول مرة أخرى.")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Network error in chat: {e}")
+        await wait_msg.edit_text("🌐 خطأ في الاتصال بالشبكة. تحقق من اتصالك بالإنترنت.")
+    except Exception as e:
+        logging.error(f"خطأ في الدردشة: {e}")
+        await wait_msg.edit_text("❌ حدث خطأ في النظام. حاول مرة أخرى.")
+    
+    return CHAT_MODE
+
+# --- الأوامر الرئيسية ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء البوت"""
+    keyboard = [
+        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+        ["💬 دردشة"]
+    ]
+    
+    await update.message.reply_text(
+        "🤖 **أهلاً بك في ABOOD GPT**\n\n"
+        "اختر أحد الخيارات التالية:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+        parse_mode="Markdown"
+    )
+    return MAIN_MENU
+
+async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيارات القائمة الرئيسية"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_message == "⚙️ إعدادات التحليل":
+        keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
+        keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "⚙️ **إعدادات التحليل الفني**\n\n"
+            "حدد سرعة الشموع للبدء:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return SETTINGS_CANDLE
+    
+    elif user_message == "📊 تحليل صورة":
+        candle, trade_time, manual_time = get_user_setting(user_id)
+        
+        if not candle or not trade_time:
+            keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
+            await update.message.reply_text(
+                "❌ **يجب ضبط الإعدادات أولاً**\n\n"
+                "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return MAIN_MENU
+        else:
+            keyboard = [["الرجوع للقائمة الرئيسية"]]
+            
+            # عرض الوقت المستخدم في التحليل
+            time_display = format_trade_time_for_prompt(trade_time, manual_time)
+            
+            await update.message.reply_text(
+                f"📊 **جاهز للتحليل**\n\n"
+                f"الإعدادات الحالية:\n"
+                f"• سرعة الشموع: {candle}\n"
+                f"• {time_display}\n\n"
+                f"أرسل صورة الرسم البياني (الشارت) الآن:",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return ANALYZE_MODE
+    
+    elif user_message == "💬 دردشة":
+        return await start_chat_mode(update, context)
+    
+    # إذا كان النص غير معروف، إرجاع للقائمة الرئيسية
+    keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+    await update.message.reply_text(
+        "اختر أحد الخيارات من القائمة:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+    )
+    return MAIN_MENU
+
+async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار سرعة الشموع"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_message == "الرجوع للقائمة الرئيسية":
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    if user_message in CANDLE_SPEEDS:
+        save_user_setting(user_id, "candle", user_message)
+        
+        keyboard = [TRADE_TIMES[i:i+3] for i in range(0, len(TRADE_TIMES), 3)]
+        keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n"
+            f"الآن حدد **مدة الصفقة** المتوقعة:\n\n"
+            f"يمكنك اختيار:\n"
+            f"• أحد الأوقات الجاهزة\n"
+            f"• ⏱️ وقت يدوي (لتحديد وقت مخصص)",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return SETTINGS_TIME
+    
+    await update.message.reply_text("❌ الرجاء اختيار سرعة شموع صحيحة.")
+    return SETTINGS_CANDLE
+
+async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار مدة الصفقة"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_message == "الرجوع للقائمة الرئيسية":
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    if user_message in TRADE_TIMES:
+        if user_message == "⏱️ وقت يدوي":
+            keyboard = [["الرجوع للقائمة الرئيسية"]]
+            
+            await update.message.reply_text(
+                "⏱️ **إدخال وقت يدوي**\n\n"
+                "📝 **أرسل وقت الصفقة يدوياً بإحدى الطرق:**\n\n"
+                "1. **تنسيق الوقت:** 00:00:00 (ساعات:دقائق:ثواني)\n"
+                "   مثال: 02:30:00 (ساعتين ونصف)\n"
+                "   مثال: 00:15:00 (15 دقيقة)\n"
+                "   مثال: 00:00:30 (30 ثانية)\n\n"
+                "2. **كتابة نصي:**\n"
+                "   مثال: 2 ساعة\n"
+                "   مثال: 30 دقيقة\n"
+                "   مثال: 3 أيام\n"
+                "   مثال: 45 ثانية\n\n"
+                "3. **أرقام فقط:**\n"
+                "   مثال: 4 (سيتم اعتبارها 4 ساعات)\n\n"
+                "❌ للإلغاء، اضغط 'الرجوع للقائمة الرئيسية'",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return SETTINGS_MANUAL_TIME
+        else:
+            save_user_setting(user_id, "trade_time", user_message)
+            save_user_setting(user_id, "manual_time", "")  # مسح الوقت اليدوي إذا كان موجوداً
+            
+            keyboard = [["📊 تحليل صورة"], ["💬 دردشة مع الذكاء الاصطناعي"], ["الرجوع للقائمة الرئيسية"]]
+            
+            candle, _, _ = get_user_setting(user_id)
+            
+            await update.message.reply_text(
+                f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
+                f"✅ سرعة الشموع: {candle}\n"
+                f"✅ مدة الصفقة: {user_message}\n\n"
+                f"يمكنك الآن تحليل صورة أو الدردشة:",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return MAIN_MENU
+    
+    await update.message.reply_text("❌ الرجاء اختيار مدة صفقة صحيحة.")
+    return SETTINGS_TIME
+
+async def handle_manual_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إدخال الوقت يدوياً"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_message == "الرجوع للقائمة الرئيسية":
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    # محاولة تحليل الوقت المدخل
+    parsed_time = parse_manual_time(user_message)
+    
+    if parsed_time:
+        save_user_setting(user_id, "trade_time", "⏱️ وقت يدوي")
+        save_user_setting(user_id, "manual_time", parsed_time)
+        
+        keyboard = [["📊 تحليل صورة"], ["💬 دردشة مع الذكاء الاصطناعي"], ["الرجوع للقائمة الرئيسية"]]
+        
+        candle, _, _ = get_user_setting(user_id)
+        
+        await update.message.reply_text(
+            f"⏱️ **تم حفظ الوقت اليدوي بنجاح!**\n\n"
+            f"✅ سرعة الشموع: {candle}\n"
+            f"✅ مدة الصفقة: {parsed_time} (مدخل يدوي)\n\n"
+            f"يمكنك الآن تحليل صورة أو الدردشة:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
+    else:
+        keyboard = [["الرجوع للقائمة الرئيسية"]]
+        await update.message.reply_text(
+            "❌ **تنسوق وقت غير صحيح!**\n\n"
+            "📝 **أعد الإدخال بإحدى الطرق:**\n\n"
+            "1. **تنسيق الوقت:** 00:00:00 (ساعات:دقائق:ثواني)\n"
+            "   مثال: 02:30:00 (ساعتين ونصف)\n\n"
+            "2. **كتابة نصي:**\n"
+            "   مثال: 2 ساعة\n"
+            "   مثال: 30 دقيقة\n\n"
+            "3. **أرقام فقط:**\n"
+            "   مثال: 4 (سيتم اعتبارها 4 ساعات)",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return SETTINGS_MANUAL_TIME
+
+# --- معالجة الصور للتحليل ---
+async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور للتحليل الفني"""
+    user_id = update.effective_user.id
+    candle, trade_time, manual_time = get_user_setting(user_id)
+    
+    if not candle or not trade_time:
+        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
+        await update.message.reply_text(
+            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
+            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
+
+    wait_msg = await update.message.reply_text("🔍 **جاري فحص الشارت 📊 ...**")
+    photo = await update.message.photo[-1].get_file()
+    path = f"img_{user_id}.jpg"
+    await photo.download_to_drive(path)
+
+    try:
+        base64_img = encode_image(path)
+        
+        # تنسيق وقت الصفقة للبرومبت
+        time_for_prompt = format_trade_time_for_prompt(trade_time, manual_time)
+        
+        # برومبت آمن للتحليل الفني
         prompt = f"""
         أنت محلل فني خبير في أسواق المال. الصورة المرفقة هي رسم بياني (شارت) للتداول.
         
@@ -220,7 +618,7 @@ async def analyze_image_with_mistral(image_path, candle, trade_time):
                     ]
                 }
             ],
-            "max_tokens": 1000,
+            "max_tokens": 800,
             "temperature": 0.3
         }
         
@@ -229,275 +627,77 @@ async def analyze_image_with_mistral(image_path, candle, trade_time):
             "Content-Type": "application/json"
         }
         
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=45)
         
         if response.status_code == 200:
-            return response.json()['choices'][0]['message']['content']
-        else:
-            logging.error(f"Mistral Vision API Error: {response.status_code} - {response.text}")
-            return None
+            result = response.json()['choices'][0]['message']['content']
             
-    except Exception as e:
-        logging.error(f"Error in analyze_image_with_mistral: {e}")
-        return None
-
-# --- نظام المراقبة التلقائية ---
-async def monitoring_task(context, user_id, chat_id, image_path, candle, trade_time, end_time):
-    """مهمة المراقبة الدورية"""
-    try:
-        end_datetime = datetime.fromisoformat(end_time)
-        
-        while datetime.now() < end_datetime and user_id in active_monitoring:
-            # تحليل الصورة
-            result = await analyze_image_with_mistral(image_path, candle, trade_time)
+            # ✅ حل مشكلة التكرار: تنظيف النص من التكرار
+            result = clean_repeated_text(result)
             
-            if result:
-                current_hash = generate_result_hash(result)
-                last_hash = get_last_monitoring_hash(user_id)
-                
-                save_monitoring_result(user_id, current_hash, result, 
-                                      "new" if last_hash != current_hash else "same")
-                
-                if last_hash != current_hash:
-                    try:
-                        await context.bot.send_message(
-                            chat_id=chat_id,
-                            text=f"🔄 **تحديث المراقبة**\n"
-                                 f"⏰ {datetime.now().strftime('%H:%M:%S')}\n"
-                                 f"━━━━━━━━━━━━━━━━\n"
-                                 f"{result}\n\n"
-                                 f"📊 **الإعدادات:**\n"
-                                 f"• سرعة الشموع: {candle}\n"
-                                 f"• مدة الصفقة: {trade_time}",
-                            parse_mode="Markdown"
-                        )
-                    except Exception as e:
-                        logging.error(f"Error sending update to user {user_id}: {e}")
-                
-                update_last_analysis(user_id, result)
+            keyboard = [["📊 تحليل صورة أخرى"], ["💬 دردشة"], ["الرجوع للقائمة الرئيسية"]]
             
-            await asyncio.sleep(30)
+            # تنسيق وقت الصفقة للعرض
+            time_display = format_trade_time_for_prompt(trade_time, manual_time)
             
-            if not os.path.exists(image_path):
-                logging.info(f"Image removed for user {user_id}, stopping monitoring")
-                break
-        
-        if user_id in active_monitoring:
-            del active_monitoring[user_id]
-            stop_monitoring(user_id)
-            
-            try:
-                keyboard = [["📊 تحليل صورة جديدة"], ["💬 دردشة"], ["🏠 القائمة الرئيسية"]]
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text="⏹️ **تم إنهاء وضع المراقبة**\n\n"
-                         "✅ اكتملت فترة المراقبة المحددة.\n"
-                         "يمكنك الآن تحليل صورة جديدة أو استخدام الخدمات الأخرى.",
-                    reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-                )
-            except Exception as e:
-                logging.error(f"Error sending end message to user {user_id}: {e}")
-            
-            if os.path.exists(image_path):
-                os.remove(image_path)
-                
-    except Exception as e:
-        logging.error(f"Monitoring task error for user {user_id}: {e}")
-        if user_id in active_monitoring:
-            del active_monitoring[user_id]
-            stop_monitoring(user_id)
-
-# --- بدء وضع المراقبة ---
-async def start_monitoring_mode(update: Update, context: ContextTypes.DEFAULT_TYPE, image_path):
-    """بدء وضع المراقبة"""
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-    
-    candle, trade_time, _, _, _, _ = get_user_setting(user_id)
-    
-    # حساب وقت انتهاء المراقبة
-    trade_durations = {
-        "S3": 3, "S15": 15, "S30": 30, "M1": 60, "M3": 180, "M5": 300,
-        "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400,
-        "W1": 604800, "MN1": 2592000
-    }
-    
-    duration_seconds = trade_durations.get(trade_time, 3600)
-    end_time = datetime.now() + timedelta(seconds=duration_seconds)
-    
-    start_monitoring(user_id, end_time.isoformat())
-    
-    active_monitoring[user_id] = {
-        "chat_id": chat_id,
-        "image_path": image_path,
-        "candle": candle,
-        "trade_time": trade_time,
-        "end_time": end_time
-    }
-    
-    asyncio.create_task(
-        monitoring_task(context, user_id, chat_id, image_path, candle, trade_time, end_time.isoformat())
-    )
-    
-    keyboard = [["⏹️ إيقاف المراقبة"], ["📊 تحليل صورة جديدة"], ["🏠 القائمة الرئيسية"]]
-    
-    await update.message.reply_text(
-        f"🔍 **تم تفعيل وضع المراقبة**\n\n"
-        f"✅ سيتم مراقبة السوق تلقائياً كل 30 ثانية\n"
-        f"⏰ مدة المراقبة: {trade_time}\n"
-        f"⏳ ينتهي في: {end_time.strftime('%H:%M:%S')}\n\n"
-        f"📊 **سيتم إرسال تحديثات فورية عند تغيير التوقعات.**",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    
-    return MONITORING_MODE
-
-# --- معالجة أوضاع المراقبة ---
-async def handle_monitoring_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الأوامر في وضع المراقبة"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "⏹️ إيقاف المراقبة":
-        if user_id in active_monitoring:
-            del active_monitoring[user_id]
-        stop_monitoring(user_id)
-        
-        keyboard = [["📊 تحليل صورة جديدة"], ["💬 دردشة"], ["🏠 القائمة الرئيسية"]]
-        await update.message.reply_text(
-            "⏹️ **تم إيقاف المراقبة**\n\n"
-            "✅ توقفت عملية المراقبة التلقائية.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    elif user_message == "📊 تحليل صورة جديدة":
-        keyboard = [["🏠 القائمة الرئيسية"]]
-        await update.message.reply_text(
-            "📤 **أرسل صورة الرسم البياني الجديدة:**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        
-        if user_id in active_monitoring:
-            del active_monitoring[user_id]
-        stop_monitoring(user_id)
-        
-        return ANALYZE_MODE
-    
-    elif user_message == "🏠 القائمة الرئيسية":
-        if user_id in active_monitoring:
-            del active_monitoring[user_id]
-        stop_monitoring(user_id)
-        
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    else:
-        keyboard = [["⏹️ إيقاف المراقبة"], ["📊 تحليل صورة جديدة"], ["🏠 القائمة الرئيسية"]]
-        await update.message.reply_text(
-            "🔍 **وضع المراقبة نشط**\n\n"
-            "استخدم الأزرار للتحكم:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MONITORING_MODE
-
-# --- معالجة الصور للتحليل ---
-async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني"""
-    user_id = update.effective_user.id
-    candle, trade_time, monitoring_active, _, _, _ = get_user_setting(user_id)
-    
-    if not candle or not trade_time:
-        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-        await update.message.reply_text(
-            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-
-    wait_msg = await update.message.reply_text("🔍 **جاري فحص الشارت 📊 ...**")
-    photo = await update.message.photo[-1].get_file()
-    path = f"img_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-    await photo.download_to_drive(path)
-
-    try:
-        result = await analyze_image_with_mistral(path, candle, trade_time)
-        
-        if result:
-            result_hash = generate_result_hash(result)
-            
-            update_last_analysis(user_id, result)
-            save_monitoring_result(user_id, result_hash, result, "initial")
-            
-            keyboard = [
-                ["🔍 تفعيل المراقبة التلقائية", "📊 تحليل صورة أخرى"],
-                ["💬 دردشة", "🏠 القائمة الرئيسية"]
-            ]
-            
-            await wait_msg.edit_text(
+            # إعداد النص النهائي مع الإعدادات
+            full_result = (
                 f"✅ **تم التحليل بنجاح!**\n"
                 f"📈 **نتائج تحليل الشارت:**\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"{result}\n\n"
                 f"📊 **الإعدادات المستخدمة:**\n"
                 f"• سرعة الشموع: {candle}\n"
-                f"• مدة الصفقة: {trade_time}\n\n"
-                f"🔍 **يمكنك تفعيل المراقبة التلقائية لمتابعة التغييرات.**",
-                parse_mode="Markdown"
+                f"• {time_display}"
             )
             
+            # تقسيم النتيجة إذا كانت طويلة
+            if len(full_result) > 4000:
+                parts = split_message(full_result, max_length=4000)
+                
+                # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
+                await wait_msg.edit_text(
+                    parts[0],
+                    parse_mode="Markdown"
+                )
+                
+                # إرسال الأجزاء المتبقية
+                for part in parts[1:]:
+                    await update.message.reply_text(part, parse_mode="Markdown")
+            else:
+                await wait_msg.edit_text(
+                    full_result,
+                    parse_mode="Markdown"
+                )
+            
+            # إرسال الأزرار
             await update.message.reply_text(
                 "📊 **اختر الإجراء التالي:**",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
             )
-            
-            return ANALYZE_MODE
         else:
-            raise Exception("فشل في تحليل الصورة")
-    
+            logging.error(f"Mistral Vision API Error: {response.status_code} - {response.text}")
+            keyboard = [["الرجوع للقائمة الرئيسية"]]
+            await wait_msg.edit_text(f"❌ **خطأ في تحليل الصورة:** {response.status_code}")
+            
+    except requests.exceptions.Timeout:
+        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد لتحليل الصورة. حاول مرة أخرى.")
     except Exception as e:
         logging.error(f"خطأ في تحليل الصورة: {e}")
         keyboard = [["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text(
-            "❌ **حدث خطأ في تحليل الصورة.**\n"
-            "يرجى التأكد من وضوح الصورة والمحاولة مرة أخرى."
-        )
-        
+        await wait_msg.edit_text("❌ **حدث خطأ في تحليل الصورة.**\nيرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.")
+    finally:
         if os.path.exists(path):
             os.remove(path)
-            
-        return MAIN_MENU
+    
+    return MAIN_MENU
 
-# --- معالجة وضع التحليل ---
 async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة وضع التحليل"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
-    if user_message == "🔍 تفعيل المراقبة التلقائية":
-        candle, trade_time, _, _, _, _ = get_user_setting(user_id)
-        
-        import glob
-        user_images = glob.glob(f"img_{user_id}_*.jpg")
-        
-        if user_images:
-            latest_image = max(user_images, key=os.path.getctime)
-            return await start_monitoring_mode(update, context, latest_image)
-        else:
-            await update.message.reply_text(
-                "❌ **لا توجد صورة حديثة للتحليل.**\n"
-                "الرجاء إرسال صورة جديدة أولاً."
-            )
-            return ANALYZE_MODE
-    
-    elif user_message in ["📊 تحليل صورة أخرى", "الرجوع للقائمة الرئيسية", "🏠 القائمة الرئيسية"]:
+    if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
@@ -505,240 +705,16 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return MAIN_MENU
     
-    keyboard = [["🏠 القائمة الرئيسية"]]
+    # إذا أرسل المستخدم نصاً بدلاً من صورة
     await update.message.reply_text(
-        "📤 **الرجاء إرسال صورة الشارت فقط**\n"
-        "أو اضغط '🏠 القائمة الرئيسية'",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        "📤 **الرجاء إرسال صورة الشارت فقط**\nأو اضغط 'الرجوع للقائمة الرئيسية'",
+        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True, one_time_keyboard=False)
     )
     return ANALYZE_MODE
 
-# --- معالجة القائمة الرئيسية ---
-async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات القائمة الرئيسية"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "⚙️ إعدادات التحليل":
-        keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
-        keyboard.append(["الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            "⚙️ **إعدادات التحليل الفني**\n\n"
-            "حدد سرعة الشموع للبدء:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return SETTINGS_CANDLE
-    
-    elif user_message == "📊 تحليل صورة":
-        candle, trade_time, monitoring_active, _, _, _ = get_user_setting(user_id)
-        
-        if not candle or not trade_time:
-            keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-            await update.message.reply_text(
-                "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-                "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return MAIN_MENU
-        else:
-            keyboard = [["🏠 القائمة الرئيسية"]]
-            await update.message.reply_text(
-                f"📊 **جاهز للتحليل**\n\n"
-                f"الإعدادات الحالية:\n"
-                f"• سرعة الشموع: {candle}\n"
-                f"• مدة الصفقة: {trade_time}\n\n"
-                f"أرسل صورة الرسم البياني (الشارت) الآن:",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return ANALYZE_MODE
-    
-    elif user_message == "💬 دردشة":
-        return await start_chat_mode(update, context)
-    
-    keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-    await update.message.reply_text(
-        "اختر أحد الخيارات من القائمة:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-    )
-    return MAIN_MENU
-
-# --- وضع الدردشة ---
-async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء وضع الدردشة"""
-    keyboard = [
-        ["ايقاف الدردشة"],
-        ["الرجوع للقائمة الرئيسية"]
-    ]
-    
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="💬 **وضع الدردشة مع ABOOD GPT**\n\n"
-             "يمكنك الآن الدردشة مع الذكاء الاصطناعي.\n"
-             "أرسل رسالتك أو استخدم الأزرار أدناه:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    return CHAT_MODE
-
-async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة رسائل الدردشة"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "ايقاف الدردشة":
-        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "✅ تم إنهاء وضع الدردشة.",
-            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    elif user_message == "الرجوع للقائمة الرئيسية":
-        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    wait_msg = await update.message.reply_text("ABOOD GPT 🤔 ... ")
-    
-    try:
-        system_prompt = """أنت الآن تعمل كمساعد ذكي خبير وشامل (Thought Partner). مهمتك هي الإجابة على أي استفسار أطرحه عليك بدقة وموضوعية. اتبع القواعد التالية في إجاباتك:
-التحليل العميق: قبل الإجابة، قم بتحليل القصد الحقيقي من سؤالي لتقديم الفائدة القصوى.
-الهيكلية: استخدم العناوين، النقاط، والجداول إذا لزم الأمر لتنظيم المعلومات وجعلها سهلة القراءة.
-التوازن: اجمع بين الدقة العلمية والأسلوب الودود والمبسط.
-الشفافية: إذا كان السؤال يحتمل أكثر من إجابة أو وجهة نظر، فاذكر الخيارات المتاحة.
-الإيجاز غير المخل: لا تطل في الشرح إذا كانت الإجابة المباشرة كافية، ولا تقتضب إذا كان الموضوع يحتاج تفصيلاً.
-اسمك هو: ABOOD GPT 🤖"""
-        
-        payload = {
-            "model": "mistral-medium",
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            "max_tokens": 500,
-            "temperature": 0.7
-        }
-        
-        headers = {
-            "Authorization": f"Bearer {MISTRAL_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
-        
-        if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content']
-            
-            chat_keyboard = [["ايقاف الدردشة"], ["الرجوع للقائمة الرئيسية"]]
-            
-            if len(result) > 4000:
-                parts = [result[i:i+4000] for i in range(0, len(result), 4000)]
-                for part in parts:
-                    await wait_msg.edit_text(
-                        f"💭 **رد ABOOD GPT:**\n\n{part}",
-                        parse_mode="Markdown"
-                    )
-                    wait_msg = await update.message.reply_text("...")
-            else:
-                await wait_msg.edit_text(
-                    f"💭 **رد ABOOD GPT:**\n\n{result}",
-                    parse_mode="Markdown"
-                )
-        else:
-            await wait_msg.edit_text(f"❌ حدث خطأ في التواصل مع الذكاء الاصطناعي. الرمز: {response.status_code}")
-    
-    except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد للاتصال. حاول مرة أخرى.")
-    except Exception as e:
-        logging.error(f"خطأ في الدردشة: {e}")
-        await wait_msg.edit_text("❌ حدث خطأ في النظام. حاول مرة أخرى.")
-    
-    return CHAT_MODE
-
-# --- الأوامر الأساسية ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء البوت"""
-    keyboard = [
-        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["💬 دردشة"]
-    ]
-    
-    await update.message.reply_text(
-        "🤖 **أهلاً بك في ABOOD GPT**\n\n"
-        "اختر أحد الخيارات التالية:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    return MAIN_MENU
-
-async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار سرعة الشموع"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    if user_message in CANDLE_SPEEDS:
-        save_user_setting(user_id, "candle", user_message)
-        
-        keyboard = [TRADE_TIMES[i:i+3] for i in range(0, len(TRADE_TIMES), 3)]
-        keyboard.append(["الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n"
-            f"الآن حدد **مدة الصفقة** المتوقعة:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SETTINGS_TIME
-    
-    await update.message.reply_text("❌ الرجاء اختيار سرعة شموع صحيحة.")
-    return SETTINGS_CANDLE
-
-async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار مدة الصفقة"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    if user_message in TRADE_TIMES:
-        save_user_setting(user_id, "trade_time", user_message)
-        
-        keyboard = [["📊 تحليل صورة"], ["💬 دردشة مع الذكاء الاصطناعي"], ["الرجوع للقائمة الرئيسية"]]
-        
-        candle, _ = get_user_setting(user_id)
-        
-        await update.message.reply_text(
-            f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
-            f"✅ سرعة الشموع: {candle}\n"
-            f"✅ مدة الصفقة: {user_message}\n\n"
-            f"يمكنك الآن تحليل صورة أو الدردشة:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    
-    await update.message.reply_text("❌ الرجاء اختيار مدة صفقة صحيحة.")
-    return SETTINGS_TIME
+async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور في وضع التحليل"""
+    return await handle_photo_analysis(update, context)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر المساعدة"""
@@ -753,44 +729,41 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     2. أرسل صورة الشارت للتحليل
     3. اختر "دردشة" للاستفسارات النصية
     
-    🔍 **ميزة المراقبة الجديدة:**
-    • بعد تحليل الصورة، يمكنك تفعيل المراقبة التلقائية
-    • يرسل البوت تحديثات كل 30 ثانية
-    • يرسل تحديثات فقط عند تغيير التوقعات
-    • يتوقف تلقائياً بعد انتهاء مدة الصفقة
+    ⏱️ **خاصية الوقت اليدوي:**
+    • يمكنك تحديد وقت الصفقة يدوياً
+    • التنسيقات المدعومة:
+      - 00:00:00 (ساعات:دقائق:ثواني)
+      - عدد الأيام (مثال: 2 يوم)
+      - عدد الساعات (مثال: 3 ساعة)
+      - عدد الدقائق (مثال: 45 دقيقة)
+      - عدد الثواني (مثال: 30 ثانية)
     
     📊 **مميزات البوت:**
     • تحليل فني للرسوم البيانية
     • دردشة ذكية مع الذكاء الاصطناعي
-    • مراقبة تلقائية للسوق
     • حفظ إعداداتك الشخصية
     • واجهة سهلة بالأزرار
+    • إدخال وقت مخصص يدوياً
     """
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """إلغاء المحادثة"""
-    user_id = update.effective_user.id
-    if user_id in active_monitoring:
-        del active_monitoring[user_id]
-        stop_monitoring(user_id)
-    
     await update.message.reply_text(
         "تم الإلغاء. اكتب /start للبدء من جديد.",
         reply_markup=ReplyKeyboardRemove()
     )
     return ConversationHandler.END
 
-# --- الدالة الرئيسية ---
 if __name__ == "__main__":
     # إعداد التسجيل
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO,
-        filename='bot.log'
+        filename='bot.log'  # حفظ السجلات في ملف
     )
     
-    # تهيئة قاعدة البيانات
+    # تصحيح الخطأ الأولي
     init_db()
     
     # إنشاء التطبيق
@@ -809,19 +782,19 @@ if __name__ == "__main__":
             SETTINGS_TIME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_time)
             ],
+            SETTINGS_MANUAL_TIME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manual_time)
+            ],
             CHAT_MODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat_message)
             ],
             ANALYZE_MODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode),
-                MessageHandler(filters.PHOTO, handle_photo_analysis)
-            ],
-            MONITORING_MODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_monitoring_mode)
+                MessageHandler(filters.PHOTO, handle_photo_in_analyze_mode)
             ],
         },
         fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
-        allow_reentry=True
+        allow_reentry=True  # السماح بإعادة الدخول للولايات
     )
     
     # إضافة المعالجات
@@ -829,12 +802,12 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("cancel", cancel))
     
-    # تشغيل البوت
+    # إضافة معالج لجميع الرسائل النصية غير المعالجة
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
+    
     print("🤖 --- البوت يعمل الآن ---")
     print("📊 - نظام التحليل الفني مفعل")
     print("💬 - نظام الدردشة مفعل")
-    print("🔍 - نظام المراقبة التلقائية مفعل")
-    print("🔄 - تحديثات كل 30 ثانية عند التغيير")
     print("✅ - تم تشغيل البوت بنجاح")
     
 if __name__ == '__main__':
