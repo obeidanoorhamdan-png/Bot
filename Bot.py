@@ -10,7 +10,6 @@ import sys
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
-from waitress import serve
 
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAFqB9NRegwE2_bG5rCTaEWocbh8N3vgWeo")
@@ -897,16 +896,22 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# --- الإصدار المبسط بدون مشاكل Threading ---
-def start_bot():
-    """تشغيل البوت فقط بدون Flask"""
+# --- الحل النهائي: تشغيل Flask و Telegram في نفس الوقت ---
+def main():
+    """الدالة الرئيسية لتشغيل كل شيء"""
+    
+    # إعداد logging
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO
     )
     
+    print("🚀 Starting ABOOD GPT Bot...")
+    
+    # تهيئة قاعدة البيانات
     init_db()
     
+    # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
     
     # معالج المحادثة
@@ -941,26 +946,25 @@ def start_bot():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cancel", cancel))
     
-    print("🤖 ABOOD GPT Bot Started Successfully!")
-    print("📊 Waiting for commands...")
+    # إضافة معالج للنصوص
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
     
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("✅ Telegram Bot initialized successfully")
+    print("🌐 Starting Flask web server for keep-alive...")
+    
+    # تشغيل Flask في thread منفصل
+    def run_web_server():
+        port = int(os.environ.get('PORT', 8080))
+        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+    
+    print(f"✅ Flask server running on port {os.environ.get('PORT', 8080)}")
+    print("🤖 Telegram Bot is now polling for updates...")
+    
+    # تشغيل البوت
+    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
-# --- الكود الرئيسي المعدل ---
 if __name__ == "__main__":
-    # الطريقة الأفضل: استخدم gunicorn
-    import sys
-    
-    if len(sys.argv) > 1 and sys.argv[1] == "--web":
-        # تشغيل Flask فقط للويب
-        print("🌐 Starting Flask web server...")
-        run_flask()
-    else:
-        # تشغيل البوت فقط (الطريقة الأساسية)
-        print("🤖 Starting Telegram Bot...")
-        try:
-            start_bot()
-        except KeyboardInterrupt:
-            print("\n👋 Bot stopped by user")
-        except Exception as e:
-            print(f"❌ Error: {e}")
+    main()
