@@ -761,20 +761,19 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 if __name__ == "__main__":
-    # إعداد التسجيل
+    # 1. إعداد التسجيل (Logging)
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        level=logging.INFO,
-        filename='bot.log'  # حفظ السجلات في ملف
+        level=logging.INFO
     )
     
-    # تصحيح الخطأ الأولي
+    # 2. تهيئة قاعدة البيانات
     init_db()
     
-    # إنشاء التطبيق
-    app = Application.builder().token(TOKEN).build()
+    # 3. إنشاء تطبيق البوت (استخدمنا اسم application لتجنب التعارض مع Flask)
+    application = Application.builder().token(TOKEN).build()
     
-    # معالج المحادثة الرئيسي
+    # 4. تعريف معالج المحادثة (ConversationHandler)
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -799,27 +798,18 @@ if __name__ == "__main__":
             ],
         },
         fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
-        allow_reentry=True  # السماح بإعادة الدخول للولايات
+        allow_reentry=True 
     )
     
-    # إضافة المعالجات
-    app.add_handler(conv_handler)
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("cancel", cancel))
+    # 5. إضافة المعالجات للتطبيق (استخدام application)
+    application.add_handler(conv_handler)
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("cancel", cancel))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
     
-    # إضافة معالج لجميع الرسائل النصية غير المعالجة
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
-    
-    print("🤖 --- البوت يعمل الآن ---")
-    print("📊 - نظام التحليل الفني مفعل")
-    print("💬 - نظام الدردشة مفعل")
-    print("✅ - تم تشغيل البوت بنجاح")
-    
-if __name__ == "__main__":
-    # 1. تشغيل خادم Flask في الخلفية لضمان بقاء الخدمة Live على Render
+    # 6. تشغيل Flask في الخلفية لضمان بقاء الخدمة Live على Render
     keep_alive() 
     
-    # 2. تشغيل البوت (استبدل 'application' بالاسم الذي عرفت به Application.builder)
-    print("Bot is starting...")
+    # 7. تشغيل البوت الفعلي
+    print("🤖 --- البوت يعمل الآن بنجاح على Render ---")
     application.run_polling()
-
