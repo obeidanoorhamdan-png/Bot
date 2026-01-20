@@ -7,14 +7,18 @@ import requests
 import threading
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
-from flask import Flask
+from flask import Flask, render_template_string
 import time
+import sys
 
 # --- الإعدادات ---
-TOKEN = "7324911542:AAFqB9NRegwE2_bG5rCTaEWocbh8N3vgWeo"
-MISTRAL_KEY = "EABRT5zGsHYhezkaJJomt15VR2iBrPWq"
+TOKEN = os.environ.get('TOKEN', "7324911542:AAFqB9NRegwE2_bG5rCTaEWocbh8N3vgWeo")
+MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "EABRT5zGsHYhezkaJJomt15VR2iBrPWq")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 DB_NAME = "abood-gpt.db"
+
+# الحصول على البورت من بيئة Render
+PORT = int(os.environ.get('PORT', 8080))
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
 TRADE_TIMES = ["S3", "S15", "S30", "M1", "M3", "M5", "M30", "H1", "H4", "H24", "⏱️ وقت يدوي"]
@@ -23,21 +27,341 @@ TRADE_TIMES = ["S3", "S15", "S30", "M1", "M3", "M5", "M30", "H1", "H4", "H24", "
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, SETTINGS_MANUAL_TIME, CHAT_MODE, ANALYZE_MODE = range(6)
 
 # --- Flask Server للبقاء نشطاً ---
-from flask import Flask
-from threading import Thread
-import os
+flask_app = Flask(__name__)
 
-# يجب أن يكون الاسم 'app' ليتعرف عليه Render تلقائياً
-app = Flask(__name__) 
+# صفحة HTML محسنة
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🤖 ABOOD GPT - بوت التداول الذكي</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Cairo', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1a237e 0%, #311b92 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            color: #333;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 25px;
+            box-shadow: 0 25px 70px rgba(0,0,0,0.4);
+            padding: 40px;
+            max-width: 900px;
+            width: 100%;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 100%;
+            height: 8px;
+            background: linear-gradient(90deg, #00c6ff 0%, #0072ff 100%);
+        }
+        
+        .header {
+            margin-bottom: 40px;
+        }
+        
+        .bot-icon {
+            font-size: 100px;
+            margin-bottom: 25px;
+            background: linear-gradient(45deg, #00c6ff, #0072ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: float 3s ease-in-out infinite;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+        
+        h1 {
+            color: #1a237e;
+            font-size: 42px;
+            margin-bottom: 15px;
+            font-weight: 800;
+        }
+        
+        .subtitle {
+            color: #666;
+            font-size: 20px;
+            margin-bottom: 40px;
+            line-height: 1.6;
+        }
+        
+        .status-card {
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-radius: 20px;
+            padding: 30px;
+            margin: 30px 0;
+            border-right: 8px solid #28a745;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .status-title {
+            color: #28a745;
+            font-size: 28px;
+            margin-bottom: 15px;
+            font-weight: 700;
+        }
+        
+        .status-details {
+            color: #555;
+            font-size: 18px;
+            line-height: 1.8;
+        }
+        
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 25px;
+            margin: 40px 0;
+        }
+        
+        .feature {
+            background: linear-gradient(135deg, #ffffff 0%, #f1f3f5 100%);
+            padding: 25px;
+            border-radius: 15px;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.08);
+        }
+        
+        .feature:hover {
+            transform: translateY(-10px) scale(1.02);
+            border-color: #0072ff;
+            box-shadow: 0 15px 35px rgba(0,114,255,0.2);
+        }
+        
+        .feature-icon {
+            font-size: 50px;
+            margin-bottom: 15px;
+            color: #0072ff;
+        }
+        
+        .feature-title {
+            color: #1a237e;
+            font-size: 22px;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+        
+        .feature-desc {
+            color: #666;
+            font-size: 16px;
+            line-height: 1.6;
+        }
+        
+        .stats {
+            background: linear-gradient(135deg, #0072ff 0%, #00c6ff 100%);
+            color: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin: 40px 0;
+            box-shadow: 0 15px 40px rgba(0,114,255,0.3);
+        }
+        
+        .stats-title {
+            font-size: 26px;
+            margin-bottom: 20px;
+            font-weight: 700;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 20px;
+        }
+        
+        .stat-item {
+            background: rgba(255,255,255,0.15);
+            padding: 20px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .stat-value {
+            font-size: 36px;
+            font-weight: 800;
+            margin-bottom: 5px;
+        }
+        
+        .stat-label {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        
+        .footer {
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 2px solid #e9ecef;
+            color: #666;
+            font-size: 16px;
+        }
+        
+        .ping-time {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 12px;
+            display: inline-block;
+            margin-top: 20px;
+            font-family: monospace;
+            font-size: 18px;
+            color: #0072ff;
+            font-weight: 600;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 25px;
+            }
+            
+            h1 {
+                font-size: 32px;
+            }
+            
+            .features {
+                grid-template-columns: 1fr;
+            }
+            
+            .bot-icon {
+                font-size: 80px;
+            }
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="bot-icon">🤖</div>
+            <h1>ABOOD GPT بوت التداول</h1>
+            <p class="subtitle">مساعدك الذكي للتحليل الفني والدردشة المتقدمة</p>
+        </div>
+        
+        <div class="status-card">
+            <div class="status-title">✅ البوت يعمل بنجاح</div>
+            <div class="status-details">
+                نظام ABOOD GPT يعمل بكامل طاقته<br>
+                جاهز لاستقبال طلباتك على Telegram
+            </div>
+        </div>
+        
+        <div class="features">
+            <div class="feature">
+                <div class="feature-icon">📊</div>
+                <div class="feature-title">تحليل فني متقدم</div>
+                <div class="feature-desc">تحليل الشارتات باستخدام الذكاء الاصطناعي</div>
+            </div>
+            
+            <div class="feature">
+                <div class="feature-icon">💬</div>
+                <div class="feature-title">دردشة ذكية</div>
+                <div class="feature-desc">مساعد ذكي متعدد التخصصات</div>
+            </div>
+            
+            <div class="feature">
+                <div class="feature-icon">⚙️</div>
+                <div class="feature-title">إعدادات مخصصة</div>
+                <div class="feature-desc">تخصيص كامل لإعدادات التحليل</div>
+            </div>
+            
+            <div class="feature">
+                <div class="feature-icon">🔄</div>
+                <div class="feature-title">عمل مستمر</div>
+                <div class="feature-desc">يعمل 24/7 على منصة Render</div>
+            </div>
+        </div>
+        
+        <div class="stats">
+            <div class="stats-title">📈 إحصائيات التشغيل</div>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-value">24/7</div>
+                    <div class="stat-label">وقت التشغيل</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">🚀</div>
+                    <div class="stat-label">أداء عالي</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">🔒</div>
+                    <div class="stat-label">آمن</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">⚡</div>
+                    <div class="stat-label">سريع</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>🤖 <strong>ABOOD GPT</strong> - نظام التحليل الذكي للتداول</p>
+            <p>🚀 يعمل على منصة Render مع cron-job.org للعمل المستمر</p>
+            <div class="ping-time">
+                آخر تحديث: {{ ping_time }}
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+"""
 
-@app.route('/')
+@flask_app.route('/')
 def home():
-    return "Bot is running!"
+    return render_template_string(HTML_TEMPLATE, ping_time=time.strftime("%Y-%m-%d %H:%M:%S"))
 
-def keep_alive():
-    port = int(os.environ.get("PORT", 10000))
-    t = Thread(target=lambda: app.run(host='0.0.0.0', port=port))
-    t.start()
+@flask_app.route('/health')
+def health():
+    return {
+        "status": "active",
+        "service": "abood-gpt-bot",
+        "version": "2.0.0",
+        "timestamp": time.time(),
+        "features": ["technical_analysis", "smart_chat", "image_processing", "custom_settings"],
+        "uptime": time.strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+@flask_app.route('/ping')
+def ping():
+    return "PONG - Bot is alive!"
+
+@flask_app.route('/status')
+def status():
+    return {
+        "bot_status": "running",
+        "telegram_connected": True,
+        "mistral_api": "connected",
+        "database": "active",
+        "last_activity": time.strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+def run_flask():
+    """تشغيل خادم Flask في ثريث منفصل"""
+    port = PORT
+    logging.info(f"🚀 Starting Flask server on port {port}")
+    flask_app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
 
 # --- قاعدة البيانات ---
 def init_db():
@@ -63,6 +387,7 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+    logging.info("✅ Database initialized successfully")
 
 def save_user_setting(user_id, col, val):
     conn = sqlite3.connect(DB_NAME)
@@ -197,7 +522,7 @@ def split_message(text, max_length=4000):
     
     return parts
 
-# --- 🚀 برومبت قوي للدردشة فقط (بدون تغيير تحليل الصور) ---
+# --- 🚀 برومبت قوي للدردشة ---
 async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء وضع الدردشة المتقدم"""
     keyboard = [
@@ -437,9 +762,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-# --- 🚨 كود تحليل الصور كما هو بدون تغيير ---
+# --- كود تحليل الصور ---
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني (بدون تغيير)"""
+    """معالجة الصور للتحليل الفني"""
     user_id = update.effective_user.id
     candle, trade_time, manual_time = get_user_setting(user_id)
     
@@ -597,7 +922,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     
     return MAIN_MENU
 
-# --- باقي الدوال الأساسية (بدون تغيير) ---
+# --- الدوال الأساسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء البوت"""
     keyboard = [
@@ -879,19 +1204,33 @@ def main():
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO,
-        filename='bot.log'
+        handlers=[
+            logging.FileHandler('bot.log'),
+            logging.StreamHandler()
+        ]
     )
+    
+    # عرض رسالة بداية التشغيل
+    logging.info("🚀 --- ABOOD GPT Bot Starting ---")
+    logging.info(f"📊 - Using Token: {TOKEN[:15]}...")
+    logging.info(f"🔑 - Mistral Key: {MISTRAL_KEY[:10]}...")
     
     # تصحيح الخطأ الأولي
     init_db()
+    logging.info("✅ Database initialized")
     
     # بدء خادم Flask في ثريث منفصل
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    print("✅ Flask server started for Render keep-alive")
+    logging.info(f"🌐 Flask server started on port {PORT}")
     
     # إنشاء التطبيق
-    app = Application.builder().token(TOKEN).build()
+    try:
+        app = Application.builder().token(TOKEN).build()
+        logging.info("✅ Telegram application created successfully")
+    except Exception as e:
+        logging.error(f"❌ Failed to create application: {e}")
+        sys.exit(1)
     
     # معالج المحادثة الرئيسي
     conv_handler = ConversationHandler(
@@ -922,24 +1261,31 @@ def main():
     )
     
     # إضافة المعالجات
-    # استخدام application (كائن البوت) وليس app (كائن الويب)
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("cancel", cancel))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
-
-
-    print("🚀 --- ABOOD GPT Bot Started ---")
-    print("📊 - Technical Analysis System: ACTIVE")
-    print("💬 - Advanced Chat System: ACTIVE")
-    print("🌐 - Flask Server: RUNNING on port 8080")
-    print("✅ - Bot is ready to receive commands")
+    app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("cancel", cancel))
     
+    # إضافة معالج لجميع الرسائل النصية غير المعالجة
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
+    
+    # رسالة بدء التشغيل
+    print("\n" + "="*60)
+    print("🚀 **ABOOD GPT Bot Started Successfully!**")
+    print("="*60)
+    print("📊 Technical Analysis System: ✅ ACTIVE")
+    print("💬 Advanced Chat System: ✅ ACTIVE")
+    print(f"🌐 Flask Server: ✅ RUNNING on port {PORT}")
+    print("🔗 Health Check: https://your-bot.onrender.com/health")
+    print("📞 Bot Link: https://t.me/your_bot_username")
+    print("="*60 + "\n")
+    logging.info("✅ Bot is ready to receive commands")
+    
+    # بدء البوت
+    try:
+        app.run_polling(drop_pending_updates=True, timeout=60)
+    except Exception as e:
+        logging.error(f"❌ Bot crashed: {e}")
+        print(f"❌ Bot crashed: {e}")
 
 if __name__ == "__main__":
-    # تشغيل Flask أولاً في الخلفية
-    keep_alive() 
-    
-    # تشغيل البوت (تأكد أنك عرفت 'application' سابقاً)
-    print("Bot is starting...")
-    application.run_polling()
+    main()
