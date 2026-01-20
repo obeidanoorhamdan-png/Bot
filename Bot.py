@@ -20,8 +20,16 @@ DB_NAME = "abood-gpt.db"
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
 TRADE_TIMES = ["S3", "S15", "S30", "M1", "M3", "M5", "M30", "H1", "H4", "H24", "⏱️ وقت يدوي"]
 
+# توزيع العملات للنظام الجديد
+CATEGORIES = {
+    "فوركس 💹": ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD"],
+    "مؤشرات 📊": ["S&P 500", "Dow Jones", "DAX 40"],
+    "معادن 🏗️": ["الذهب (XAUUSD)", "الفضة (XAGUSD)"],
+    "ناسداك 🖥️": ["NAS100"]
+}
+
 # حالات المحادثة
-MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, SETTINGS_MANUAL_TIME, CHAT_MODE, ANALYZE_MODE = range(6)
+MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, SETTINGS_MANUAL_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(8)
 
 # --- Flask Server ---
 app = Flask(__name__)
@@ -32,7 +40,7 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>ABOOD GPT Bot</title>
+        <title>ABOOD GPT</title>
         <style>
             body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
             h1 { color: #2c3e50; }
@@ -215,6 +223,131 @@ def split_message(text, max_length=4000):
     
     return parts
 
+# --- وظائف نظام التوصية الجديد ---
+def get_mistral_analysis(symbol):
+    """الحصول على تحليل من Mistral للعملة"""
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    prompt = f"""
+    حلل العملة التالية فنيًا باختصار شديد جداً: {symbol}
+    التنسيق المطلوب (عربي فقط):
+    - اسم العملة: {symbol}
+    - توقع الاتجاه: (بيع 🔴 / شراء 🟢 / الإحتفاظ 🟡)
+    - مستوى الثقة: XX٪
+    - توقع جني الأرباح (TP):
+    - توقع وقف الخسارة (SL):
+    """
+    
+    body = {
+        "model": "mistral-medium",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1
+    }
+
+    try:
+        response = requests.post(MISTRAL_URL, json=body, headers=headers, timeout=25)
+        response.raise_for_status()
+        return response.json()['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        print(f"Error in get_mistral_analysis: {e}")
+        return "⚠️ حدث خطأ في الاتصال بالمحلل."
+
+async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء وضع التوصية"""
+    reply_keyboard = [[key] for key in CATEGORIES.keys()]
+    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+    
+    await update.message.reply_text(
+        "🚀 **نظام التوصيات الذكي**\n\n"
+        "اختر القسم المطلوب من الأزرار:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return RECOMMENDATION_MODE
+
+async def handle_recommendation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيارات نظام التوصية"""
+    user_text = update.message.text.strip()
+    
+    # العودة للقائمة الرئيسية
+    if user_text == "الرجوع للقائمة الرئيسية":
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    # التحقق من الأقسام الرئيسية
+    if user_text in CATEGORIES:
+        keyboard = [[asset] for asset in CATEGORIES[user_text]]
+        keyboard.append(["🔙 العودة للقائمة", "الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            f"📍 قسم: {user_text}\nاختر العملة الآن:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        )
+        return CATEGORY_SELECTION
+    
+    # التحقق من العملة المختارة
+    symbol_to_analyze = None
+    for category_list in CATEGORIES.values():
+        if user_text in category_list:
+            symbol_to_analyze = user_text
+            break
+    
+    # إذا وجدت العملة، ابدأ التحليل
+    if symbol_to_analyze:
+        wait_msg = await update.message.reply_text(f"⏳ جاري تحليل `{symbol_to_analyze}`...")
+        analysis = get_mistral_analysis(symbol_to_analyze)
+        
+        final_msg = (
+            f"📈 **نتائج تحليل {symbol_to_analyze}**\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"{analysis}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🤖 **ABOOD GPT - نظام التوصيات**"
+        )
+        
+        # تنظيف النص من التكرارات
+        final_msg = clean_repeated_text(final_msg)
+        
+        await wait_msg.edit_text(
+            final_msg,
+            parse_mode="Markdown"
+        )
+        
+        # عرض الأزرار للاستمرار
+        reply_keyboard = [[key] for key in CATEGORIES.keys()]
+        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        return RECOMMENDATION_MODE
+    
+    # إذا كان النص "🔙 العودة للقائمة"
+    if user_text == "🔙 العودة للقائمة":
+        reply_keyboard = [[key] for key in CATEGORIES.keys()]
+        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "🔙 **العودة للقائمة الرئيسية للتوصيات**\nاختر القسم المطلوب:",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        return RECOMMENDATION_MODE
+    
+    # إذا لم يطابق النص أي شيء
+    await update.message.reply_text(
+        "❌ خيار غير موجود. يرجى اختيار عملة من القائمة الظاهرة في الأزرار.\n\n"
+        "اضغط 'الرجوع للقائمة الرئيسية' للعودة.",
+        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True)
+    )
+    return RECOMMENDATION_MODE
+
 # --- 🚀 برومبت قوي للدردشة ---
 async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء وضع الدردشة المتقدم"""
@@ -247,7 +380,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # التحقق من الأوامر الخاصة
     if user_message == "ايقاف الدردشة":
-        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
         await update.message.reply_text(
             "✅ تم إنهاء وضع الدردشة.",
             reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -255,7 +388,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return MAIN_MENU
     
     elif user_message == "الرجوع للقائمة الرئيسية":
-        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
             reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -514,10 +647,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         - الإتجاه: (🟢 صعود ⬆️ / 🔴 نزول ⬇️ / 🟡 ثابت ➡️ )
         - توقع الإتجاه: ( صعود عالي / صعود منخفض / صعود متوسط/ نزول مرتفع / نزول منخفض/ نزول متوسط )
         - توقع: ( بيع 🔴 / شراء 🟢 / الإحتفاظ 🟡 )
-        - حد الربح الحالي:
-        - توقع حد الربح:
-        - حد الخسارة الحالية:
-        - توقع حد الخسارة:
+        - توقع TP:
+        - توقع SL:
         - مستوى الثقة: XX٪
         - نقطة الدخول المقترحة: 
         - توقع نقطة الوصول:
@@ -558,7 +689,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             # ✅ حل مشكلة التكرار: تنظيف النص من التكرار
             result = clean_repeated_text(result)
             
-            keyboard = [["📊 تحليل صورة أخرى"], ["💬 دردشة"], ["الرجوع للقائمة الرئيسية"]]
+            keyboard = [["📊 تحليل صورة أخرى"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
             
             # تنسيق وقت الصفقة للعرض
             time_display = format_trade_time_for_prompt(trade_time, manual_time)
@@ -620,14 +751,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء البوت"""
     keyboard = [
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["💬 دردشة"]
+        ["💬 دردشة", "📈 توصية"]
     ]
     
     await update.message.reply_text(
         "🚀 **أهلاً بك في ABOOD GPT - الإصدار المتقدم**\n\n"
         "🤖 **المميزات الجديدة:**\n"
         "• تحليل فني متقدم للشارتات\n"
-        "• 🆕 دردشة ذكية مع برومبت قوي\n"
+        "• 🆕 دردشة \n"
+        "• 📈 نظام توصيات العملات\n"
         "• إعدادات تخصيص كاملة\n"
         "• وقت يدوي مخصص\n\n"
         "اختر أحد الخيارات:",
@@ -683,7 +815,10 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_message == "💬 دردشة":
         return await start_chat_mode(update, context)
     
-    keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+    elif user_message == "📈 توصية":
+        return await start_recommendation_mode(update, context)
+    
+    keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
     await update.message.reply_text(
         "اختر أحد الخيارات من القائمة:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -696,7 +831,7 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
     user_id = update.effective_user.id
     
     if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -729,7 +864,7 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     
     if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -763,7 +898,7 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
             save_user_setting(user_id, "trade_time", user_message)
             save_user_setting(user_id, "manual_time", "")
             
-            keyboard = [["📊 تحليل صورة"], ["💬 دردشة مع الذكاء الاصطناعي"], ["الرجوع للقائمة الرئيسية"]]
+            keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
             
             candle, _, _ = get_user_setting(user_id)
             
@@ -786,7 +921,7 @@ async def handle_manual_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = update.effective_user.id
     
     if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -799,7 +934,7 @@ async def handle_manual_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
         save_user_setting(user_id, "trade_time", "⏱️ وقت يدوي")
         save_user_setting(user_id, "manual_time", parsed_time)
         
-        keyboard = [["📊 تحليل صورة"], ["💬 دردشة مع الذكاء الاصطناعي"], ["الرجوع للقائمة الرئيسية"]]
+        keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
         candle, _, _ = get_user_setting(user_id)
         
@@ -835,7 +970,7 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     
     if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -864,6 +999,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     1. استخدم أزرار القائمة للتنقل
     2. أرسل صورة الشارت للتحليل
     3. اختر "دردشة" للاستفسارات النصية
+    4. اختر "توصية" لتحليل العملات
+    
+    📈 **نظام التوصيات:**
+    • تحليل فني للعملات والمؤشرات
+    • أربعة أقسام رئيسية
+    • توصيات مفصلة لكل عملة
+    • تحليل سريع ومباشر
     
     ⏱️ **خاصية الوقت اليدوي:**
     • يمكنك تحديد وقت الصفقة يدوياً
@@ -877,6 +1019,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     📊 **مميزات البوت:**
     • تحليل فني للرسوم البيانية
     • دردشة ذكية مع الذكاء الاصطناعي
+    • نظام توصيات العملات
     • حفظ إعداداتك الشخصية
     • واجهة سهلة بالأزرار
     • إدخال وقت مخصص يدوياً
@@ -904,7 +1047,7 @@ def run_telegram_bot():
     # تهيئة قاعدة البيانات
     init_db()
     
-    # إنشاء تطبيق Telegram (باستخدام إصدار أقدم من المكتبة)
+    # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
     
     # معالج المحادثة
@@ -929,6 +1072,12 @@ def run_telegram_bot():
             ANALYZE_MODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode),
                 MessageHandler(filters.PHOTO, handle_photo_in_analyze_mode)
+            ],
+            RECOMMENDATION_MODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection)
+            ],
+            CATEGORY_SELECTION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection)
             ],
         },
         fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
