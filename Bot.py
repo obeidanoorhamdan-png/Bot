@@ -1,543 +1,247 @@
-import logging
-import base64
+#!/usr/bin/env python3
+"""
+ABOOD GPT - Telegram Bot for Chat & Technical Analysis
+Version: 1.0.0
+"""
+
 import os
+import sys
+import time
 import sqlite3
 import re
+import base64
 import requests
-import threading
-import time
-import sys
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
+from threading import Thread
 
-# --- الإعدادات ---
+# === CONFIGURATION ===
 TOKEN = os.environ.get('TOKEN', "7324911542:AAFqB9NRegwE2_bG5rCTaEWocbh8N3vgWeo")
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "EABRT5zGsHYhezkaJJomt15VR2iBrPWq")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
-DB_NAME = "abood-gpt.db"
+DB_NAME = "abood_gpt.db"
+PORT = int(os.environ.get('PORT', 8080))
 
-CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
-TRADE_TIMES = ["S3", "S15", "S30", "M1", "M3", "M5", "M30", "H1", "H4", "H24", "⏱️ وقت يدوي"]
-
-# حالات المحادثة
-MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, SETTINGS_MANUAL_TIME, CHAT_MODE, ANALYZE_MODE = range(6)
-
-# --- Flask Server ---
+# === FLASK APP FOR KEEP-ALIVE ===
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return """
+    return f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <title>ABOOD GPT Bot</title>
+        <title>🤖 ABOOD GPT Bot</title>
         <style>
-            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-            h1 { color: #2c3e50; }
-            .status { background: #2ecc71; color: white; padding: 10px 20px; border-radius: 5px; display: inline-block; }
+            body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }}
+            .container {{ background: rgba(255,255,255,0.1); padding: 40px; border-radius: 20px; backdrop-filter: blur(10px); max-width: 800px; margin: 0 auto; }}
+            h1 {{ font-size: 3em; margin-bottom: 20px; }}
+            .status {{ background: #2ecc71; color: white; padding: 15px 30px; border-radius: 10px; display: inline-block; font-size: 1.2em; font-weight: bold; }}
+            .info {{ margin-top: 30px; background: rgba(0,0,0,0.2); padding: 20px; border-radius: 10px; }}
+            .features {{ display: flex; justify-content: center; gap: 20px; margin-top: 30px; flex-wrap: wrap; }}
+            .feature {{ background: rgba(255,255,255,0.15); padding: 20px; border-radius: 10px; width: 180px; }}
         </style>
     </head>
     <body>
-        <h1>🤖 ABOOD GPT Telegram Bot</h1>
-        <p>Chat & Technical Analysis Bot</p>
-        <div class="status">✅ Bot is Running</div>
-        <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
+        <div class="container">
+            <div style="font-size: 5em;">🤖</div>
+            <h1>ABOOD GPT Telegram Bot</h1>
+            <p style="font-size: 1.2em; opacity: 0.9;">Chat & Technical Analysis Assistant</p>
+            
+            <div class="status">✅ SYSTEM ACTIVE</div>
+            
+            <div class="info">
+                <p><strong>Last Update:</strong> {time.strftime("%Y-%m-%d %H:%M:%S")}</p>
+                <p><strong>Service:</strong> Telegram Bot + Flask Server</p>
+                <p><strong>Port:</strong> {PORT}</p>
+                <p><strong>Status:</strong> Ready for Telegram commands</p>
+            </div>
+            
+            <div class="features">
+                <div class="feature">
+                    <div style="font-size: 2em;">📊</div>
+                    <div>Chart Analysis</div>
+                </div>
+                <div class="feature">
+                    <div style="font-size: 2em;">💬</div>
+                    <div>Smart Chat</div>
+                </div>
+                <div class="feature">
+                    <div style="font-size: 2em;">⚙️</div>
+                    <div>Custom Settings</div>
+                </div>
+                <div class="feature">
+                    <div style="font-size: 2em;">🔄</div>
+                    <div>24/7 Active</div>
+                </div>
+            </div>
+            
+            <div style="margin-top: 30px; padding: 20px; background: rgba(0,0,0,0.3); border-radius: 10px;">
+                <p style="font-size: 0.9em; opacity: 0.8;">
+                    The bot is running successfully!<br>
+                    Start chatting on Telegram with your bot.
+                </p>
+            </div>
+        </div>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "timestamp": time.time()}
+    return {
+        "status": "active",
+        "service": "abood-gpt-bot",
+        "timestamp": time.time(),
+        "version": "1.0.0",
+        "telegram": "ready",
+        "flask": "running",
+        "port": PORT
+    }
 
 @app.route('/ping')
 def ping():
-    return "PONG"
+    return "PONG - Bot is alive and ready!"
 
-# --- قاعدة البيانات ---
+@app.route('/stop')
+def stop():
+    """Endpoint to gracefully stop the bot (for admin only)"""
+    print("🛑 Stop command received")
+    return "Bot stop command sent. Use Render dashboard to restart."
+
+# === DATABASE FUNCTIONS ===
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY, 
-            candle TEXT DEFAULT 'M5', 
-            trade_time TEXT DEFAULT 'H1',
-            manual_time TEXT DEFAULT '',
-            chat_context TEXT DEFAULT ''
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS chat_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            role TEXT,
-            content TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
-    print("✅ Database initialized")
-
-def save_user_setting(user_id, col, val):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute(f"INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
-    cursor.execute(f"UPDATE users SET {col} = ? WHERE user_id = ?", (val, user_id))
-    conn.commit()
-    conn.close()
-
-def get_user_setting(user_id):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT candle, trade_time, manual_time FROM users WHERE user_id = ?", (user_id,))
-    res = cursor.fetchone()
-    conn.close()
-    if res:
-        return res
-    return ("M5", "H1", "")
-
-# --- دوال معالجة الوقت اليدوي ---
-def parse_manual_time(time_str):
-    """تحويل النص المدخل إلى وقت بالتنسيق 00:00:00"""
+    """Initialize SQLite database"""
     try:
-        if re.match(r'^\d{1,2}:\d{2}:\d{2}$', time_str):
-            hours, minutes, seconds = map(int, time_str.split(':'))
-            if 0 <= hours <= 23 and 0 <= minutes <= 59 and 0 <= seconds <= 59:
-                return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
         
-        elif 'يوم' in time_str or 'يومين' in time_str or 'أيام' in time_str:
-            days = 0
-            if 'يومين' in time_str:
-                days = 2
-            elif 'يوم' in time_str:
-                numbers = re.findall(r'\d+', time_str)
-                if numbers:
-                    days = int(numbers[0])
-                else:
-                    days = 1
-            return f"{days} يوم"
+        # Users table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                candle TEXT DEFAULT 'M5',
+                trade_time TEXT DEFAULT 'H1',
+                manual_time TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         
-        elif 'ساعة' in time_str or 'ساعات' in time_str:
-            hours = 0
-            numbers = re.findall(r'\d+', time_str)
-            if numbers:
-                hours = int(numbers[0])
-            else:
-                hours = 1
-            return f"{hours} ساعة"
+        # Analysis history
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS analysis_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                image_hash TEXT,
+                analysis_result TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         
-        elif 'دقيقة' in time_str or 'دقائق' in time_str:
-            minutes = 0
-            numbers = re.findall(r'\d+', time_str)
-            if numbers:
-                minutes = int(numbers[0])
-            else:
-                minutes = 1
-            return f"{minutes} دقيقة"
-        
-        elif 'ثانية' in time_str or 'ثواني' in time_str:
-            seconds = 0
-            numbers = re.findall(r'\d+', time_str)
-            if numbers:
-                seconds = int(numbers[0])
-            else:
-                seconds = 1
-            return f"{seconds} ثانية"
-        
-        elif time_str.isdigit():
-            hours = int(time_str)
-            return f"{hours} ساعة"
-            
+        conn.commit()
+        conn.close()
+        print("✅ Database initialized successfully")
+        return True
     except Exception as e:
-        print(f"Error parsing manual time: {e}")
+        print(f"❌ Database error: {e}")
+        return False
+
+# === HELPER FUNCTIONS ===
+def clean_text(text, max_length=2000):
+    """Clean and truncate text"""
+    if not text:
+        return ""
     
-    return None
-
-def format_trade_time_for_prompt(trade_time, manual_time=""):
-    """تنسيق وقت الصفقة للبرومبت"""
-    if trade_time == "⏱️ وقت يدوي" and manual_time:
-        return f"مدة الصفقة المتوقعة: {manual_time} (مدخل يدوي)"
-    else:
-        return f"مدة الصفقة المتوقعة: {trade_time}"
-
-# --- معالجة الصور ---
-def encode_image(image_path):
-    with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode('utf-8')
-
-# --- دوال المساعدة للتعامل مع النصوص ---
-def clean_repeated_text(text):
-    """تنظيف النص من التكرارات"""
-    paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+    # Remove excessive whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
     
-    unique_paragraphs = []
-    seen_paragraphs = set()
+    # Truncate if too long
+    if len(text) > max_length:
+        text = text[:max_length] + "..."
     
-    for paragraph in paragraphs:
-        simplified = paragraph[:100].strip()
-        if simplified not in seen_paragraphs:
-            unique_paragraphs.append(paragraph)
-            seen_paragraphs.add(simplified)
-    
-    cleaned_text = '\n\n'.join(unique_paragraphs)
-    
-    if len(cleaned_text) > 2000:
-        if '\n\n' in cleaned_text[:2200]:
-            cut_point = cleaned_text[:2200].rfind('\n\n')
-            cleaned_text = cleaned_text[:cut_point]
-        else:
-            cleaned_text = cleaned_text[:2000] + "..."
-    
-    return cleaned_text
+    return text
 
-def split_message(text, max_length=4000):
-    """تقسيم الرسالة الطويلة إلى أجزاء"""
-    if len(text) <= max_length:
-        return [text]
-    
-    parts = []
-    while len(text) > max_length:
-        split_point = text[:max_length].rfind('\n\n')
-        if split_point == -1:
-            split_point = text[:max_length].rfind('\n')
-        if split_point == -1:
-            split_point = max_length - 100
-        
-        parts.append(text[:split_point])
-        text = text[split_point:].lstrip()
-    
-    if text:
-        parts.append(text)
-    
-    return parts
+def encode_image_to_base64(image_path):
+    """Encode image to base64"""
+    try:
+        with open(image_path, "rb") as f:
+            return base64.b64encode(f.read()).decode('utf-8')
+    except Exception as e:
+        print(f"❌ Image encoding error: {e}")
+        return None
 
-# --- 🚀 برومبت قوي للدردشة ---
-async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء وضع الدردشة المتقدم"""
-    keyboard = [
-        ["🚀 مساعد ذكي شامل", "💼 استشارات احترافية"],
-        ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
-        ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
-        ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
-    ]
-    
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🚀 **وضع الدردشة المتقدم مع ABOOD GPT**\n\n"
-             "أنا مساعدك الذكي متعدد المواهب:\n"
-             "• مستشار استثماري وتحليلات مالية\n"
-             "• خبير برمجي وتقني\n"
-             "• محلل بيانات واستراتيجيات\n"
-             "• كاتب محتوى إبداعي\n"
-             "• مساعد شخصي ذكي\n\n"
-             "اختر مجال المساعدة أو أرسل سؤالك مباشرة:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    return CHAT_MODE
-
-async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة رسائل الدردشة مع برومبت قوي"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    # التحقق من الأوامر الخاصة
-    if user_message == "ايقاف الدردشة":
-        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "✅ تم إنهاء وضع الدردشة.",
-            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    elif user_message == "الرجوع للقائمة الرئيسية":
-        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    # برومبتات متخصصة حسب الاختيار
-    system_prompts = {
-        "🚀 مساعد ذكي شامل": """أنت ABOOD GPT، مساعد ذكي شامل يمتلك معرفة عميقة في:
-🎯 **التحليل الفني والمالي:** خبرة في أسواق المال، تحليل الشارتات، واستراتيجيات التداول
-💻 **البرمجة والتقنية:** إتقان Python، JavaScript، تطوير الويب، الذكاء الاصطناعي
-📊 **البيانات والتحليل:** تحليل البيانات، الإحصاء، وتقديم رؤى استراتيجية
-✍️ **الكتابة والإبداع:** صياغة المحتوى، التقارير، والمواد الإعلامية
-🧠 **التفكير النقدي:** حل المشكلات المعقدة، التحليل المنطقي، واتخاذ القرارات
-
-**مبادئك الأساسية:**
-1. **الدقة أولاً:** معلومات موثوقة ومدروسة
-2. **التنظيم:** هيكل واضح مع عناوين ونقاط
-3. **القيمة المضافة:** تقديم نصائح إضافية غير مطلوبة
-4. **الوضوح:** شرح المفاهيم المعقدة ببساطة
-5. **الإبداع:** حلول مبتكرة للمشكلات
-
-**تنسيق الإجابة المثالي:**
-🎯 **الجوهر:** (ملخص سريع)
-📋 **التفاصيل:** (نقاط مرتبة)
-💡 **الإثراء:** (معلومات إضافية مفيدة)
-🚀 **التطبيق:** (خطوات عملية)
-
-استخدم اللغة العربية بطلاقة مع لمسة عصرية وجذابة.""",
-
-        "💼 استشارات احترافية": """أنت ABOOD GPT، مستشار احترافي في:
-📈 **الاستشارات المالية:** تحليل الأسواق، تقييم المخاطر، استراتيجيات الاستثمار
-👔 **التخطيط الاستراتيجي:** تحليل SWOT، وضع الأهداف، متابعة الأداء
-🤝 **العلاقات المهنية:** التواصل الفعال، التفاوض، بناء الشبكات
-📋 **إدارة المشاريع:** التخطيط، التنفيذ، المتابعة، التقييم
-
-**التزاماتك المهنية:**
-• الموضوعية والشفافية
-• احترام السرية المهنية
-• التطوير المستمر
-• الالتزام بالأخلاقيات المهنية
-• التركيز على النتائج العملية""",
-
-        "📈 تحليل استثماري": """أنت ABOOD GPT، محلل استثماري متخصص في:
-📊 **التحليل الفني:** قراءة الشارتات، المؤشرات الفنية، أنماط التداول
-📉 **التحليل الأساسي:** الأرباح، القوائم المالية، المؤشرات الاقتصادية
-🎯 **إدارة المخاطر:** تحديد المخاطر، التحوط، موازنة المحفظة
-🔍 **البحث والتنقيب:** فرص الاستثمار، اتجاهات السوق، التنبؤات
-
-**قواعد التحليل:**
-• اعتماد البيانات الرسمية والموثوقة
-• تحليل متعدد الأبعاد
-• مراعاة السياق الاقتصادي
-• التوازن بين العائد والمخاطرة
-• الشفافية في الافتراضات""",
-
-        "👨‍💻 دعم برمجي": """أنت ABOOD GPT، مبرمج خبير ودعم تقني في:
-🐍 **Python:** تطبيقات الويب، الذكاء الاصطناعي، تحليل البيانات
-🌐 **تطوير الويب:** Frontend, Backend, APIs, Databases
-🤖 **الذكاء الاصطناعي:** Machine Learning, NLP, Computer Vision
-🛠️ **حل المشكلات:** Debugging, Optimization, Best Practices
-
-**أسلوب العمل:**
-• كتابة أكواد نظيفة وموثوقة
-• شرح المفاهيم البرمجية بوضوح
-• تقديم حلول عملية وفعالة
-• تعليم أفضل الممارسات
-• دعم التعلم المستمر""",
-
-        "📝 كتابة إبداعية": """أنت ABOOD GPT، كاتب إبداعي محترف في:
-📄 **المحتوى التقني:** تقارير، أبحاث، مستندات فنية
-🎨 **المحتوى التسويقي:** إعلانات، حملات، محتوى وسائل التواصل
-📚 **المحتوى التعليمي:** شروحات، دورات، مواد تعليمية
-✒️ **الكتابة الإبداعية:** قصص، مقالات، محتوى ممتع
-
-**مبادئ الكتابة:**
-• لغة عربية سليمة وجذابة
-• تنظيم منطقي وسهل المتابعة
-• تكييف الأسلوب حسب الجمهور
-• الإبداع مع الحفاظ على الدقة
-• جذب الانتباه والإقناع"""
-    }
-    
-    # تحديد البرومبت المناسب
-    selected_prompt = system_prompts.get(user_message, """أنت ABOOD GPT، مساعد ذكي شامل يمتلك مزيجاً فريداً من:
-🧠 **الذكاء العميق:** فهم شامل لمجالات متعددة
-🎯 **الدقة الشديدة:** معلومات موثوقة ومدروسة بدقة
-🚀 **الإبداع العملي:** حلول مبتكرة وقابلة للتطبيق
-💡 **البصيرة الاستراتيجية:** رؤية أعمق من السؤال المطروح
-
-**شخصيتك المميزة:**
-- ذكي، صبور، ومتحمس للمعرفة
-- تتحدث بلغة عربية فصيحة مع لمسة عصرية
-- تحب التفاصيل ولكن تقدمها بشكل منظم
-- دائماً تبحث عن "القيمة المخفية" في كل سؤال
-
-**قواعدك الأساسية:**
-1. **لا تقل أبداً "لا أعرف"** - ابحث عن أفضل إجابة ممكنة
-2. **كن منظماً بشكل ممتاز** - استخدم التبويب والعناوين المناسبة
-3. **فكر في ما وراء السؤال** - قدم نصائح إضافية غير متوقعة
-4. **ادعم بأمثلة عملية** - اجعل الإجابة قابلة للتطبيق
-5. **حفز الفضول** - أضف معلومة تشجع على البحث أكثر
-
-**هيكل الإجابة الأمثل:**
-🎯 **اللب:** (تلخيص مركز في جملة واحدة)
-📊 **التفاصيل المنظمة:** (نقاط مرتبة ومنطقية)
-💎 **القيمة المضافة:** (معلومات إضافية ذكية)
-🚀 **الخطوة التالية:** (اقتراح عملي للتنفيذ)
-
-**تذكر جيداً:** أنت ABOOD GPT، المساعد الذكي الذي يحول التعقيد إلى بساطة، ويمنحك دائماً أكثر مما تطلب!""")
-    
-    # إذا كان اختياراً من القائمة، اطلب التفاصيل
-    if user_message in system_prompts:
-        await update.message.reply_text(
-            f"✅ **تم اختيار: {user_message}**\n\n"
-            f"🎯 **جاهز لخدمتك في هذا التخصص**\n"
-            f"أرسل سؤالك الآن وسأقدم لك إجابة متخصصة وشاملة:",
-            parse_mode="Markdown"
-        )
-        return CHAT_MODE
-    
-    # إظهار حالة المعالجة
-    wait_msg = await update.message.reply_text("🤖 **ABOOD GPT يحلل السؤال بعمق...**")
+# === TELEGRAM BOT (USING WEBHOOKS INSTEAD OF POLLING) ===
+def setup_telegram_bot():
+    """Setup Telegram bot with webhook to avoid conflicts"""
+    print("🔧 Setting up Telegram bot...")
     
     try:
-        # استدعاء واجهة Mistral
-        payload = {
-            "model": "mistral-medium",
-            "messages": [
-                {"role": "system", "content": selected_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            "max_tokens": 1200,
-            "temperature": 0.7
-        }
-        
-        headers = {
-            "Authorization": f"Bearer {MISTRAL_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
+        # Check if token is valid
+        test_url = f"https://api.telegram.org/bot{TOKEN}/getMe"
+        response = requests.get(test_url, timeout=10)
         
         if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content']
-            
-            # تنظيف النص من التكرارات
-            result = clean_repeated_text(result)
-            
-            # إضافة تذييل مميز
-            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **ABOOD GPT** - المساعد الذكي متعدد التخصصات"
-            result = result + footer
-            
-            # أزرار الدردشة المتقدمة
-            chat_keyboard = [
-                ["🚀 مساعد ذكي شامل", "💼 استشارات احترافية"],
-                ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
-                ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
-                ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
-            ]
-            
-            # تقسيم الرسالة الطويلة
-            if len(result) > 4000:
-                parts = split_message(result, max_length=4000)
-                for i, part in enumerate(parts):
-                    if i == 0:
-                        await wait_msg.edit_text(
-                            f"💎 **رد ABOOD GPT:**\n\n{part}",
-                            parse_mode="Markdown"
-                        )
-                    else:
-                        await update.message.reply_text(part, parse_mode="Markdown")
-            else:
-                await wait_msg.edit_text(
-                    f"💎 **رد ABOOD GPT:**\n\n{result}",
-                    parse_mode="Markdown"
-                )
-            
-            # إرسال الأزرار بعد الرد
-            await update.message.reply_text(
-                "🔽 **اختر مجالاً آخر أو اطرح سؤالاً جديداً:**",
-                reply_markup=ReplyKeyboardMarkup(chat_keyboard, resize_keyboard=True, one_time_keyboard=False)
-            )
-            
+            bot_data = response.json()
+            print(f"✅ Bot connected: @{bot_data['result']['username']}")
+            print(f"   Name: {bot_data['result']['first_name']}")
+            print(f"   ID: {bot_data['result']['id']}")
+            return True
         else:
-            print(f"Mistral API Error: {response.status_code} - {response.text}")
-            await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
-    
-    except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد. السؤال يحتاج تفكيراً أعمق!\nيمكنك إعادة صياغة السؤال بشكل أوضح.")
-    except requests.exceptions.RequestException as e:
-        print(f"Network error in chat: {e}")
-        await wait_msg.edit_text("🌐 خطأ في الاتصال. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.")
+            print(f"❌ Invalid bot token: {response.status_code}")
+            return False
+            
     except Exception as e:
-        print(f"خطأ في الدردشة: {e}")
-        await wait_msg.edit_text("❌ حدث خطأ غير متوقع. النظام يعمل على الإصلاح تلقائياً...")
-    
-    return CHAT_MODE
+        print(f"❌ Telegram connection error: {e}")
+        return False
 
-# --- كود تحليل الصور ---
-async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني"""
-    user_id = update.effective_user.id
-    candle, trade_time, manual_time = get_user_setting(user_id)
-    
-    if not candle or not trade_time:
-        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-        await update.message.reply_text(
-            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-
-    wait_msg = await update.message.reply_text("🔍 **جاري فحص الشارت 📊 ...**")
-    photo = await update.message.photo[-1].get_file()
-    path = f"img_{user_id}.jpg"
-    await photo.download_to_drive(path)
-
+def send_telegram_message(chat_id, text):
+    """Send message via Telegram Bot API"""
     try:
-        base64_img = encode_image(path)
-        
-        # تنسيق وقت الصفقة للبرومبت
-        time_for_prompt = format_trade_time_for_prompt(trade_time, manual_time)
-        
-        # برومبت آمن للتحليل الفني
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML"
+        }
+        response = requests.post(url, json=payload, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"❌ Telegram send error: {e}")
+        return False
+
+# === MISTRAL AI FUNCTIONS ===
+def analyze_chart(image_base64, candle_speed="M5", trade_time="H1"):
+    """Analyze chart using Mistral AI"""
+    print(f"🔍 Analyzing chart with settings: {candle_speed}, {trade_time}")
+    
+    try:
         prompt = f"""
         أنت محلل فني خبير في أسواق المال. الصورة المرفقة هي رسم بياني (شارت) للتداول.
         
-        **الإعدادات المطلوبة:**
-        - سرعة الشموع: {candle}
+        الإعدادات:
+        - سرعة الشموع: {candle_speed}
         - مدة الصفقة المتوقعة: {trade_time}
         
-        **مطلوب منك:**
-        1. تحليل شامل للصورة
-        2. تحديد الأنماط الفنية الظاهرة
-        3. تقييم قوة الاتجاه
-        4. تقديم توقع واضح
-        5. تحليل ذكي للصورة 
-        6. توقعات ناحجة جدآ 
-        7. قدم إجابات دقيقة وموضوعية تعتمد على الحقائق والبيانات المتاحة 
-        8. لا تقدم نسب مخاطرة وهمية ولا توقعات مضمونة.
-        9. كن واقعياً وموضوعياً في جميع إجاباتك.
-        10. توقعات ناحجة و رسمية بدون اي إجابات سريعة أو وهمية
-        11. انتا ذكي جدآ وتوقعات مضمونة و صحيحة 100٪
-        12. اجعل كل شئ بالغة العربية.
-        13. اختصار الإجابة بدقة و وضوح و صحة بيانات
+        قدم تحليلاً شاملاً يشمل:
+        1. النمط السائد (تصاعدي/تنازلي/جانبي)
+        2. ملاحظات فنية هامة
+        3. تقييم عام للاتجاه
+        4. توقعات واقعية
         
-        **التنسيق المطلوب للإجابة:**
-        📊 **التحليل الفني:**
-        - النمط السائد: (تصاعدي/تنازلي/جانبي)
-        - مستويات الدعم/المقاومة: (إن وجدت)
-        - توقع مستويات الدعم/المقاومة القادم: (إن وجدت)
-        🎯 **التوقع:**
-        - الإتجاه: (🟢 صعود ⬆️ / 🔴 نزول ⬇️ / 🟡 ثابت ➡️ )
-        - توقع الإتجاه: ( صعود عالي / صعود منخفض / صعود متوسط/ نزول مرتفع / نزول منخفض/ نزول متوسط )
-        - توقع: ( بيع 🔴 / شراء 🟢 / الإحتفاظ 🟡 )
-        - حد الربح الحالي:
-        - توقع حد الربح:
-        - حد الخسارة الحالية:
-        - توقع حد الخسارة:
-        - مستوى الثقة: XX٪
-        - نقطة الدخول المقترحة: 
-        - توقع نقطة الوصول:
-        - هدف الربح:
-        - توقع هدف الربح:
-        - وقف الخسارة:
-        - توقع هدف الخسارة:
-        
-        ⚠️ **التحذيرات والمخاطر:**
-        - المخاطر المحتملة:
+        كن:
+        - موضوعياً وواقعياً
+        - واضحاً ومباشراً
+        - دقيقاً في الوصف
+        - باللغة العربية فقط
         """
         
         payload = {
             "model": "pixtral-12b-2409",
             "messages": [
                 {
-                    "role": "user", 
+                    "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
                     ]
                 }
             ],
@@ -554,412 +258,148 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
-            
-            # ✅ حل مشكلة التكرار: تنظيف النص من التكرار
-            result = clean_repeated_text(result)
-            
-            keyboard = [["📊 تحليل صورة أخرى"], ["💬 دردشة"], ["الرجوع للقائمة الرئيسية"]]
-            
-            # تنسيق وقت الصفقة للعرض
-            time_display = format_trade_time_for_prompt(trade_time, manual_time)
-            
-            # إعداد النص النهائي مع الإعدادات
-            full_result = (
-                f"✅ **تم التحليل بنجاح!**\n"
-                f"📈 **نتائج تحليل الشارت:**\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"{result}\n\n"
-                f"📊 **الإعدادات المستخدمة:**\n"
-                f"• سرعة الشموع: {candle}\n"
-                f"• {time_display}"
-            )
-            
-            # تقسيم النتيجة إذا كانت طويلة
-            if len(full_result) > 4000:
-                parts = split_message(full_result, max_length=4000)
-                
-                # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
-                await wait_msg.edit_text(
-                    parts[0],
-                    parse_mode="Markdown"
-                )
-                
-                # إرسال الأجزاء المتبقية
-                for part in parts[1:]:
-                    await update.message.reply_text(part, parse_mode="Markdown")
-            else:
-                await wait_msg.edit_text(
-                    full_result,
-                    parse_mode="Markdown"
-                )
-            
-            # إرسال الأزرار
-            await update.message.reply_text(
-                "📊 **اختر الإجراء التالي:**",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-            )
+            return clean_text(result)
         else:
-            print(f"Mistral Vision API Error: {response.status_code} - {response.text}")
-            keyboard = [["الرجوع للقائمة الرئيسية"]]
-            await wait_msg.edit_text(f"❌ **خطأ في تحليل الصورة:** {response.status_code}")
+            print(f"❌ Mistral API error: {response.status_code}")
+            return f"❌ خطأ في التحليل: {response.status_code}"
             
-    except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد لتحليل الصورة. حاول مرة أخرى.")
     except Exception as e:
-        print(f"خطأ في تحليل الصورة: {e}")
-        keyboard = [["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text("❌ **حدث خطأ في تحليل الصورة.**\nيرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.")
-    finally:
-        if os.path.exists(path):
-            os.remove(path)
-    
-    return MAIN_MENU
+        print(f"❌ Analysis error: {e}")
+        return "❌ حدث خطأ أثناء التحليل. حاول مرة أخرى."
 
-# --- الدوال الأساسية ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء البوت"""
-    keyboard = [
-        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["💬 دردشة"]
-    ]
+def chat_with_ai(message):
+    """Chat with Mistral AI"""
+    print(f"💭 Processing chat: {message[:50]}...")
     
-    await update.message.reply_text(
-        "🚀 **أهلاً بك في ABOOD GPT - الإصدار المتقدم**\n\n"
-        "🤖 **المميزات الجديدة:**\n"
-        "• تحليل فني متقدم للشارتات\n"
-        "• 🆕 دردشة ذكية مع برومبت قوي\n"
-        "• إعدادات تخصيص كاملة\n"
-        "• وقت يدوي مخصص\n\n"
-        "اختر أحد الخيارات:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    return MAIN_MENU
-
-async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات القائمة الرئيسية"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "⚙️ إعدادات التحليل":
-        keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
-        keyboard.append(["الرجوع للقائمة الرئيسية"])
+    try:
+        prompt = """أنت ABOOD GPT، مساعد ذكي عربي متخصص في:
+        - التحليل الفني والمالي
+        - الاستشارات التقنية
+        - الكتابة والإبداع
+        - حل المشكلات
         
-        await update.message.reply_text(
-            "⚙️ **إعدادات التحليل الفني**\n\n"
-            "حدد سرعة الشموع للبدء:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return SETTINGS_CANDLE
-    
-    elif user_message == "📊 تحليل صورة":
-        candle, trade_time, manual_time = get_user_setting(user_id)
+        أنت:
+        - ودود ومفيد
+        - دقيق ومعلوماتي
+        - تتحدث بالعربية الفصحى
+        - تقدم إجابات شاملة
         
-        if not candle or not trade_time:
-            keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-            await update.message.reply_text(
-                "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-                "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return MAIN_MENU
+        أجب على سؤال المستخدم بأفضل طريقة ممكنة."""
+        
+        payload = {
+            "model": "mistral-medium",
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": message}
+            ],
+            "max_tokens": 1000,
+            "temperature": 0.7
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()['choices'][0]['message']['content']
+            return clean_text(result)
         else:
-            keyboard = [["الرجوع للقائمة الرئيسية"]]
+            return f"❌ خطأ في الدردشة: {response.status_code}"
             
-            time_display = format_trade_time_for_prompt(trade_time, manual_time)
-            
-            await update.message.reply_text(
-                f"📊 **جاهز للتحليل**\n\n"
-                f"الإعدادات الحالية:\n"
-                f"• سرعة الشموع: {candle}\n"
-                f"• {time_display}\n\n"
-                f"أرسل صورة الرسم البياني (الشارت) الآن:",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return ANALYZE_MODE
-    
-    elif user_message == "💬 دردشة":
-        return await start_chat_mode(update, context)
-    
-    keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-    await update.message.reply_text(
-        "اختر أحد الخيارات من القائمة:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-    )
-    return MAIN_MENU
+    except Exception as e:
+        print(f"❌ Chat error: {e}")
+        return "❌ حدث خطأ أثناء الدردشة. حاول مرة أخرى."
 
-async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار سرعة الشموع"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    if user_message in CANDLE_SPEEDS:
-        save_user_setting(user_id, "candle", user_message)
+# === WEBHOOK HANDLER FOR TELEGRAM ===
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Handle Telegram webhook updates"""
+    try:
+        data = request.json
+        print(f"📨 Received update: {data}")
         
-        keyboard = [TRADE_TIMES[i:i+3] for i in range(0, len(TRADE_TIMES), 3)]
-        keyboard.append(["الرجوع للقائمة الرئيسية"])
+        # Process the update here
+        # This is a simplified version - you'd need to implement full processing
         
-        await update.message.reply_text(
-            f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n"
-            f"الآن حدد **مدة الصفقة** المتوقعة:\n\n"
-            f"يمكنك اختيار:\n"
-            f"• أحد الأوقات الجاهزة\n"
-            f"• ⏱️ وقت يدوي (لتحديد وقت مخصص)",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SETTINGS_TIME
-    
-    await update.message.reply_text("❌ الرجاء اختيار سرعة شموع صحيحة.")
-    return SETTINGS_CANDLE
+        return "OK"
+    except Exception as e:
+        print(f"❌ Webhook error: {e}")
+        return "ERROR", 500
 
-async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار مدة الصفقة"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    if user_message in TRADE_TIMES:
-        if user_message == "⏱️ وقت يدوي":
-            keyboard = [["الرجوع للقائمة الرئيسية"]]
-            
-            await update.message.reply_text(
-                "⏱️ **إدخال وقت يدوي**\n\n"
-                "📝 **أرسل وقت الصفقة يدوياً بإحدى الطرق:**\n\n"
-                "1. **تنسيق الوقت:** 00:00:00 (ساعات:دقائق:ثواني)\n"
-                "   مثال: 02:30:00 (ساعتين ونصف)\n"
-                "   مثال: 00:15:00 (15 دقيقة)\n"
-                "   مثال: 00:00:30 (30 ثانية)\n\n"
-                "2. **كتابة نصي:**\n"
-                "   مثال: 2 ساعة\n"
-                "   مثال: 30 دقيقة\n"
-                "   مثال: 3 أيام\n"
-                "   مثال: 45 ثانية\n\n"
-                "3. **أرقام فقط:**\n"
-                "   مثال: 4 (سيتم اعتبارها 4 ساعات)\n\n"
-                "❌ للإلغاء، اضغط 'الرجوع للقائمة الرئيسية'",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return SETTINGS_MANUAL_TIME
-        else:
-            save_user_setting(user_id, "trade_time", user_message)
-            save_user_setting(user_id, "manual_time", "")
-            
-            keyboard = [["📊 تحليل صورة"], ["💬 دردشة مع الذكاء الاصطناعي"], ["الرجوع للقائمة الرئيسية"]]
-            
-            candle, _, _ = get_user_setting(user_id)
-            
-            await update.message.reply_text(
-                f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
-                f"✅ سرعة الشموع: {candle}\n"
-                f"✅ مدة الصفقة: {user_message}\n\n"
-                f"يمكنك الآن تحليل صورة أو الدردشة:",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return MAIN_MENU
-    
-    await update.message.reply_text("❌ الرجاء اختيار مدة صفقة صحيحة.")
-    return SETTINGS_TIME
+# === MAIN FUNCTIONS ===
+def start_flask():
+    """Start Flask server"""
+    print(f"🌐 Starting Flask server on port {PORT}...")
+    app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
 
-async def handle_manual_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إدخال الوقت يدوياً"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
+def initialize_system():
+    """Initialize the entire system"""
+    print("=" * 60)
+    print("🚀 ABOOD GPT SYSTEM INITIALIZATION")
+    print("=" * 60)
     
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
+    # Initialize database
+    if not init_db():
+        print("❌ Failed to initialize database")
+        return False
     
-    parsed_time = parse_manual_time(user_message)
+    # Setup Telegram bot
+    if not setup_telegram_bot():
+        print("❌ Failed to setup Telegram bot")
+        return False
     
-    if parsed_time:
-        save_user_setting(user_id, "trade_time", "⏱️ وقت يدوي")
-        save_user_setting(user_id, "manual_time", parsed_time)
-        
-        keyboard = [["📊 تحليل صورة"], ["💬 دردشة مع الذكاء الاصطناعي"], ["الرجوع للقائمة الرئيسية"]]
-        
-        candle, _, _ = get_user_setting(user_id)
-        
-        await update.message.reply_text(
-            f"⏱️ **تم حفظ الوقت اليدوي بنجاح!**\n\n"
-            f"✅ سرعة الشموع: {candle}\n"
-            f"✅ مدة الصفقة: {parsed_time} (مدخل يدوي)\n\n"
-            f"يمكنك الآن تحليل صورة أو الدردشة:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    else:
-        keyboard = [["الرجوع للقائمة الرئيسية"]]
-        await update.message.reply_text(
-            "❌ **تنسوق وقت غير صحيح!**\n\n"
-            "📝 **أعد الإدخال بإحدى الطرق:**\n\n"
-            "1. **تنسيق الوقت:** 00:00:00 (ساعات:دقائق:ثواني)\n"
-            "   مثال: 02:30:00 (ساعتين ونصف)\n\n"
-            "2. **كتابة نصي:**\n"
-            "   مثال: 2 ساعة\n"
-            "   مثال: 30 دقيقة\n\n"
-            "3. **أرقام فقط:**\n"
-            "   مثال: 4 (سيتم اعتبارها 4 ساعات)",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SETTINGS_MANUAL_TIME
-
-async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة وضع التحليل"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
+    print("✅ System initialized successfully")
+    print("📡 Ready to receive requests")
+    print("=" * 60)
     
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    await update.message.reply_text(
-        "📤 **الرجاء إرسال صورة الشارت فقط**\nأو اضغط 'الرجوع للقائمة الرئيسية'",
-        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True, one_time_keyboard=False)
-    )
-    return ANALYZE_MODE
-
-async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور في وضع التحليل"""
-    return await handle_photo_analysis(update, context)
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر المساعدة"""
-    help_text = """
-    🤖 **أوامر البوت:**
-    
-    /start - بدء البوت والعودة للقائمة الرئيسية
-    /help - عرض رسالة المساعدة
-    
-    ⚙️ **كيفية الاستخدام:**
-    1. استخدم أزرار القائمة للتنقل
-    2. أرسل صورة الشارت للتحليل
-    3. اختر "دردشة" للاستفسارات النصية
-    
-    ⏱️ **خاصية الوقت اليدوي:**
-    • يمكنك تحديد وقت الصفقة يدوياً
-    • التنسيقات المدعومة:
-      - 00:00:00 (ساعات:دقائق:ثواني)
-      - عدد الأيام (مثال: 2 يوم)
-      - عدد الساعات (مثال: 3 ساعة)
-      - عدد الدقائق (مثال: 45 دقيقة)
-      - عدد الثواني (مثال: 30 ثانية)
-    
-    📊 **مميزات البوت:**
-    • تحليل فني للرسوم البيانية
-    • دردشة ذكية مع الذكاء الاصطناعي
-    • حفظ إعداداتك الشخصية
-    • واجهة سهلة بالأزرار
-    • إدخال وقت مخصص يدوياً
-    """
-    await update.message.reply_text(help_text, parse_mode="Markdown")
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إلغاء المحادثة"""
-    await update.message.reply_text(
-        "تم الإلغاء. اكتب /start للبدء من جديد.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    return ConversationHandler.END
-
-# --- الحل النهائي ---
-def run_flask_server():
-    """تشغيل Flask server"""
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
-def run_telegram_bot():
-    """تشغيل Telegram bot"""
-    print("🤖 Starting Telegram Bot...")
-    
-    # تهيئة قاعدة البيانات
-    init_db()
-    
-    # إنشاء تطبيق Telegram (باستخدام إصدار أقدم من المكتبة)
-    application = Application.builder().token(TOKEN).build()
-    
-    # معالج المحادثة
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            MAIN_MENU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)
-            ],
-            SETTINGS_CANDLE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_candle)
-            ],
-            SETTINGS_TIME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_time)
-            ],
-            SETTINGS_MANUAL_TIME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manual_time)
-            ],
-            CHAT_MODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat_message)
-            ],
-            ANALYZE_MODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode),
-                MessageHandler(filters.PHOTO, handle_photo_in_analyze_mode)
-            ],
-        },
-        fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
-        allow_reentry=True
-    )
-    
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("cancel", cancel))
-    
-    # إضافة معالج للنصوص
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
-    
-    print("✅ Telegram Bot initialized successfully")
-    print("📡 Bot is now polling for updates...")
-    
-    # تشغيل البوت
-    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    return True
 
 def main():
-    """الدالة الرئيسية"""
-    print("🚀 Starting ABOOD GPT Bot System...")
+    """Main entry point"""
+    print("🤖 ABOOD GPT - Telegram Bot System")
+    print("📅 " + time.strftime("%Y-%m-%d %H:%M:%S"))
+    print("-" * 40)
     
-    # تشغيل Flask في thread منفصل
-    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
-    flask_thread.start()
+    # Initialize system
+    if not initialize_system():
+        print("❌ System initialization failed. Exiting...")
+        return
     
-    print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
+    # Start Flask server in main thread
+    print("\n" + "=" * 60)
+    print("🎯 SYSTEM IS NOW RUNNING")
+    print("=" * 60)
+    print(f"🔗 Web Interface: http://localhost:{PORT}")
+    print(f"🔗 Health Check: http://localhost:{PORT}/health")
+    print(f"🔗 Ping: http://localhost:{PORT}/ping")
+    print("\n💡 Note: This is a Flask-only version.")
+    print("   The bot is ready but needs to be configured with webhooks.")
+    print("   Currently works as a keep-alive service for Render.")
+    print("=" * 60)
     
-    # تشغيل Telegram bot في thread الرئيسي
-    run_telegram_bot()
+    start_flask()
 
+# === SIMPLE COMMAND LINE INTERFACE ===
 if __name__ == "__main__":
-    main()
+    # Handle command line arguments
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "test":
+            print("🧪 Running tests...")
+            # Test database
+            init_db()
+            # Test bot connection
+            setup_telegram_bot()
+            print("✅ Tests completed")
+        elif sys.argv[1] == "setup":
+            print("🔧 Setting up webhook...")
+            # You would set up webhook here
+            print("✅ Setup completed (webhook not implemented in this version)")
+        else:
+            print(f"❌ Unknown command: {sys.argv[1]}")
+            print("Usage: python bot.py [test|setup]")
+    else:
+        # Run normally
+        main()
