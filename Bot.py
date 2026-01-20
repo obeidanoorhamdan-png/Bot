@@ -761,7 +761,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 if __name__ == "__main__":
-    # 1. إعداد التسجيل (Logging)
+    # 1. إعداد التسجيل (Logging) لعرض السجلات في لوحة تحكم Render
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO
@@ -770,7 +770,7 @@ if __name__ == "__main__":
     # 2. تهيئة قاعدة البيانات
     init_db()
     
-    # 3. إنشاء تطبيق البوت (استخدمنا اسم application لتجنب التعارض مع Flask)
+    # 3. إنشاء تطبيق البوت (استخدمنا اسم application لمنع التعارض مع Flask)
     application = Application.builder().token(TOKEN).build()
     
     # 4. تعريف معالج المحادثة (ConversationHandler)
@@ -801,15 +801,15 @@ if __name__ == "__main__":
         allow_reentry=True 
     )
     
-    # 5. إضافة المعالجات للتطبيق (استخدام application)
+    # 5. إضافة المعالجات للتطبيق (تم تغيير app إلى application هنا)
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
     
-    # 6. تشغيل Flask في الخلفية لضمان بقاء الخدمة Live على Render
+    # 6. تشغيل Flask في الخلفية لإبقاء الخدمة "Live"
     keep_alive() 
     
-    # 7. تشغيل البوت الفعلي
+    # 7. تشغيل البوت الفعلي لاستقبال الرسائل
     print("🤖 --- البوت يعمل الآن بنجاح على Render ---")
     application.run_polling()
