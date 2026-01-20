@@ -1,15 +1,19 @@
 from flask import Flask
+from threading import Thread
+import os
 
-app = Flask(__name__)  # يجب أن يكون الاسم 'app' تماماً كما في الصورة
+app = Flask(__name__)  # تعريف Flask باسم app
 
 @app.route('/')
 def home():
     return "Bot is running!"
 
-
 def keep_alive():
-    t = Thread(target=lambda: app_web.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080))))
+    # تم تغيير app_web إلى app ليتطابق مع التعريف في الأعلى
+    # وتم تغيير المنفذ (Port) إلى 10000 وهو الافتراضي لـ Render
+    t = Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))))
     t.start()
+
 import logging
 import base64
 import os
@@ -811,6 +815,11 @@ if __name__ == "__main__":
     print("💬 - نظام الدردشة مفعل")
     print("✅ - تم تشغيل البوت بنجاح")
     
-if __name__ == '__main__':
-    keep_alive()
-    app.run_polling()
+if __name__ == "__main__":
+    # 1. تشغيل خادم Flask في الخلفية لضمان بقاء الخدمة Live على Render
+    keep_alive() 
+    
+    # 2. تشغيل البوت (استبدل 'application' بالاسم الذي عرفت به Application.builder)
+    print("Bot is starting...")
+    application.run_polling()
+
