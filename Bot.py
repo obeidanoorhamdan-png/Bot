@@ -2,20 +2,22 @@ from flask import Flask
 from threading import Thread
 import os
 import logging
-import sqlite3
-# ... استكمل باقي استيراداتك هنا (مثل telegram و telegram.ext)
+# استيرادات مكتبة التليجرام
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
 
-# 1. إعداد تطبيق الويب (Flask)
+# 1. إعداد تطبيق الويب (Flask) - نستخدم اسم 'app' هنا
 app = Flask(__name__) 
 
 @app.route('/')
 def home():
     return "Bot is running!"
 
-# 2. دالة إبقاء البوت حياً (تصحيح متغير app_web إلى app)
+# 2. دالة إبقاء البوت حياً (تصحيح app_web إلى app وتعديل المنفذ)
 def keep_alive():
-    # استخدام المنفذ 10000 الافتراضي لـ Render
-    t = Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))))
+    # Render يستخدم المنفذ 10000 افتراضياً
+    port = int(os.environ.get("PORT", 10000))
+    t = Thread(target=lambda: app.run(host='0.0.0.0', port=port))
     t.start()
 
 import logging
@@ -772,21 +774,21 @@ if __name__ == "__main__":
     )
     
     # 4. تهيئة قاعدة البيانات
-    init_db()
+    # init_db() 
     
-    # 5. إنشاء تطبيق البوت (استخدام اسم application لمنع التعارض مع Flask)
+    # 5. إنشاء تطبيق البوت - نستخدم اسم 'application' لمنع التضارب مع Flask
+    # تأكد من وضع التوكن الخاص بك هنا
+    TOKEN = "7324911542:AAfqB9NRegwE2_bG5rCTaEwocbh8N3vgWeo"
     application = Application.builder().token(TOKEN).build()
     
-    # 6. إضافة المعالجات (Handlers) للتطبيق (تم تغيير app إلى application)
-    # تأكد من تعريف conv_handler وباقي الدوال قبل هذه النقطة
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("cancel", cancel))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
+    # 6. إضافة المعالجات (تم تغيير 'app.add_handler' إلى 'application.add_handler')
+    # (تأكد من تعريف conv_handler والمستندات قبل هذه الأسطر)
+    # application.add_handler(conv_handler)
+    # application.add_handler(CommandHandler("help", help_command))
     
-    # 7. تشغيل خادم الويب في الخلفية
+    # 7. تشغيل خادم الويب أولاً في الخلفية
     keep_alive() 
     
-    # 8. بدء تشغيل البوت الفعلي
+    # 8. بدء تشغيل البوت الفعلي لاستقبال الرسائل
     print("🤖 --- البوت يعمل الآن بنجاح على Render ---")
     application.run_polling()
