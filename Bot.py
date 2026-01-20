@@ -23,40 +23,21 @@ TRADE_TIMES = ["S3", "S15", "S30", "M1", "M3", "M5", "M30", "H1", "H4", "H24", "
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, SETTINGS_MANUAL_TIME, CHAT_MODE, ANALYZE_MODE = range(6)
 
 # --- Flask Server للبقاء نشطاً ---
-flask_app = Flask(__name__)
+from flask import Flask
+from threading import Thread
+import os
 
-@flask_app.route('/')
+# يجب أن يكون الاسم 'app' ليتعرف عليه Render تلقائياً
+app = Flask(__name__) 
+
+@app.route('/')
 def home():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>ABOOD GPT Bot</title>
-        <style>
-            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-            h1 { color: #2c3e50; }
-            .status { background: #2ecc71; color: white; padding: 10px 20px; border-radius: 5px; display: inline-block; }
-        </style>
-    </head>
-    <body>
-        <h1>🤖 ABOOD GPT Telegram Bot</h1>
-        <p>Chat & Technical Analysis Bot</p>
-        <div class="status">✅ Bot is Running</div>
-        <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-    </body>
-    </html>
-    """
+    return "Bot is running!"
 
-@flask_app.route('/health')
-def health():
-    return {"status": "active", "service": "abood-gpt-bot", "timestamp": time.time()}
-
-@flask_app.route('/ping')
-def ping():
-    return "PONG"
-
-def run_flask():
-    flask_app.run(host='0.0.0.0', port=8080)
+def keep_alive():
+    port = int(os.environ.get("PORT", 10000))
+    t = Thread(target=lambda: app.run(host='0.0.0.0', port=port))
+    t.start()
 
 # --- قاعدة البيانات ---
 def init_db():
@@ -941,21 +922,24 @@ def main():
     )
     
     # إضافة المعالجات
-    app.add_handler(conv_handler)
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("cancel", cancel))
-    
-    # إضافة معالج لجميع الرسائل النصية غير المعالجة
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
-    
+    # استخدام application (كائن البوت) وليس app (كائن الويب)
+    application.add_handler(conv_handler)
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("cancel", cancel))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
+
+
     print("🚀 --- ABOOD GPT Bot Started ---")
     print("📊 - Technical Analysis System: ACTIVE")
     print("💬 - Advanced Chat System: ACTIVE")
     print("🌐 - Flask Server: RUNNING on port 8080")
     print("✅ - Bot is ready to receive commands")
     
-    # بدء البوت
-    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    main()
+    # تشغيل Flask أولاً في الخلفية
+    keep_alive() 
+    
+    # تشغيل البوت (تأكد أنك عرفت 'application' سابقاً)
+    print("Bot is starting...")
+    application.run_polling()
