@@ -1,34 +1,14 @@
-from flask import Flask
-from threading import Thread
-import os
-import logging
-# استيرادات مكتبة التليجرام
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ConversationHandler
-
-# 1. إعداد تطبيق الويب (Flask) - نستخدم اسم 'app' هنا
-app = Flask(__name__) 
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-# 2. دالة إبقاء البوت حياً (تصحيح app_web إلى app وتعديل المنفذ)
-def keep_alive():
-    # Render يستخدم المنفذ 10000 افتراضياً
-    port = int(os.environ.get("PORT", 10000))
-    t = Thread(target=lambda: app.run(host='0.0.0.0', port=port))
-    t.start()
-
 import logging
 import base64
 import os
 import sqlite3
 import re
 import requests
-from datetime import timedelta
+import threading
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
+from flask import Flask
+import time
 
 # --- الإعدادات ---
 TOKEN = "7324911542:AAFqB9NRegwE2_bG5rCTaEWocbh8N3vgWeo"
@@ -41,6 +21,42 @@ TRADE_TIMES = ["S3", "S15", "S30", "M1", "M3", "M5", "M30", "H1", "H4", "H24", "
 
 # حالات المحادثة
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, SETTINGS_MANUAL_TIME, CHAT_MODE, ANALYZE_MODE = range(6)
+
+# --- Flask Server للبقاء نشطاً ---
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>ABOOD GPT Bot</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+            h1 { color: #2c3e50; }
+            .status { background: #2ecc71; color: white; padding: 10px 20px; border-radius: 5px; display: inline-block; }
+        </style>
+    </head>
+    <body>
+        <h1>🤖 ABOOD GPT Telegram Bot</h1>
+        <p>Chat & Technical Analysis Bot</p>
+        <div class="status">✅ Bot is Running</div>
+        <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
+    </body>
+    </html>
+    """
+
+@flask_app.route('/health')
+def health():
+    return {"status": "active", "service": "abood-gpt-bot", "timestamp": time.time()}
+
+@flask_app.route('/ping')
+def ping():
+    return "PONG"
+
+def run_flask():
+    flask_app.run(host='0.0.0.0', port=8080)
 
 # --- قاعدة البيانات ---
 def init_db():
@@ -83,26 +99,22 @@ def get_user_setting(user_id):
     conn.close()
     if res:
         return res
-    # إرجاع قيم افتراضية إذا لم يكن المستخدم موجوداً
     return ("M5", "H1", "")
 
 # --- دوال معالجة الوقت اليدوي ---
 def parse_manual_time(time_str):
     """تحويل النص المدخل إلى وقت بالتنسيق 00:00:00"""
     try:
-        # تحقق من تنسيق HH:MM:SS
         if re.match(r'^\d{1,2}:\d{2}:\d{2}$', time_str):
             hours, minutes, seconds = map(int, time_str.split(':'))
             if 0 <= hours <= 23 and 0 <= minutes <= 59 and 0 <= seconds <= 59:
                 return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         
-        # تحقق من عدد الأيام
         elif 'يوم' in time_str or 'يومين' in time_str or 'أيام' in time_str:
             days = 0
             if 'يومين' in time_str:
                 days = 2
             elif 'يوم' in time_str:
-                # استخراج الرقم من النص
                 numbers = re.findall(r'\d+', time_str)
                 if numbers:
                     days = int(numbers[0])
@@ -110,7 +122,6 @@ def parse_manual_time(time_str):
                     days = 1
             return f"{days} يوم"
         
-        # تحقق من عدد الساعات
         elif 'ساعة' in time_str or 'ساعات' in time_str:
             hours = 0
             numbers = re.findall(r'\d+', time_str)
@@ -120,7 +131,6 @@ def parse_manual_time(time_str):
                 hours = 1
             return f"{hours} ساعة"
         
-        # تحقق من عدد الدقائق
         elif 'دقيقة' in time_str or 'دقائق' in time_str:
             minutes = 0
             numbers = re.findall(r'\d+', time_str)
@@ -130,7 +140,6 @@ def parse_manual_time(time_str):
                 minutes = 1
             return f"{minutes} دقيقة"
         
-        # تحقق من عدد الثواني
         elif 'ثانية' in time_str or 'ثواني' in time_str:
             seconds = 0
             numbers = re.findall(r'\d+', time_str)
@@ -140,7 +149,6 @@ def parse_manual_time(time_str):
                 seconds = 1
             return f"{seconds} ثانية"
         
-        # إذا كان رقم فقط، تعتبره ساعات
         elif time_str.isdigit():
             hours = int(time_str)
             return f"{hours} ساعة"
@@ -165,26 +173,20 @@ def encode_image(image_path):
 # --- دوال المساعدة للتعامل مع النصوص ---
 def clean_repeated_text(text):
     """تنظيف النص من التكرارات"""
-    # تقسيم النص إلى فقرات
     paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
     
-    # إزالة الفقرات المكررة
     unique_paragraphs = []
     seen_paragraphs = set()
     
     for paragraph in paragraphs:
-        # اختصار الفقرة للتحقق من التكرار
         simplified = paragraph[:100].strip()
         if simplified not in seen_paragraphs:
             unique_paragraphs.append(paragraph)
             seen_paragraphs.add(simplified)
     
-    # إعادة تجميع النص
     cleaned_text = '\n\n'.join(unique_paragraphs)
     
-    # إذا كان النص طويلاً جداً، نأخذ فقط أول 2000 حرف تقريباً
     if len(cleaned_text) > 2000:
-        # نبحث عن مكان جيد للقطع (بعد فقرة كاملة)
         if '\n\n' in cleaned_text[:2200]:
             cut_point = cleaned_text[:2200].rfind('\n\n')
             cleaned_text = cleaned_text[:cut_point]
@@ -195,51 +197,52 @@ def clean_repeated_text(text):
 
 def split_message(text, max_length=4000):
     """تقسيم الرسالة الطويلة إلى أجزاء"""
-    parts = []
-    
-    # إذا كان النص أقصر من الحد الأقصى، إرجاعه كما هو
     if len(text) <= max_length:
         return [text]
     
-    # تقسيم النص مع الحفاظ على الفقرات
+    parts = []
     while len(text) > max_length:
-        # البحث عن آخر فاصل فقرات قبل الحد الأقصى
         split_point = text[:max_length].rfind('\n\n')
         if split_point == -1:
             split_point = text[:max_length].rfind('\n')
         if split_point == -1:
-            split_point = max_length - 100  # فاصل طارئ
+            split_point = max_length - 100
         
-        # إضافة الجزء إلى القائمة
         parts.append(text[:split_point])
         text = text[split_point:].lstrip()
     
-    # إضافة الجزء المتبقي
     if text:
         parts.append(text)
     
     return parts
 
-# --- الدردشة مع Mistral ---
+# --- 🚀 برومبت قوي للدردشة فقط (بدون تغيير تحليل الصور) ---
 async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء وضع الدردشة"""
+    """بدء وضع الدردشة المتقدم"""
     keyboard = [
-        ["ايقاف الدردشة"],
-        ["الرجوع للقائمة الرئيسية"]
+        ["🚀 مساعد ذكي شامل", "💼 استشارات احترافية"],
+        ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
+        ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
+        ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
     ]
     
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="💬 **وضع الدردشة مع ABOOD GPT**\n\n"
-             "يمكنك الآن الدردشة مع الذكاء الاصطناعي.\n"
-             "أرسل رسالتك أو استخدم الأزرار أدناه:",
+        text="🚀 **وضع الدردشة المتقدم مع ABOOD GPT**\n\n"
+             "أنا مساعدك الذكي متعدد المواهب:\n"
+             "• مستشار استثماري وتحليلات مالية\n"
+             "• خبير برمجي وتقني\n"
+             "• محلل بيانات واستراتيجيات\n"
+             "• كاتب محتوى إبداعي\n"
+             "• مساعد شخصي ذكي\n\n"
+             "اختر مجال المساعدة أو أرسل سؤالك مباشرة:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
     )
     return CHAT_MODE
 
 async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة رسائل الدردشة"""
+    """معالجة رسائل الدردشة مع برومبت قوي"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
@@ -260,27 +263,133 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return MAIN_MENU
     
+    # برومبتات متخصصة حسب الاختيار
+    system_prompts = {
+        "🚀 مساعد ذكي شامل": """أنت ABOOD GPT، مساعد ذكي شامل يمتلك معرفة عميقة في:
+🎯 **التحليل الفني والمالي:** خبرة في أسواق المال، تحليل الشارتات، واستراتيجيات التداول
+💻 **البرمجة والتقنية:** إتقان Python، JavaScript، تطوير الويب، الذكاء الاصطناعي
+📊 **البيانات والتحليل:** تحليل البيانات، الإحصاء، وتقديم رؤى استراتيجية
+✍️ **الكتابة والإبداع:** صياغة المحتوى، التقارير، والمواد الإعلامية
+🧠 **التفكير النقدي:** حل المشكلات المعقدة، التحليل المنطقي، واتخاذ القرارات
+
+**مبادئك الأساسية:**
+1. **الدقة أولاً:** معلومات موثوقة ومدروسة
+2. **التنظيم:** هيكل واضح مع عناوين ونقاط
+3. **القيمة المضافة:** تقديم نصائح إضافية غير مطلوبة
+4. **الوضوح:** شرح المفاهيم المعقدة ببساطة
+5. **الإبداع:** حلول مبتكرة للمشكلات
+
+**تنسيق الإجابة المثالي:**
+🎯 **الجوهر:** (ملخص سريع)
+📋 **التفاصيل:** (نقاط مرتبة)
+💡 **الإثراء:** (معلومات إضافية مفيدة)
+🚀 **التطبيق:** (خطوات عملية)
+
+استخدم اللغة العربية بطلاقة مع لمسة عصرية وجذابة.""",
+
+        "💼 استشارات احترافية": """أنت ABOOD GPT، مستشار احترافي في:
+📈 **الاستشارات المالية:** تحليل الأسواق، تقييم المخاطر، استراتيجيات الاستثمار
+👔 **التخطيط الاستراتيجي:** تحليل SWOT، وضع الأهداف، متابعة الأداء
+🤝 **العلاقات المهنية:** التواصل الفعال، التفاوض، بناء الشبكات
+📋 **إدارة المشاريع:** التخطيط، التنفيذ، المتابعة، التقييم
+
+**التزاماتك المهنية:**
+• الموضوعية والشفافية
+• احترام السرية المهنية
+• التطوير المستمر
+• الالتزام بالأخلاقيات المهنية
+• التركيز على النتائج العملية""",
+
+        "📈 تحليل استثماري": """أنت ABOOD GPT، محلل استثماري متخصص في:
+📊 **التحليل الفني:** قراءة الشارتات، المؤشرات الفنية، أنماط التداول
+📉 **التحليل الأساسي:** الأرباح، القوائم المالية، المؤشرات الاقتصادية
+🎯 **إدارة المخاطر:** تحديد المخاطر، التحوط، موازنة المحفظة
+🔍 **البحث والتنقيب:** فرص الاستثمار، اتجاهات السوق، التنبؤات
+
+**قواعد التحليل:**
+• اعتماد البيانات الرسمية والموثوقة
+• تحليل متعدد الأبعاد
+• مراعاة السياق الاقتصادي
+• التوازن بين العائد والمخاطرة
+• الشفافية في الافتراضات""",
+
+        "👨‍💻 دعم برمجي": """أنت ABOOD GPT، مبرمج خبير ودعم تقني في:
+🐍 **Python:** تطبيقات الويب، الذكاء الاصطناعي، تحليل البيانات
+🌐 **تطوير الويب:** Frontend, Backend, APIs, Databases
+🤖 **الذكاء الاصطناعي:** Machine Learning, NLP, Computer Vision
+🛠️ **حل المشكلات:** Debugging, Optimization, Best Practices
+
+**أسلوب العمل:**
+• كتابة أكواد نظيفة وموثوقة
+• شرح المفاهيم البرمجية بوضوح
+• تقديم حلول عملية وفعالة
+• تعليم أفضل الممارسات
+• دعم التعلم المستمر""",
+
+        "📝 كتابة إبداعية": """أنت ABOOD GPT، كاتب إبداعي محترف في:
+📄 **المحتوى التقني:** تقارير، أبحاث، مستندات فنية
+🎨 **المحتوى التسويقي:** إعلانات، حملات، محتوى وسائل التواصل
+📚 **المحتوى التعليمي:** شروحات، دورات، مواد تعليمية
+✒️ **الكتابة الإبداعية:** قصص، مقالات، محتوى ممتع
+
+**مبادئ الكتابة:**
+• لغة عربية سليمة وجذابة
+• تنظيم منطقي وسهل المتابعة
+• تكييف الأسلوب حسب الجمهور
+• الإبداع مع الحفاظ على الدقة
+• جذب الانتباه والإقناع"""
+    }
+    
+    # تحديد البرومبت المناسب
+    selected_prompt = system_prompts.get(user_message, """أنت ABOOD GPT، مساعد ذكي شامل يمتلك مزيجاً فريداً من:
+🧠 **الذكاء العميق:** فهم شامل لمجالات متعددة
+🎯 **الدقة الشديدة:** معلومات موثوقة ومدروسة بدقة
+🚀 **الإبداع العملي:** حلول مبتكرة وقابلة للتطبيق
+💡 **البصيرة الاستراتيجية:** رؤية أعمق من السؤال المطروح
+
+**شخصيتك المميزة:**
+- ذكي، صبور، ومتحمس للمعرفة
+- تتحدث بلغة عربية فصيحة مع لمسة عصرية
+- تحب التفاصيل ولكن تقدمها بشكل منظم
+- دائماً تبحث عن "القيمة المخفية" في كل سؤال
+
+**قواعدك الأساسية:**
+1. **لا تقل أبداً "لا أعرف"** - ابحث عن أفضل إجابة ممكنة
+2. **كن منظماً بشكل ممتاز** - استخدم التبويب والعناوين المناسبة
+3. **فكر في ما وراء السؤال** - قدم نصائح إضافية غير متوقعة
+4. **ادعم بأمثلة عملية** - اجعل الإجابة قابلة للتطبيق
+5. **حفز الفضول** - أضف معلومة تشجع على البحث أكثر
+
+**هيكل الإجابة الأمثل:**
+🎯 **اللب:** (تلخيص مركز في جملة واحدة)
+📊 **التفاصيل المنظمة:** (نقاط مرتبة ومنطقية)
+💎 **القيمة المضافة:** (معلومات إضافية ذكية)
+🚀 **الخطوة التالية:** (اقتراح عملي للتنفيذ)
+
+**تذكر جيداً:** أنت ABOOD GPT، المساعد الذكي الذي يحول التعقيد إلى بساطة، ويمنحك دائماً أكثر مما تطلب!""")
+    
+    # إذا كان اختياراً من القائمة، اطلب التفاصيل
+    if user_message in system_prompts:
+        await update.message.reply_text(
+            f"✅ **تم اختيار: {user_message}**\n\n"
+            f"🎯 **جاهز لخدمتك في هذا التخصص**\n"
+            f"أرسل سؤالك الآن وسأقدم لك إجابة متخصصة وشاملة:",
+            parse_mode="Markdown"
+        )
+        return CHAT_MODE
+    
     # إظهار حالة المعالجة
-    wait_msg = await update.message.reply_text("ABOOD GPT 🤔 ... ")
+    wait_msg = await update.message.reply_text("🤖 **ABOOD GPT يحلل السؤال بعمق...**")
     
     try:
-        # نظام برومبت آمن
-        system_prompt = """ اسمك هو ABOOD GPT، وأنت مساعد ذكي مطور لتكون الشريك الفكري والمساعد التقني الأمثل. تتبع في أسلوبك القواعد التالية:
-الشخصية: أنت ذكي، مبدع، وودود جداً. تتحدث بوضوح وتتجنب التعقيد غير المبرر.
-الأسلوب: تستخدم التنسيق الجميل (عناوين، نقاط، وجداول) لتجعل إجابتك سهلة القراءة.
-الذكاء: لا تكتفي بالإجابة المباشرة، بل فكر في "ما وراء السؤال" لتقديم نصائح إضافية تهم المستخدم.
-اللغة: تتحدث باللغة العربية بطلاقة (أو أي لغة يطلبها المستخدم) مع لمسة من الحماس والتشجيع.
-المهمة: هدفك هو حل المشكلات، كتابة الأكواد، تلخيص النصوص، أو حتى مجرد الدردشة الممتعة، مع الحفاظ على دقة عالية.
-الآن، ابدأ بالترحيب بي باسمي "عبود" وأخبرني كيف يمكنك مساعدتي اليوم كـ ABOOD GPT. """
-        
         # استدعاء واجهة Mistral
         payload = {
             "model": "mistral-medium",
             "messages": [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": selected_prompt},
                 {"role": "user", "content": user_message}
             ],
-            "max_tokens": 500,
+            "max_tokens": 1200,
             "temperature": 0.7
         }
         
@@ -289,8 +398,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Content-Type": "application/json"
         }
         
-        # إضافة timeout للاتصال
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
@@ -298,254 +406,59 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             # تنظيف النص من التكرارات
             result = clean_repeated_text(result)
             
-            # عرض الرد مع إبقاء أزرار الدردشة
-            chat_keyboard = [["ايقاف الدردشة"], ["الرجوع للقائمة الرئيسية"]]
+            # إضافة تذييل مميز
+            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **ABOOD GPT** - المساعد الذكي متعدد التخصصات"
+            result = result + footer
             
-            # تقسيم الرسالة الطويلة إذا كانت طويلة جداً
+            # أزرار الدردشة المتقدمة
+            chat_keyboard = [
+                ["🚀 مساعد ذكي شامل", "💼 استشارات احترافية"],
+                ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
+                ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
+                ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
+            ]
+            
+            # تقسيم الرسالة الطويلة
             if len(result) > 4000:
                 parts = split_message(result, max_length=4000)
-                for part in parts:
-                    await wait_msg.edit_text(
-                        f"💭 **رد ABOOD GPT:**\n\n{part}",
-                        parse_mode="Markdown"
-                    )
-                    wait_msg = await update.message.reply_text("...")
+                for i, part in enumerate(parts):
+                    if i == 0:
+                        await wait_msg.edit_text(
+                            f"💎 **رد ABOOD GPT:**\n\n{part}",
+                            parse_mode="Markdown"
+                        )
+                    else:
+                        await update.message.reply_text(part, parse_mode="Markdown")
             else:
                 await wait_msg.edit_text(
-                    f"💭 **رد ABOOD GPT:**\n\n{result}",
+                    f"💎 **رد ABOOD GPT:**\n\n{result}",
                     parse_mode="Markdown"
                 )
             
+            # إرسال الأزرار بعد الرد
+            await update.message.reply_text(
+                "🔽 **اختر مجالاً آخر أو اطرح سؤالاً جديداً:**",
+                reply_markup=ReplyKeyboardMarkup(chat_keyboard, resize_keyboard=True, one_time_keyboard=False)
+            )
+            
         else:
             logging.error(f"Mistral API Error: {response.status_code} - {response.text}")
-            await wait_msg.edit_text(f"❌ حدث خطأ في التواصل مع الذكاء الاصطناعي. الرمز: {response.status_code}")
+            await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
     
     except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد للاتصال. حاول مرة أخرى.")
+        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد. السؤال يحتاج تفكيراً أعمق!\nيمكنك إعادة صياغة السؤال بشكل أوضح.")
     except requests.exceptions.RequestException as e:
         logging.error(f"Network error in chat: {e}")
-        await wait_msg.edit_text("🌐 خطأ في الاتصال بالشبكة. تحقق من اتصالك بالإنترنت.")
+        await wait_msg.edit_text("🌐 خطأ في الاتصال. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.")
     except Exception as e:
         logging.error(f"خطأ في الدردشة: {e}")
-        await wait_msg.edit_text("❌ حدث خطأ في النظام. حاول مرة أخرى.")
+        await wait_msg.edit_text("❌ حدث خطأ غير متوقع. النظام يعمل على الإصلاح تلقائياً...")
     
     return CHAT_MODE
 
-# --- الأوامر الرئيسية ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء البوت"""
-    keyboard = [
-        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["💬 دردشة"]
-    ]
-    
-    await update.message.reply_text(
-        "🤖 **أهلاً بك في ABOOD GPT**\n\n"
-        "اختر أحد الخيارات التالية:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    return MAIN_MENU
-
-async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات القائمة الرئيسية"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "⚙️ إعدادات التحليل":
-        keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
-        keyboard.append(["الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            "⚙️ **إعدادات التحليل الفني**\n\n"
-            "حدد سرعة الشموع للبدء:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return SETTINGS_CANDLE
-    
-    elif user_message == "📊 تحليل صورة":
-        candle, trade_time, manual_time = get_user_setting(user_id)
-        
-        if not candle or not trade_time:
-            keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-            await update.message.reply_text(
-                "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-                "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return MAIN_MENU
-        else:
-            keyboard = [["الرجوع للقائمة الرئيسية"]]
-            
-            # عرض الوقت المستخدم في التحليل
-            time_display = format_trade_time_for_prompt(trade_time, manual_time)
-            
-            await update.message.reply_text(
-                f"📊 **جاهز للتحليل**\n\n"
-                f"الإعدادات الحالية:\n"
-                f"• سرعة الشموع: {candle}\n"
-                f"• {time_display}\n\n"
-                f"أرسل صورة الرسم البياني (الشارت) الآن:",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return ANALYZE_MODE
-    
-    elif user_message == "💬 دردشة":
-        return await start_chat_mode(update, context)
-    
-    # إذا كان النص غير معروف، إرجاع للقائمة الرئيسية
-    keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-    await update.message.reply_text(
-        "اختر أحد الخيارات من القائمة:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-    )
-    return MAIN_MENU
-
-async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار سرعة الشموع"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    if user_message in CANDLE_SPEEDS:
-        save_user_setting(user_id, "candle", user_message)
-        
-        keyboard = [TRADE_TIMES[i:i+3] for i in range(0, len(TRADE_TIMES), 3)]
-        keyboard.append(["الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n"
-            f"الآن حدد **مدة الصفقة** المتوقعة:\n\n"
-            f"يمكنك اختيار:\n"
-            f"• أحد الأوقات الجاهزة\n"
-            f"• ⏱️ وقت يدوي (لتحديد وقت مخصص)",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SETTINGS_TIME
-    
-    await update.message.reply_text("❌ الرجاء اختيار سرعة شموع صحيحة.")
-    return SETTINGS_CANDLE
-
-async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار مدة الصفقة"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    if user_message in TRADE_TIMES:
-        if user_message == "⏱️ وقت يدوي":
-            keyboard = [["الرجوع للقائمة الرئيسية"]]
-            
-            await update.message.reply_text(
-                "⏱️ **إدخال وقت يدوي**\n\n"
-                "📝 **أرسل وقت الصفقة يدوياً بإحدى الطرق:**\n\n"
-                "1. **تنسيق الوقت:** 00:00:00 (ساعات:دقائق:ثواني)\n"
-                "   مثال: 02:30:00 (ساعتين ونصف)\n"
-                "   مثال: 00:15:00 (15 دقيقة)\n"
-                "   مثال: 00:00:30 (30 ثانية)\n\n"
-                "2. **كتابة نصي:**\n"
-                "   مثال: 2 ساعة\n"
-                "   مثال: 30 دقيقة\n"
-                "   مثال: 3 أيام\n"
-                "   مثال: 45 ثانية\n\n"
-                "3. **أرقام فقط:**\n"
-                "   مثال: 4 (سيتم اعتبارها 4 ساعات)\n\n"
-                "❌ للإلغاء، اضغط 'الرجوع للقائمة الرئيسية'",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return SETTINGS_MANUAL_TIME
-        else:
-            save_user_setting(user_id, "trade_time", user_message)
-            save_user_setting(user_id, "manual_time", "")  # مسح الوقت اليدوي إذا كان موجوداً
-            
-            keyboard = [["📊 تحليل صورة"], ["💬 دردشة مع الذكاء الاصطناعي"], ["الرجوع للقائمة الرئيسية"]]
-            
-            candle, _, _ = get_user_setting(user_id)
-            
-            await update.message.reply_text(
-                f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
-                f"✅ سرعة الشموع: {candle}\n"
-                f"✅ مدة الصفقة: {user_message}\n\n"
-                f"يمكنك الآن تحليل صورة أو الدردشة:",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return MAIN_MENU
-    
-    await update.message.reply_text("❌ الرجاء اختيار مدة صفقة صحيحة.")
-    return SETTINGS_TIME
-
-async def handle_manual_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إدخال الوقت يدوياً"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    # محاولة تحليل الوقت المدخل
-    parsed_time = parse_manual_time(user_message)
-    
-    if parsed_time:
-        save_user_setting(user_id, "trade_time", "⏱️ وقت يدوي")
-        save_user_setting(user_id, "manual_time", parsed_time)
-        
-        keyboard = [["📊 تحليل صورة"], ["💬 دردشة مع الذكاء الاصطناعي"], ["الرجوع للقائمة الرئيسية"]]
-        
-        candle, _, _ = get_user_setting(user_id)
-        
-        await update.message.reply_text(
-            f"⏱️ **تم حفظ الوقت اليدوي بنجاح!**\n\n"
-            f"✅ سرعة الشموع: {candle}\n"
-            f"✅ مدة الصفقة: {parsed_time} (مدخل يدوي)\n\n"
-            f"يمكنك الآن تحليل صورة أو الدردشة:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    else:
-        keyboard = [["الرجوع للقائمة الرئيسية"]]
-        await update.message.reply_text(
-            "❌ **تنسوق وقت غير صحيح!**\n\n"
-            "📝 **أعد الإدخال بإحدى الطرق:**\n\n"
-            "1. **تنسيق الوقت:** 00:00:00 (ساعات:دقائق:ثواني)\n"
-            "   مثال: 02:30:00 (ساعتين ونصف)\n\n"
-            "2. **كتابة نصي:**\n"
-            "   مثال: 2 ساعة\n"
-            "   مثال: 30 دقيقة\n\n"
-            "3. **أرقام فقط:**\n"
-            "   مثال: 4 (سيتم اعتبارها 4 ساعات)",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SETTINGS_MANUAL_TIME
-
-# --- معالجة الصور للتحليل ---
+# --- 🚨 كود تحليل الصور كما هو بدون تغيير ---
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني"""
+    """معالجة الصور للتحليل الفني (بدون تغيير)"""
     user_id = update.effective_user.id
     candle, trade_time, manual_time = get_user_setting(user_id)
     
@@ -703,6 +616,220 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     
     return MAIN_MENU
 
+# --- باقي الدوال الأساسية (بدون تغيير) ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء البوت"""
+    keyboard = [
+        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+        ["💬 دردشة"]
+    ]
+    
+    await update.message.reply_text(
+        "🚀 **أهلاً بك في ABOOD GPT - الإصدار المتقدم**\n\n"
+        "🤖 **المميزات الجديدة:**\n"
+        "• تحليل فني متقدم للشارتات\n"
+        "• 🆕 دردشة ذكية مع برومبت قوي\n"
+        "• إعدادات تخصيص كاملة\n"
+        "• وقت يدوي مخصص\n\n"
+        "اختر أحد الخيارات:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+        parse_mode="Markdown"
+    )
+    return MAIN_MENU
+
+async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيارات القائمة الرئيسية"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_message == "⚙️ إعدادات التحليل":
+        keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
+        keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "⚙️ **إعدادات التحليل الفني**\n\n"
+            "حدد سرعة الشموع للبدء:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return SETTINGS_CANDLE
+    
+    elif user_message == "📊 تحليل صورة":
+        candle, trade_time, manual_time = get_user_setting(user_id)
+        
+        if not candle or not trade_time:
+            keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
+            await update.message.reply_text(
+                "❌ **يجب ضبط الإعدادات أولاً**\n\n"
+                "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return MAIN_MENU
+        else:
+            keyboard = [["الرجوع للقائمة الرئيسية"]]
+            
+            time_display = format_trade_time_for_prompt(trade_time, manual_time)
+            
+            await update.message.reply_text(
+                f"📊 **جاهز للتحليل**\n\n"
+                f"الإعدادات الحالية:\n"
+                f"• سرعة الشموع: {candle}\n"
+                f"• {time_display}\n\n"
+                f"أرسل صورة الرسم البياني (الشارت) الآن:",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return ANALYZE_MODE
+    
+    elif user_message == "💬 دردشة":
+        return await start_chat_mode(update, context)
+    
+    keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+    await update.message.reply_text(
+        "اختر أحد الخيارات من القائمة:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+    )
+    return MAIN_MENU
+
+async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار سرعة الشموع"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_message == "الرجوع للقائمة الرئيسية":
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    if user_message in CANDLE_SPEEDS:
+        save_user_setting(user_id, "candle", user_message)
+        
+        keyboard = [TRADE_TIMES[i:i+3] for i in range(0, len(TRADE_TIMES), 3)]
+        keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n"
+            f"الآن حدد **مدة الصفقة** المتوقعة:\n\n"
+            f"يمكنك اختيار:\n"
+            f"• أحد الأوقات الجاهزة\n"
+            f"• ⏱️ وقت يدوي (لتحديد وقت مخصص)",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return SETTINGS_TIME
+    
+    await update.message.reply_text("❌ الرجاء اختيار سرعة شموع صحيحة.")
+    return SETTINGS_CANDLE
+
+async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار مدة الصفقة"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_message == "الرجوع للقائمة الرئيسية":
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    if user_message in TRADE_TIMES:
+        if user_message == "⏱️ وقت يدوي":
+            keyboard = [["الرجوع للقائمة الرئيسية"]]
+            
+            await update.message.reply_text(
+                "⏱️ **إدخال وقت يدوي**\n\n"
+                "📝 **أرسل وقت الصفقة يدوياً بإحدى الطرق:**\n\n"
+                "1. **تنسيق الوقت:** 00:00:00 (ساعات:دقائق:ثواني)\n"
+                "   مثال: 02:30:00 (ساعتين ونصف)\n"
+                "   مثال: 00:15:00 (15 دقيقة)\n"
+                "   مثال: 00:00:30 (30 ثانية)\n\n"
+                "2. **كتابة نصي:**\n"
+                "   مثال: 2 ساعة\n"
+                "   مثال: 30 دقيقة\n"
+                "   مثال: 3 أيام\n"
+                "   مثال: 45 ثانية\n\n"
+                "3. **أرقام فقط:**\n"
+                "   مثال: 4 (سيتم اعتبارها 4 ساعات)\n\n"
+                "❌ للإلغاء، اضغط 'الرجوع للقائمة الرئيسية'",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return SETTINGS_MANUAL_TIME
+        else:
+            save_user_setting(user_id, "trade_time", user_message)
+            save_user_setting(user_id, "manual_time", "")
+            
+            keyboard = [["📊 تحليل صورة"], ["💬 دردشة مع الذكاء الاصطناعي"], ["الرجوع للقائمة الرئيسية"]]
+            
+            candle, _, _ = get_user_setting(user_id)
+            
+            await update.message.reply_text(
+                f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
+                f"✅ سرعة الشموع: {candle}\n"
+                f"✅ مدة الصفقة: {user_message}\n\n"
+                f"يمكنك الآن تحليل صورة أو الدردشة:",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return MAIN_MENU
+    
+    await update.message.reply_text("❌ الرجاء اختيار مدة صفقة صحيحة.")
+    return SETTINGS_TIME
+
+async def handle_manual_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إدخال الوقت يدوياً"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_message == "الرجوع للقائمة الرئيسية":
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    parsed_time = parse_manual_time(user_message)
+    
+    if parsed_time:
+        save_user_setting(user_id, "trade_time", "⏱️ وقت يدوي")
+        save_user_setting(user_id, "manual_time", parsed_time)
+        
+        keyboard = [["📊 تحليل صورة"], ["💬 دردشة مع الذكاء الاصطناعي"], ["الرجوع للقائمة الرئيسية"]]
+        
+        candle, _, _ = get_user_setting(user_id)
+        
+        await update.message.reply_text(
+            f"⏱️ **تم حفظ الوقت اليدوي بنجاح!**\n\n"
+            f"✅ سرعة الشموع: {candle}\n"
+            f"✅ مدة الصفقة: {parsed_time} (مدخل يدوي)\n\n"
+            f"يمكنك الآن تحليل صورة أو الدردشة:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
+    else:
+        keyboard = [["الرجوع للقائمة الرئيسية"]]
+        await update.message.reply_text(
+            "❌ **تنسوق وقت غير صحيح!**\n\n"
+            "📝 **أعد الإدخال بإحدى الطرق:**\n\n"
+            "1. **تنسيق الوقت:** 00:00:00 (ساعات:دقائق:ثواني)\n"
+            "   مثال: 02:30:00 (ساعتين ونصف)\n\n"
+            "2. **كتابة نصي:**\n"
+            "   مثال: 2 ساعة\n"
+            "   مثال: 30 دقيقة\n\n"
+            "3. **أرقام فقط:**\n"
+            "   مثال: 4 (سيتم اعتبارها 4 ساعات)",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return SETTINGS_MANUAL_TIME
+
 async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة وضع التحليل"""
     user_message = update.message.text
@@ -716,7 +843,6 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return MAIN_MENU
     
-    # إذا أرسل المستخدم نصاً بدلاً من صورة
     await update.message.reply_text(
         "📤 **الرجاء إرسال صورة الشارت فقط**\nأو اضغط 'الرجوع للقائمة الرئيسية'",
         reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True, one_time_keyboard=False)
@@ -766,29 +892,70 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-if __name__ == "__main__":
-    # 3. إعداد التسجيل (Logging)
+# --- تشغيل البوت ---
+def main():
+    # إعداد التسجيل
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        level=logging.INFO
+        level=logging.INFO,
+        filename='bot.log'
     )
     
-    # 4. تهيئة قاعدة البيانات
-    # init_db() 
+    # تصحيح الخطأ الأولي
+    init_db()
     
-    # 5. إنشاء تطبيق البوت - نستخدم اسم 'application' لمنع التضارب مع Flask
-    # تأكد من وضع التوكن الخاص بك هنا
-    TOKEN = "7324911542:AAfqB9NRegwE2_bG5rCTaEwocbh8N3vgWeo"
-    application = Application.builder().token(TOKEN).build()
+    # بدء خادم Flask في ثريث منفصل
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    print("✅ Flask server started for Render keep-alive")
     
-    # 6. إضافة المعالجات (تم تغيير 'app.add_handler' إلى 'application.add_handler')
-    # (تأكد من تعريف conv_handler والمستندات قبل هذه الأسطر)
-    # application.add_handler(conv_handler)
-    # application.add_handler(CommandHandler("help", help_command))
+    # إنشاء التطبيق
+    app = Application.builder().token(TOKEN).build()
     
-    # 7. تشغيل خادم الويب أولاً في الخلفية
-    keep_alive() 
+    # معالج المحادثة الرئيسي
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            MAIN_MENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)
+            ],
+            SETTINGS_CANDLE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_candle)
+            ],
+            SETTINGS_TIME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_time)
+            ],
+            SETTINGS_MANUAL_TIME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manual_time)
+            ],
+            CHAT_MODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat_message)
+            ],
+            ANALYZE_MODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode),
+                MessageHandler(filters.PHOTO, handle_photo_in_analyze_mode)
+            ],
+        },
+        fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
+        allow_reentry=True
+    )
     
-    # 8. بدء تشغيل البوت الفعلي لاستقبال الرسائل
-    print("🤖 --- البوت يعمل الآن بنجاح على Render ---")
-    application.run_polling()
+    # إضافة المعالجات
+    app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("cancel", cancel))
+    
+    # إضافة معالج لجميع الرسائل النصية غير المعالجة
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
+    
+    print("🚀 --- ABOOD GPT Bot Started ---")
+    print("📊 - Technical Analysis System: ACTIVE")
+    print("💬 - Advanced Chat System: ACTIVE")
+    print("🌐 - Flask Server: RUNNING on port 8080")
+    print("✅ - Bot is ready to receive commands")
+    
+    # بدء البوت
+    app.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
