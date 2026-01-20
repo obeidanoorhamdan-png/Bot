@@ -1,16 +1,20 @@
 from flask import Flask
 from threading import Thread
 import os
+import logging
+import sqlite3
+# ... استكمل باقي استيراداتك هنا (مثل telegram و telegram.ext)
 
-app = Flask(__name__)  # تعريف Flask باسم app
+# 1. إعداد تطبيق الويب (Flask)
+app = Flask(__name__) 
 
 @app.route('/')
 def home():
     return "Bot is running!"
 
+# 2. دالة إبقاء البوت حياً (تصحيح متغير app_web إلى app)
 def keep_alive():
-    # تم تغيير app_web إلى app ليتطابق مع التعريف في الأعلى
-    # وتم تغيير المنفذ (Port) إلى 10000 وهو الافتراضي لـ Render
+    # استخدام المنفذ 10000 الافتراضي لـ Render
     t = Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))))
     t.start()
 
@@ -761,55 +765,28 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 if __name__ == "__main__":
-    # 1. إعداد التسجيل (Logging) لعرض السجلات في لوحة تحكم Render
+    # 3. إعداد التسجيل (Logging)
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO
     )
     
-    # 2. تهيئة قاعدة البيانات
+    # 4. تهيئة قاعدة البيانات
     init_db()
     
-    # 3. إنشاء تطبيق البوت (استخدمنا اسم application لمنع التعارض مع Flask)
+    # 5. إنشاء تطبيق البوت (استخدام اسم application لمنع التعارض مع Flask)
     application = Application.builder().token(TOKEN).build()
     
-    # 4. تعريف معالج المحادثة (ConversationHandler)
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            MAIN_MENU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)
-            ],
-            SETTINGS_CANDLE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_candle)
-            ],
-            SETTINGS_TIME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_time)
-            ],
-            SETTINGS_MANUAL_TIME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manual_time)
-            ],
-            CHAT_MODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat_message)
-            ],
-            ANALYZE_MODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode),
-                MessageHandler(filters.PHOTO, handle_photo_in_analyze_mode)
-            ],
-        },
-        fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
-        allow_reentry=True 
-    )
-    
-    # 5. إضافة المعالجات للتطبيق (تم تغيير app إلى application هنا)
+    # 6. إضافة المعالجات (Handlers) للتطبيق (تم تغيير app إلى application)
+    # تأكد من تعريف conv_handler وباقي الدوال قبل هذه النقطة
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cancel", cancel))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
     
-    # 6. تشغيل Flask في الخلفية لإبقاء الخدمة "Live"
+    # 7. تشغيل خادم الويب في الخلفية
     keep_alive() 
     
-    # 7. تشغيل البوت الفعلي لاستقبال الرسائل
+    # 8. بدء تشغيل البوت الفعلي
     print("🤖 --- البوت يعمل الآن بنجاح على Render ---")
     application.run_polling()
