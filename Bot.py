@@ -23,7 +23,7 @@ TRADE_TIMES = ["S3", "S15", "S30", "M1", "M3", "M5", "M30", "H1", "H4", "H24", "
 # حالات المحادثة
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, SETTINGS_MANUAL_TIME, CHAT_MODE, ANALYZE_MODE = range(6)
 
-# --- Flask Server مبسط ---
+# --- Flask Server ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -56,11 +56,6 @@ def health():
 def ping():
     return "PONG"
 
-def run_flask():
-    """تشغيل Flask server"""
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
 # --- قاعدة البيانات ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -85,7 +80,7 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
-    logging.info("✅ Database initialized")
+    print("✅ Database initialized")
 
 def save_user_setting(user_id, col, val):
     conn = sqlite3.connect(DB_NAME)
@@ -158,7 +153,7 @@ def parse_manual_time(time_str):
             return f"{hours} ساعة"
             
     except Exception as e:
-        logging.error(f"Error parsing manual time: {e}")
+        print(f"Error parsing manual time: {e}")
     
     return None
 
@@ -446,16 +441,16 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             
         else:
-            logging.error(f"Mistral API Error: {response.status_code} - {response.text}")
+            print(f"Mistral API Error: {response.status_code} - {response.text}")
             await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
     
     except requests.exceptions.Timeout:
         await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد. السؤال يحتاج تفكيراً أعمق!\nيمكنك إعادة صياغة السؤال بشكل أوضح.")
     except requests.exceptions.RequestException as e:
-        logging.error(f"Network error in chat: {e}")
+        print(f"Network error in chat: {e}")
         await wait_msg.edit_text("🌐 خطأ في الاتصال. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.")
     except Exception as e:
-        logging.error(f"خطأ في الدردشة: {e}")
+        print(f"خطأ في الدردشة: {e}")
         await wait_msg.edit_text("❌ حدث خطأ غير متوقع. النظام يعمل على الإصلاح تلقائياً...")
     
     return CHAT_MODE
@@ -604,14 +599,14 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
             )
         else:
-            logging.error(f"Mistral Vision API Error: {response.status_code} - {response.text}")
+            print(f"Mistral Vision API Error: {response.status_code} - {response.text}")
             keyboard = [["الرجوع للقائمة الرئيسية"]]
             await wait_msg.edit_text(f"❌ **خطأ في تحليل الصورة:** {response.status_code}")
             
     except requests.exceptions.Timeout:
         await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد لتحليل الصورة. حاول مرة أخرى.")
     except Exception as e:
-        logging.error(f"خطأ في تحليل الصورة: {e}")
+        print(f"خطأ في تحليل الصورة: {e}")
         keyboard = [["الرجوع للقائمة الرئيسية"]]
         await wait_msg.edit_text("❌ **حدث خطأ في تحليل الصورة.**\nيرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.")
     finally:
@@ -896,22 +891,20 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# --- الحل النهائي: تشغيل Flask و Telegram في نفس الوقت ---
-def main():
-    """الدالة الرئيسية لتشغيل كل شيء"""
-    
-    # إعداد logging
-    logging.basicConfig(
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        level=logging.INFO
-    )
-    
-    print("🚀 Starting ABOOD GPT Bot...")
+# --- الحل النهائي ---
+def run_flask_server():
+    """تشغيل Flask server"""
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+def run_telegram_bot():
+    """تشغيل Telegram bot"""
+    print("🤖 Starting Telegram Bot...")
     
     # تهيئة قاعدة البيانات
     init_db()
     
-    # إنشاء تطبيق Telegram
+    # إنشاء تطبيق Telegram (باستخدام إصدار أقدم من المكتبة)
     application = Application.builder().token(TOKEN).build()
     
     # معالج المحادثة
@@ -950,21 +943,23 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
     
     print("✅ Telegram Bot initialized successfully")
-    print("🌐 Starting Flask web server for keep-alive...")
-    
-    # تشغيل Flask في thread منفصل
-    def run_web_server():
-        port = int(os.environ.get('PORT', 8080))
-        app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-    
-    web_thread = threading.Thread(target=run_web_server, daemon=True)
-    web_thread.start()
-    
-    print(f"✅ Flask server running on port {os.environ.get('PORT', 8080)}")
-    print("🤖 Telegram Bot is now polling for updates...")
+    print("📡 Bot is now polling for updates...")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+
+def main():
+    """الدالة الرئيسية"""
+    print("🚀 Starting ABOOD GPT Bot System...")
+    
+    # تشغيل Flask في thread منفصل
+    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
+    flask_thread.start()
+    
+    print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
+    
+    # تشغيل Telegram bot في thread الرئيسي
+    run_telegram_bot()
 
 if __name__ == "__main__":
     main()
