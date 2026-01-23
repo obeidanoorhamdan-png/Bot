@@ -12,7 +12,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from flask import Flask
 
 # --- الإعدادات ---
-TOKEN = os.environ.get('TOKEN', "7324911542:AAFqB9NRegwE2_bG5rCTaEWocbh8N3vgWeo")
+TOKEN = os.environ.get('TOKEN', "7324911542:AAFaQtMmeK2DGkNZAYXe2XioYSb17ddOYwk")
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "EABRT5zGsHYhezkaJJomt15VR2iBrPWq")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 DB_NAME = "abood-gpt.db"
