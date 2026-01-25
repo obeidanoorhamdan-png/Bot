@@ -272,6 +272,7 @@ def get_mistral_analysis(symbol):
     - مستوى الثقة: XX٪
     - توقع متسوى TP (Take Profit) :
     - توقع مستوى SL (Stop Loss) :
+    - مدة دخول :
     """
     
     body = {
@@ -677,6 +678,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - مستوى الثقة: XX٪
 - نقطة الدخول المقترحة:
 - نقطة الوصول المتوقعة:
+- مدة دخول:
 
 ⚠️ التحذيرات والمخاطر:
 - نقطة بطلان التحليل (Invalidation Point):
