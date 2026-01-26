@@ -1107,8 +1107,20 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- الحل النهائي ---
 def run_flask_server():
     """تشغيل Flask server"""
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    port = int(os.environ.get('PORT', 10000))
+    print(f"🌐 Trying to start Flask server on port {port}...")
+    
+    # حاول استخدام منافذ بديلة إذا كان 10000 مشغولاً
+    for p in range(port, port + 5):
+        try:
+            app.run(host='0.0.0.0', port=p, debug=False, use_reloader=False)
+            break
+        except OSError as e:
+            if "Address already in use" in str(e):
+                print(f"⚠️ Port {p} is in use, trying next port...")
+                continue
+            else:
+                raise e
 
 def cleanup_bot_sessions():
     """تنظيف جلسات البوت القديمة"""
@@ -1117,7 +1129,7 @@ def cleanup_bot_sessions():
         temp_bot = telegram.Bot(token=TOKEN)
         
         # حذف Webhook إن وجد
-        temp_bot.delete_webhook(drop_pending_updates=True)
+        result = temp_bot.delete_webhook(drop_pending_updates=True)
         print("✅ Deleted any existing webhook")
         
         # الحصول على معلومات البوت للتأكد من اتصاله
@@ -1202,17 +1214,15 @@ def run_telegram_bot():
     print("✅ Telegram Bot initialized successfully")
     print("📡 Bot is now polling for updates...")
     
-    # تشغيل البوت مع إعدادات متقدمة
+    # تشغيل البوت مع إعدادات صحيحة
+    # إصلاح: إزالة المتغيرات غير المدعومة في run_polling()
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
         drop_pending_updates=True,  # مهم جداً لحل مشكلة التعارض
         poll_interval=0.5,
         timeout=30,
         bootstrap_retries=3,
-        read_timeout=30,
-        write_timeout=30,
-        close_loop=False,
-        stop_signals=None  # للسماح بإغلاق نظيف
+        close_loop=False
     )
 
 def main():
@@ -1224,7 +1234,7 @@ def main():
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
-    print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
+    print(f"🌐 Flask server started in background")
     print("🔧 Waiting 3 seconds for Flask to initialize...")
     time.sleep(3)
     
