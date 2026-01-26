@@ -7,6 +7,8 @@ import requests
 import threading
 import time
 import sys
+import asyncio
+import telegram
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
@@ -659,7 +661,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         # تنسيق وقت الصفقة للبرومبت
         time_for_prompt = format_trade_time_for_prompt(trade_time, manual_time)
         
-        # برومبت آمن للتحليل الفني (تم تصحيح المتغيرات)
+        # برومبت آمن للتحليل الفني
         prompt = f"""
         [SYSTEM_TASK: INSTITUTIONAL_STRUCTURE_DECRYPTION_V2]
     بصفتك خوارزمية تحليل مالي احترافية، قم بتشريح الشارت المرفق وفق 'بروتوكول المراحل الست' لضمان دقة 100%:
@@ -700,7 +702,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         """
         
         payload = {
-            "model": "pixtral-12b-2409",
+            "model": "mistral-large-latest",
             "messages": [
                 {
                     "role": "user", 
@@ -772,7 +774,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             keyboard = [["الرجوع للقائمة الرئيسية"]]
             await wait_msg.edit_text(
                 f"❌ **خطأ في إرسال الصورة:** {response.status_code}\n"
-                f"التفاصيل: {response.text[:200] if response.text else 'لا يوجد تفاصيل'}",
+                f"يرجى المحاولة مرة أخرى.",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
             )
             
@@ -787,7 +789,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard = [["الرجوع للقائمة الرئيسية"]]
         await wait_msg.edit_text(
             f"❌ **حدث خطأ في إرسال الصورة.**\n"
-            f"التفاصيل: {str(e)[:200]}\n\n"
             f"يرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
@@ -1084,21 +1085,78 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
+# --- معالج الأخطاء ---
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالج الأخطاء العام"""
+    print(f"⚠️ Error occurred: {context.error}")
+    
+    # تجاهل أخطاء التعارض المؤقتة
+    if isinstance(context.error, telegram.error.Conflict):
+        print("⚠️ Conflict error ignored (another instance might be running)")
+        return
+    
+    try:
+        if update and update.effective_chat:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="❌ حدث خطأ غير متوقع. جاري إعادة التشغيل تلقائياً..."
+            )
+    except:
+        pass
+
 # --- الحل النهائي ---
 def run_flask_server():
     """تشغيل Flask server"""
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
+def cleanup_bot_sessions():
+    """تنظيف جلسات البوت القديمة"""
+    try:
+        # إنشاء bot مؤقت لتنظيف الجلسات
+        temp_bot = telegram.Bot(token=TOKEN)
+        
+        # حذف Webhook إن وجد
+        temp_bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Deleted any existing webhook")
+        
+        # الحصول على معلومات البوت للتأكد من اتصاله
+        bot_info = temp_bot.get_me()
+        print(f"✅ Bot verified: {bot_info.first_name} (@{bot_info.username})")
+        
+        return True
+    except telegram.error.Conflict as e:
+        print(f"⚠️ Conflict during cleanup: {e}")
+        print("⚠️ Another bot instance might be running. Waiting 5 seconds...")
+        time.sleep(5)
+        return False
+    except Exception as e:
+        print(f"⚠️ Cleanup warning: {e}")
+        return True  # نواصل حتى مع وجود أخطاء في التنظيف
+
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
+    
+    # تنظيف الجلسات القديمة
+    max_cleanup_attempts = 3
+    for attempt in range(max_cleanup_attempts):
+        print(f"Attempt {attempt + 1}/{max_cleanup_attempts} to clean bot sessions...")
+        if cleanup_bot_sessions():
+            print("✅ Bot sessions cleaned successfully")
+            break
+        elif attempt == max_cleanup_attempts - 1:
+            print("❌ Failed to clean bot sessions after multiple attempts")
+            print("⚠️ Trying to continue anyway...")
     
     # تهيئة قاعدة البيانات
     init_db()
     
     # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
+    
+    # إضافة معالج الأخطاء
+    application.add_error_handler(error_handler)
     
     # معالج المحادثة
     conv_handler = ConversationHandler(
@@ -1138,27 +1196,48 @@ def run_telegram_bot():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cancel", cancel))
     
-    # إضافة معالج للنصوص
+    # إضافة معالج للنصوص العامة
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
     
     print("✅ Telegram Bot initialized successfully")
     print("📡 Bot is now polling for updates...")
     
-    # تشغيل البوت
-    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    # تشغيل البوت مع إعدادات متقدمة
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,  # مهم جداً لحل مشكلة التعارض
+        poll_interval=0.5,
+        timeout=30,
+        bootstrap_retries=3,
+        read_timeout=30,
+        write_timeout=30,
+        close_loop=False,
+        stop_signals=None  # للسماح بإغلاق نظيف
+    )
 
 def main():
     """الدالة الرئيسية"""
     print("🚀 Starting Obeida Trading...")
+    print(f"📅 {time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     # تشغيل Flask في thread منفصل
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
     print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
+    print("🔧 Waiting 3 seconds for Flask to initialize...")
+    time.sleep(3)
     
-    # تشغيل Telegram bot في thread الرئيسي
-    run_telegram_bot()
+    # تشغيل Telegram bot
+    try:
+        run_telegram_bot()
+    except KeyboardInterrupt:
+        print("\n👋 Bot stopped by user")
+    except Exception as e:
+        print(f"❌ Critical error: {e}")
+        print("🔄 Restarting in 10 seconds...")
+        time.sleep(10)
+        main()  # إعادة التشغيل
 
 if __name__ == "__main__":
     main()
