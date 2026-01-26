@@ -755,7 +755,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             # ✅ حل مشكلة التكرار: تنظيف النص من التكرار
             result = clean_repeated_text(result)
             
-            keyboard = [["📊 تحليل صورة أخرى"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+            keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
             
             # تنسيق وقت الصفقة للعرض
             time_display = format_trade_time_for_prompt(trade_time, manual_time)
@@ -999,7 +999,7 @@ async def handle_manual_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
         save_user_setting(user_id, "trade_time", "⏱️ وقت يدوي")
         save_user_setting(user_id, "manual_time", parsed_time)
         
-        keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+        keyboard = [["📊 تحليل صورة"],["⚙️ إعدادات التحليل"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
         candle, _, _ = get_user_setting(user_id)
         
