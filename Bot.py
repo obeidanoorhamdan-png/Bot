@@ -659,7 +659,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         # تنسيق وقت الصفقة للبرومبت
         time_for_prompt = format_trade_time_for_prompt(trade_time, manual_time)
         
-        # برومبت آمن للتحليل الفني
+        # برومبت آمن للتحليل الفني (تم تصحيح المتغيرات)
         prompt = f"""
         [SYSTEM_TASK: INSTITUTIONAL_STRUCTURE_DECRYPTION_V2]
     بصفتك خوارزمية تحليل مالي احترافية، قم بتشريح الشارت المرفق وفق 'بروتوكول المراحل الست' لضمان دقة 100%:
@@ -672,8 +672,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     المرحلة 6: التحديث والإبطال (Invalidation) - تحديد السعر الذي يلغي النظرة الفنية.
 
     الإعدادات الفنية:
-    - فريم الشموع: {candle_settings}
-    - مدة التداول: {execution_time}
+    - فريم الشموع: {candle}
+    - مدة التداول: {time_for_prompt}
 
     قدم الإجابة باختصار شديد باللغة العربية حصراً وفق التنسيق التالي:
 
@@ -770,14 +770,27 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             print(f"Mistral Vision API Error: {response.status_code} - {response.text}")
             keyboard = [["الرجوع للقائمة الرئيسية"]]
-            await wait_msg.edit_text(f"❌ **خطأ في إرسال الصورة:** {response.status_code}")
+            await wait_msg.edit_text(
+                f"❌ **خطأ في إرسال الصورة:** {response.status_code}\n"
+                f"التفاصيل: {response.text[:200] if response.text else 'لا يوجد تفاصيل'}",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+            )
             
     except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
+        keyboard = [["الرجوع للقائمة الرئيسية"]]
+        await wait_msg.edit_text(
+            "⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
     except Exception as e:
         print(f"خطأ في تحليل الصورة: {e}")
         keyboard = [["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text("❌ **حدث خطأ في إرسال الصورة.**\nيرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.")
+        await wait_msg.edit_text(
+            f"❌ **حدث خطأ في إرسال الصورة.**\n"
+            f"التفاصيل: {str(e)[:200]}\n\n"
+            f"يرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
     finally:
         if os.path.exists(path):
             os.remove(path)
