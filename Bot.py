@@ -211,26 +211,63 @@ def encode_image(image_path):
 
 # --- دوال المساعدة للتعامل مع النصوص ---
 def clean_repeated_text(text):
-    """تنظيف النص من التكرارات"""
+    """تنظيف النص من التكرارات وتحسين التنسيق"""
+    if not text:
+        return ""
+    
+    # إزالة أي تنسيق مكرر لـ "نتائج الفحص الفني"
+    if "📊 **نتائج الفحص الفني**:" in text:
+        # إزالة العناوين المكررة
+        text = re.sub(r'(📊 \*\*نتائج الفحص الفني\*\*:[\s\S]*?)(?=📊 \*\*نتائج الفحص الفني\*\*:)', '', text, flags=re.DOTALL)
+    
+    # إزالة أي قسم "### تحليل الشارت المرفق" إذا كان مكرراً
+    if "### تحليل الشارت المرفق" in text:
+        # الحفاظ على أول قسم فقط
+        sections = text.split("### تحليل الشارت المرفق")
+        if len(sections) > 1:
+            # أخذ القسم الأول فقط وإضافة العنوان
+            text = "### تحليل الشارت المرفق" + sections[1]
+    
+    # إزالة العناوين المكررة للتحليل
+    patterns_to_clean = [
+        r'📊\s*\*\*التحليل الفني\*\*:',
+        r'🎯\s*\*\*التوصية والتوقعات\*\*:',
+        r'⚠️\s*\*\*إدارة المخاطر\*\*:',
+        r'📝\s*\*\*ملاحظات التحليل\*\*:'
+    ]
+    
+    for pattern in patterns_to_clean:
+        matches = re.findall(pattern, text)
+        if len(matches) > 1:
+            # استبدال التكرارات
+            parts = re.split(pattern, text)
+            if len(parts) > 1:
+                text = parts[0] + re.search(pattern, text).group() + parts[1]
+                for i in range(2, len(parts)):
+                    text += parts[i]
+    
+    # تقسيم النص إلى فقرات وإزالة التكرار
     paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
     
     unique_paragraphs = []
     seen_paragraphs = set()
     
     for paragraph in paragraphs:
-        simplified = paragraph[:100].strip()
-        if simplified not in seen_paragraphs:
+        # إنشاء مفتاح فريد لكل فقرة (أول 50 حرفاً)
+        key = paragraph[:50].strip().lower()
+        if key not in seen_paragraphs:
             unique_paragraphs.append(paragraph)
-            seen_paragraphs.add(simplified)
+            seen_paragraphs.add(key)
     
     cleaned_text = '\n\n'.join(unique_paragraphs)
     
+    # قطع النص إذا كان طويلاً جداً
     if len(cleaned_text) > 2000:
         if '\n\n' in cleaned_text[:2200]:
             cut_point = cleaned_text[:2200].rfind('\n\n')
-            cleaned_text = cleaned_text[:cut_point]
+            cleaned_text = cleaned_text[:cut_point] + "\n\n📋 ...تم اختصار النتيجة"
         else:
-            cleaned_text = cleaned_text[:2000] + "..."
+            cleaned_text = cleaned_text[:2000] + "...\n\n📋 تم اختصار النتيجة"
     
     return cleaned_text
 
@@ -676,7 +713,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         # تنسيق وقت الصفقة للبرومبت
         time_for_prompt = format_trade_time_for_prompt(trade_time, manual_time)
         
-        # برومبت آمن للتحليل الفني
+        # برومبت آمن للتحليل الفني - تم تعديله لمنع التكرار
         prompt = f"""
         [SYSTEM_TASK: TOTAL_MARKET_DECRYPTION_V4]
         بصفتك خبير استراتيجيات تداول في صناديق التحوط، ومتمكن من دمج مدارس (SMC + ICT + Wyckoff + Order Flow)، قم بتحليل الشارت المرفق بدقة متناهية:
@@ -701,9 +738,9 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - إطار الشمعة : (Timeframe): {candle}
 - وقت التداول المحدد : {time_for_prompt}
 
-قدم التحليل باللغة العربية وبالتنسيق التالي حصراً:
+قدم التحليل باللغة العربية وبالتنسيق التالي حصراً (بدون تكرار للمعلومات):
 
-📊 **نتائج الفحص الفني**:
+📊 **التحليل الفني**:
 - **البصمة الزمنية**: (داخل/خارج منطقة القتل السعري - Kill Zone)
 - **حالة الهيكل**: (صاعد/هابط) + (مرحلة وايكوف الحالية)
 - **خريطة السيولة**: (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
@@ -722,9 +759,12 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - **مستوى الثقة**: %
 - **المدة المتوقعة**: [مدة زمنية تقديرية]
 
-⚠️ **إدارة المخاطر (بطلان التحليل)**:
+⚠️ **إدارة المخاطر**:
 - **نقطة الإلغاء**: (السعر الذي يكسر الفرضية الحالية)
 - **تحذير التلاعب**: (احتمالية وجود SFP أو تأثير أخبار قريبة)
+
+📝 **ملاحظات التحليل**:
+(اذكر هنا ملاحظات إضافية حول حركة السعر والأنماط الملاحظة)
         """
         
         payload = {
@@ -738,7 +778,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     ]
                 }
             ],
-            "max_tokens": 800,
+            "max_tokens": 1200,
             "temperature": 0.3
         }
         
@@ -750,17 +790,28 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=45)
         
         if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content']
+            result = response.json()['choices'][0]['message']['content'].strip()
             
-            # ✅ حل مشكلة التكرار: تنظيف النص من التكرار
+            # ✅ تنظيف النص من التكرار
             result = clean_repeated_text(result)
+            
+            # ✅ إزالة أي تكرار محتمل
+            # إزالة "### تحليل الشارت المرفق" إذا كانت موجودة
+            if "### تحليل الشارت المرفق" in result:
+                parts = result.split("### تحليل الشارت المرفق")
+                if len(parts) > 1:
+                    result = parts[1].strip()
+            
+            # إزالة أي "نتائج الفحص الفني:" إذا كانت موجودة
+            if "نتائج الفحص الفني:" in result:
+                result = result.replace("نتائج الفحص الفني:", "📊 **التحليل الفني:**").strip()
             
             keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
             
             # تنسيق وقت الصفقة للعرض
             time_display = format_trade_time_for_prompt(trade_time, manual_time)
             
-            # إعداد النص النهائي مع الإعدادات
+            # ✅ إعداد النص النهائي بدون تكرار
             full_result = (
                 f"✅ **تم التحليل بنجاح!**\n"
                 f"📈 **نتائج تحليل الشارت:**\n"
@@ -768,8 +819,13 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 f"{result}\n\n"
                 f"📊 **الإعدادات المستخدمة:**\n"
                 f"• سرعة الشموع: {candle}\n"
-                f"• {time_display}"
+                f"• {time_display}\n\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"🤖 **Obeida Trading - نظام التحليل الفني**"
             )
+            
+            # تنظيف النهائي من التكرارات
+            full_result = clean_repeated_text(full_result)
             
             # تقسيم النتيجة إذا كانت طويلة
             if len(full_result) > 4000:
@@ -821,7 +877,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     await update.message.reply_text(
-        "🚀 **أهلاً بك في Obeida Trading - لتوصيات \n\n"
+        "🚀 **أهلاً بك في Obeida Trading **\n\n"
         "🤖 **المميزات الجديدة:**\n"
         "• تحليل فني متقدم للشارتات\n"
         "• 🆕 دردشة \n"
