@@ -7,8 +7,6 @@ import requests
 import threading
 import time
 import sys
-import asyncio
-import telegram
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
@@ -663,46 +661,54 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # برومبت آمن للتحليل الفني
         prompt = f"""
-        [SYSTEM_TASK: INSTITUTIONAL_STRUCTURE_DECRYPTION_V2]
-    بصفتك خوارزمية تحليل مالي احترافية، قم بتشريح الشارت المرفق وفق 'بروتوكول المراحل الست' لضمان دقة 100%:
+        [SYSTEM_TASK: TOTAL_MARKET_DECRYPTION_V4]
+بصفتك نظام تحليل مالي فائق الذكاء يدمج (SMC + ICT + Wyckoff + Order Flow)، قم بتشريح الشارت المرفق كخبير صناديق تحوط لضمان دقة مطلقة:
 
-    المرحلة 1: تشفير الهيكل (Market Structure) - تحديد BOS، CHoCH، والقمم/القاع.
-    المرحلة 2: خريطة السيولة (Liquidity Mapping) - تحديد مناطق سحب السيولة و Equal Highs/Lows.
-    المرحلة 3: تحليل المكونات (S&D Zones) - تحديد الـ Order Blocks والـ Fair Value Gaps (FVG).
-    المرحلة 4: تقييم القوة والضعف (Momentum Analysis) - قياس حدة الزخم البيعي مقابل الشرائي.
-    المرحلة 5: وضع السيناريوهات (Scenarios) - بناء سيناريو الدخول، الهدف، ووقف الخسارة.
-    المرحلة 6: التحديث والإبطال (Invalidation) - تحديد السعر الذي يلغي النظرة الفنية.
+المرحلة 1: الفلترة الزمنية (ICT Macro & Kill Zones):
+- فحص توقيت الشموع بالنسبة لـ (London/NY Open) وتحديد ما إذا كانت الحركة "تلاعب" (Judas Swing) أم "توزيع حقيقي".
 
-    الإعدادات الفنية:
-    - فريم الشموع: {candle}
-    - مدة التداول: {time_for_prompt}
+المرحلة 2: هندسة السيولة (Liquidity Engineering):
+- تحديد مناطق Inducement (الإغراء)، وسيولة التجزئة (Retail Liquidity)، ومناطق BSL/SSL التي لم تُضرب بعد.
 
-    قدم الإجابة باختصار شديد باللغة العربية حصراً وفق التنسيق التالي:
+المرحلة 3: تشريح الهيكل ووايكوف (Structure & Wyckoff):
+- تحديد BOS/CHoCH الحقيقي.
+- تصنيف المرحلة الحالية (Accumulation, Redistribution, Distribution, Re-accumulation).
 
-    📊 التحليل الفني :
-    - النمط السائد:
-    - مستويات الدعم/المقاومة الحرج:
-    - فجوات السيولة المرصودة:
+المرحلة 4: ميزان العرض والطلب (PD Arrays & Imbalance):
+- تحديد الـ Order Blocks المرتبطة بـ FVG (فجوات القيمة العادلة) والتي تقع في منطقة الـ Discount/Premium.
 
-    🎯 التوقع التنفيذي:
-    - الإتجاه: (صعود ⬆️ / نزول ⬇️ / ثابت ➡️)
-    - التوصية: (بيع 🔴 / شراء 🟢 / إحتفاظ 🟡)
-    - قوة الإتجاه المتوقعة: (عالي 🔥 / متوسط ⚡ / منخفض ❄️) -> [هذا المعيار يحدد جودة الصفقة]
-    - السعر الحالي:
-    - نقطة الدخول الذهبية:
-    - الهدف الأول (TP1):
-    - الهدف الثاني (TP2):
-    - وقف الخسارة (SL):
-    - مستوى الثقة الرقمي: %
-    - مدة استهداف الصفقة:
+المرحلة 5: تأكيد تدفق الأوامر (Order Flow Confirmation):
+- البحث عن علامات امتصاص السيولة (Absorption) واندفاع الزخم.
 
-    ⚠️ التحذيرات والمخاطر:
-    - نقطة بطلان التحليل (Invalidation Point):
-    - المخاطر المحتملة (تلاعب، ضعف فوليوم، أخبار):
+الإعدادات الفنية:
+- فريم الشموع: {candle}
+- وقت التحليل: {time_for_prompt}
+
+قدم الإجابة باختصار احترافي وفق التنسيق التالي:
+
+📊 الفحص الهيكلي (Market Anatomy):
+- البصمة الزمنية: (داخل/خارج منطقة القتل السعري - Kill Zone)
+- حالة الهيكل: (صاعد/هابط) + (مرحلة وايكوف الحالية)
+- خريطة السيولة: (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
+- الفجوات السعرية (FVG): (المناطق التي سيعود السعر لتغطيتها)
+
+🎯 المخطط التنفيذي (The Trade Setup):
+- الاتجاه القادم: (صعود ⬆️ / نزول ⬇️ / تذبذب ➡️)
+- التوصية الفنية: (بيع 🔴 / شراء 🟢 / انتظار 🟡)
+- قوة الاتجاه المتوقعة: (🔥 عالية جداً - تلاقي 3 مدارس / ⚡ متوسطة / ❄️ ضعيفة)
+- منطقة الدخول الذهبية (POI):
+- المستهدفات (TPs): [TP1: Liquidity Sweep | TP2: Major Supply/Demand]
+- وقف الخسارة (SL): [خلف منطقة الحماية المؤسسية]
+- مستوى الثقة الرقمي: %
+- مدة استهداف الصفقة : [رقم مع رمز]
+
+⚠️ تقييم المخاطر (Invalidation):
+- نقطة بطلان التحليل: (السعر الذي يكسر الفرضية الحالية)
+- تنبيه التلاعب: (احتمالية وجود SFP أو تأثير أخبار قريبة)
         """
         
         payload = {
-            "model": "mistral-large-latest",
+            "model": "pixtral-12b-2409",
             "messages": [
                 {
                     "role": "user", 
@@ -729,7 +735,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             # ✅ حل مشكلة التكرار: تنظيف النص من التكرار
             result = clean_repeated_text(result)
             
-            keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+            keyboard = [["📊 تحليل صورة أخرى"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
             
             # تنسيق وقت الصفقة للعرض
             time_display = format_trade_time_for_prompt(trade_time, manual_time)
@@ -772,26 +778,14 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             print(f"Mistral Vision API Error: {response.status_code} - {response.text}")
             keyboard = [["الرجوع للقائمة الرئيسية"]]
-            await wait_msg.edit_text(
-                f"❌ **خطأ في إرسال الصورة:** {response.status_code}\n"
-                f"يرجى المحاولة مرة أخرى.",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-            )
+            await wait_msg.edit_text(f"❌ **خطأ في إرسال الصورة:** {response.status_code}")
             
     except requests.exceptions.Timeout:
-        keyboard = [["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text(
-            "⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
+        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
     except Exception as e:
         print(f"خطأ في تحليل الصورة: {e}")
         keyboard = [["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text(
-            f"❌ **حدث خطأ في إرسال الصورة.**\n"
-            f"يرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
+        await wait_msg.edit_text("❌ **حدث خطأ في إرسال الصورة.**\nيرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.")
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -1085,90 +1079,21 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# --- معالج الأخطاء ---
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالج الأخطاء العام"""
-    print(f"⚠️ Error occurred: {context.error}")
-    
-    # تجاهل أخطاء التعارض المؤقتة
-    if isinstance(context.error, telegram.error.Conflict):
-        print("⚠️ Conflict error ignored (another instance might be running)")
-        return
-    
-    try:
-        if update and update.effective_chat:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="❌ حدث خطأ غير متوقع. جاري إعادة التشغيل تلقائياً..."
-            )
-    except:
-        pass
-
 # --- الحل النهائي ---
 def run_flask_server():
     """تشغيل Flask server"""
-    port = int(os.environ.get('PORT', 10000))
-    print(f"🌐 Trying to start Flask server on port {port}...")
-    
-    # حاول استخدام منافذ بديلة إذا كان 10000 مشغولاً
-    for p in range(port, port + 5):
-        try:
-            app.run(host='0.0.0.0', port=p, debug=False, use_reloader=False)
-            break
-        except OSError as e:
-            if "Address already in use" in str(e):
-                print(f"⚠️ Port {p} is in use, trying next port...")
-                continue
-            else:
-                raise e
-
-def cleanup_bot_sessions():
-    """تنظيف جلسات البوت القديمة"""
-    try:
-        # إنشاء bot مؤقت لتنظيف الجلسات
-        temp_bot = telegram.Bot(token=TOKEN)
-        
-        # حذف Webhook إن وجد
-        result = temp_bot.delete_webhook(drop_pending_updates=True)
-        print("✅ Deleted any existing webhook")
-        
-        # الحصول على معلومات البوت للتأكد من اتصاله
-        bot_info = temp_bot.get_me()
-        print(f"✅ Bot verified: {bot_info.first_name} (@{bot_info.username})")
-        
-        return True
-    except telegram.error.Conflict as e:
-        print(f"⚠️ Conflict during cleanup: {e}")
-        print("⚠️ Another bot instance might be running. Waiting 5 seconds...")
-        time.sleep(5)
-        return False
-    except Exception as e:
-        print(f"⚠️ Cleanup warning: {e}")
-        return True  # نواصل حتى مع وجود أخطاء في التنظيف
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
-    
-    # تنظيف الجلسات القديمة
-    max_cleanup_attempts = 3
-    for attempt in range(max_cleanup_attempts):
-        print(f"Attempt {attempt + 1}/{max_cleanup_attempts} to clean bot sessions...")
-        if cleanup_bot_sessions():
-            print("✅ Bot sessions cleaned successfully")
-            break
-        elif attempt == max_cleanup_attempts - 1:
-            print("❌ Failed to clean bot sessions after multiple attempts")
-            print("⚠️ Trying to continue anyway...")
     
     # تهيئة قاعدة البيانات
     init_db()
     
     # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
-    
-    # إضافة معالج الأخطاء
-    application.add_error_handler(error_handler)
     
     # معالج المحادثة
     conv_handler = ConversationHandler(
@@ -1208,46 +1133,27 @@ def run_telegram_bot():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cancel", cancel))
     
-    # إضافة معالج للنصوص العامة
+    # إضافة معالج للنصوص
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
     
     print("✅ Telegram Bot initialized successfully")
     print("📡 Bot is now polling for updates...")
     
-    # تشغيل البوت مع إعدادات صحيحة
-    # إصلاح: إزالة المتغيرات غير المدعومة في run_polling()
-    application.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,  # مهم جداً لحل مشكلة التعارض
-        poll_interval=0.5,
-        timeout=30,
-        bootstrap_retries=3,
-        close_loop=False
-    )
+    # تشغيل البوت
+    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 def main():
     """الدالة الرئيسية"""
     print("🚀 Starting Obeida Trading...")
-    print(f"📅 {time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     # تشغيل Flask في thread منفصل
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
-    print(f"🌐 Flask server started in background")
-    print("🔧 Waiting 3 seconds for Flask to initialize...")
-    time.sleep(3)
+    print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
     
-    # تشغيل Telegram bot
-    try:
-        run_telegram_bot()
-    except KeyboardInterrupt:
-        print("\n👋 Bot stopped by user")
-    except Exception as e:
-        print(f"❌ Critical error: {e}")
-        print("🔄 Restarting in 10 seconds...")
-        time.sleep(10)
-        main()  # إعادة التشغيل
+    # تشغيل Telegram bot في thread الرئيسي
+    run_telegram_bot()
 
 if __name__ == "__main__":
     main()
