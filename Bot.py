@@ -18,7 +18,7 @@ MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 DB_NAME = "abood-gpt.db"
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
-TRADE_TIMES = ["S3", "S15", "S30", "M1", "M3", "M5", "M30", "H1", "H4", "H24", "⏱️ وقت يدوي"]
+TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
 
 # توزيع العملات للنظام الجديد
 CATEGORIES = {
@@ -61,7 +61,7 @@ CATEGORIES = {
 
 
 # حالات المحادثة
-MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, SETTINGS_MANUAL_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(8)
+MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
 
 # --- Flask Server ---
 app = Flask(__name__)
@@ -104,8 +104,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY, 
             candle TEXT DEFAULT 'M5', 
-            trade_time TEXT DEFAULT 'H1',
-            manual_time TEXT DEFAULT '',
+            trade_time TEXT DEFAULT 'متوسط (4h-Daily)',
             chat_context TEXT DEFAULT ''
         )
     ''')
@@ -133,74 +132,21 @@ def save_user_setting(user_id, col, val):
 def get_user_setting(user_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT candle, trade_time, manual_time FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT candle, trade_time FROM users WHERE user_id = ?", (user_id,))
     res = cursor.fetchone()
     conn.close()
     if res:
         return res
-    return ("M1", "M5", "")
+    return ("M5", "متوسط (4h-Daily)")
 
-# --- دوال معالجة الوقت اليدوي ---
-def parse_manual_time(time_str):
-    """تحويل النص المدخل إلى وقت بالتنسيق 00:00:00"""
-    try:
-        if re.match(r'^\d{1,2}:\d{2}:\d{2}$', time_str):
-            hours, minutes, seconds = map(int, time_str.split(':'))
-            if 0 <= hours <= 23 and 0 <= minutes <= 59 and 0 <= seconds <= 59:
-                return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        
-        elif 'يوم' in time_str or 'يومين' in time_str or 'أيام' in time_str:
-            days = 0
-            if 'يومين' in time_str:
-                days = 2
-            elif 'يوم' in time_str:
-                numbers = re.findall(r'\d+', time_str)
-                if numbers:
-                    days = int(numbers[0])
-                else:
-                    days = 1
-            return f"{days} يوم"
-        
-        elif 'ساعة' in time_str or 'ساعات' in time_str:
-            hours = 0
-            numbers = re.findall(r'\d+', time_str)
-            if numbers:
-                hours = int(numbers[0])
-            else:
-                hours = 1
-            return f"{hours} ساعة"
-        
-        elif 'دقيقة' in time_str or 'دقائق' in time_str:
-            minutes = 0
-            numbers = re.findall(r'\d+', time_str)
-            if numbers:
-                minutes = int(numbers[0])
-            else:
-                minutes = 1
-            return f"{minutes} دقيقة"
-        
-        elif 'ثانية' in time_str or 'ثواني' in time_str:
-            seconds = 0
-            numbers = re.findall(r'\d+', time_str)
-            if numbers:
-                seconds = int(numbers[0])
-            else:
-                seconds = 1
-            return f"{seconds} ثانية"
-        
-        elif time_str.isdigit():
-            hours = int(time_str)
-            return f"{hours} ساعة"
-            
-    except Exception as e:
-        print(f"Error parsing manual time: {e}")
-    
-    return None
-
-def format_trade_time_for_prompt(trade_time, manual_time=""):
+def format_trade_time_for_prompt(trade_time):
     """تنسيق وقت الصفقة للبرومبت"""
-    if trade_time == "⏱️ وقت يدوي" and manual_time:
-        return f"مدة الصفقة المتوقعة: {manual_time} (مدخل يدوي)"
+    if trade_time == "قصير (1m-15m)":
+        return "مدة الصفقة المتوقعة: قصير الأجل (1 دقيقة إلى 15 دقيقة) - تنفيذ سريع، مخاطر منخفضة"
+    elif trade_time == "متوسط (4h-Daily)":
+        return "مدة الصفقة المتوقعة: متوسط الأجل (4 ساعات إلى يومي) - انتظار أيام، مخاطر متوسطة"
+    elif trade_time == "طويل (Weekly-Monthly)":
+        return "مدة الصفقة المتوقعة: طويل الأجل (أسبوعي إلى شهري) - استثمار طويل، مخاطر مرتفعة"
     else:
         return f"مدة الصفقة المتوقعة: {trade_time}"
 
@@ -334,7 +280,7 @@ def get_mistral_analysis(symbol):
 📝 **مبررات القرار الفني**:
 - (اذكر باختصار: حالة السيولة، الدايفرجنس إن وجد، وموقف المتوسطات المتحركة).
 
-⏳ **الإطار الزمني المتوقع**: (سريع / متوسط / استثماري)
+⏳ **الإطار الزمني المتوقع**: (قصير / متوسط / طويل)
 ⚠️ **تنبيه المخاطر**: (نقطة إلغاء السيناريو الصاعد أو الهابط).
 
     """
@@ -495,7 +441,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # برومبتات متخصصة حسب الاختيار
     system_prompts = {
-        "🚀 مساعد ذكي شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عميقة في:
+        "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عميقة في:
 🎯 **التحليل الفني والمالي:** خبرة في أسواق المال، تحليل الشارتات، واستراتيجيات التداول
 💻 **البرمجة والتقنية:** إتقان Python، JavaScript، تطوير الويب، الذكاء الاصطناعي
 📊 **البيانات والتحليل:** تحليل البيانات، الإحصاء، وتقديم رؤى استراتيجية
@@ -690,7 +636,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور للتحليل الفني"""
     user_id = update.effective_user.id
-    candle, trade_time, manual_time = get_user_setting(user_id)
+    candle, trade_time = get_user_setting(user_id)
     
     if not candle or not trade_time:
         keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
@@ -711,7 +657,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         base64_img = encode_image(path)
         
         # تنسيق وقت الصفقة للبرومبت
-        time_for_prompt = format_trade_time_for_prompt(trade_time, manual_time)
+        time_for_prompt = format_trade_time_for_prompt(trade_time)
         
         # برومبت آمن للتحليل الفني - تم تعديله لمنع التكرار
         prompt = f"""
@@ -757,7 +703,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
    - 🎯 **TP3**: [هدف بعيد - امتداد هيكلي أو سيولة كبرى]
 - **وقف الخسارة (SL)**: [خلف منطقة الحماية المؤسسية]
 - **مستوى الثقة**: %
-- **المدة المتوقعة**: [مدة زمنية تقديرية]
+- **المدة المتوقعة**: [قصير/متوسط/طويل]
 
 ⚠️ **إدارة المخاطر**:
 - **نقطة الإلغاء**: (السعر الذي يكسر الفرضية الحالية)
@@ -809,7 +755,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
             
             # تنسيق وقت الصفقة للعرض
-            time_display = format_trade_time_for_prompt(trade_time, manual_time)
+            time_display = format_trade_time_for_prompt(trade_time)
             
             # ✅ إعداد النص النهائي بدون تكرار
             full_result = (
@@ -906,7 +852,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SETTINGS_CANDLE
     
     elif user_message == "📊 تحليل صورة":
-        candle, trade_time, manual_time = get_user_setting(user_id)
+        candle, trade_time = get_user_setting(user_id)
         
         if not candle or not trade_time:
             keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
@@ -920,7 +866,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             keyboard = [["الرجوع للقائمة الرئيسية"]]
             
-            time_display = format_trade_time_for_prompt(trade_time, manual_time)
+            time_display = format_trade_time_for_prompt(trade_time)
             
             await update.message.reply_text(
                 f"📊 **جاهز للتحليل**\n\n"
@@ -962,15 +908,17 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
     if user_message in CANDLE_SPEEDS:
         save_user_setting(user_id, "candle", user_message)
         
-        keyboard = [TRADE_TIMES[i:i+3] for i in range(0, len(TRADE_TIMES), 3)]
+        keyboard = [TRADE_TIMES[i:i+2] for i in range(0, len(TRADE_TIMES), 2)]
         keyboard.append(["الرجوع للقائمة الرئيسية"])
         
         await update.message.reply_text(
             f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n"
             f"الآن حدد **مدة الصفقة** المتوقعة:\n\n"
-            f"يمكنك اختيار:\n"
-            f"• أحد الأوقات الجاهزة\n"
-            f"• ⏱️ وقت يدوي (لتحديد وقت مخصص)",
+            f"📊 **خيارات مدة الصفقة:**\n"
+            f"• **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة\n"
+            f"• **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة\n"
+            f"• **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة\n\n"
+            f"اختر الإطار الزمني المناسب لاستراتيجيتك:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
         )
@@ -993,97 +941,24 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
         return MAIN_MENU
     
     if user_message in TRADE_TIMES:
-        if user_message == "⏱️ وقت يدوي":
-            keyboard = [["الرجوع للقائمة الرئيسية"]]
-            
-            await update.message.reply_text(
-                "⏱️ **إدخال وقت يدوي**\n\n"
-                "📝 **أرسل وقت الصفقة يدوياً بإحدى الطرق:**\n\n"
-                "1. **تنسيق الوقت:** 00:00:00 (ساعات:دقائق:ثواني)\n"
-                "   مثال: 02:30:00 (ساعتين ونصف)\n"
-                "   مثال: 00:15:00 (15 دقيقة)\n"
-                "   مثال: 00:00:30 (30 ثانية)\n\n"
-                "2. **كتابة نصي:**\n"
-                "   مثال: 2 ساعة\n"
-                "   مثال: 30 دقيقة\n"
-                "   مثال: 3 أيام\n"
-                "   مثال: 45 ثانية\n\n"
-                "3. **أرقام فقط:**\n"
-                "   مثال: 4 (سيتم اعتبارها 4 ساعات)\n\n"
-                "❌ للإلغاء، اضغط 'الرجوع للقائمة الرئيسية'",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return SETTINGS_MANUAL_TIME
-        else:
-            save_user_setting(user_id, "trade_time", user_message)
-            save_user_setting(user_id, "manual_time", "")
-            
-            keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
-            
-            candle, _, _ = get_user_setting(user_id)
-            
-            await update.message.reply_text(
-                f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
-                f"✅ سرعة الشموع: {candle}\n"
-                f"✅ مدة الصفقة: {user_message}\n\n"
-                f"يمكنك الآن تحليل صورة أو الدردشة:",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return MAIN_MENU
-    
-    await update.message.reply_text("❌ الرجاء اختيار مدة صفقة صحيحة.")
-    return SETTINGS_TIME
-
-async def handle_manual_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إدخال الوقت يدوياً"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    parsed_time = parse_manual_time(user_message)
-    
-    if parsed_time:
-        save_user_setting(user_id, "trade_time", "⏱️ وقت يدوي")
-        save_user_setting(user_id, "manual_time", parsed_time)
+        save_user_setting(user_id, "trade_time", user_message)
         
-        keyboard = [["📊 تحليل صورة"],["⚙️ إعدادات التحليل"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+        keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
-        candle, _, _ = get_user_setting(user_id)
+        candle, _ = get_user_setting(user_id)
         
         await update.message.reply_text(
-            f"⏱️ **تم حفظ الوقت اليدوي بنجاح!**\n\n"
+            f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
             f"✅ سرعة الشموع: {candle}\n"
-            f"✅ مدة الصفقة: {parsed_time} (مدخل يدوي)\n\n"
+            f"✅ مدة الصفقة: {user_message}\n\n"
             f"يمكنك الآن تحليل صورة أو الدردشة:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
         )
         return MAIN_MENU
-    else:
-        keyboard = [["الرجوع للقائمة الرئيسية"]]
-        await update.message.reply_text(
-            "❌ **تنسوق وقت غير صحيح!**\n\n"
-            "📝 **أعد الإدخال بإحدى الطرق:**\n\n"
-            "1. **تنسيق الوقت:** 00:00:00 (ساعات:دقائق:ثواني)\n"
-            "   مثال: 02:30:00 (ساعتين ونصف)\n\n"
-            "2. **كتابة نصي:**\n"
-            "   مثال: 2 ساعة\n"
-            "   مثال: 30 دقيقة\n\n"
-            "3. **أرقام فقط:**\n"
-            "   مثال: 4 (سيتم اعتبارها 4 ساعات)",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SETTINGS_MANUAL_TIME
+    
+    await update.message.reply_text("❌ الرجاء اختيار مدة صفقة صحيحة.")
+    return SETTINGS_TIME
 
 async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة وضع التحليل"""
@@ -1128,14 +1003,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • توصيات مفصلة لكل عملة
     • تحليل سريع ومباشر
     
-    ⏱️ **خاصية الوقت اليدوي:**
-    • يمكنك تحديد وقت الصفقة يدوياً
-    • التنسيقات المدعومة:
-      - 00:00:00 (ساعات:دقائق:ثواني)
-      - عدد الأيام (مثال: 2 يوم)
-      - عدد الساعات (مثال: 3 ساعة)
-      - عدد الدقائق (مثال: 45 دقيقة)
-      - عدد الثواني (مثال: 30 ثانية)
+    ⏱️ **خيارات مدة الصفقة:**
+    • **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة
+    • **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة
+    • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
     
     📊 **مميزات البوت:**
     • تحليل فني للرسوم البيانية
@@ -1143,7 +1014,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • نظام توصيات العملات
     • حفظ إعداداتك الشخصية
     • واجهة سهلة بالأزرار
-    • إدخال وقت مخصص يدوياً
     """
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -1183,9 +1053,6 @@ def run_telegram_bot():
             ],
             SETTINGS_TIME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_time)
-            ],
-            SETTINGS_MANUAL_TIME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_manual_time)
             ],
             CHAT_MODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat_message)
