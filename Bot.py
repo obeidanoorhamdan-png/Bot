@@ -14,7 +14,7 @@ from flask import Flask
 
 # --- الإعدادات الجديدة لـ Gemini ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
-GEMINI_KEY = os.environ.get('GEMINI_KEY', "AIzaSyB4sOxUQYRspqFktCzKaPHLZHUoimtxAAb")  # مفتاح Gemini الجديد
+GEMINI_KEY = os.environ.get('GEMINI_KEY', "AIzaSyBHWahWkqVT9C4yT4efcvFdfH0BfgJV9Bs")  # مفتاح Gemini الجديد
 DB_NAME = "abood-gpt.db"
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
