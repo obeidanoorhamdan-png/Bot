@@ -7,17 +7,17 @@ import requests
 import threading
 import time
 import sys
+import google.generativeai as genai
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
-import google.generativeai as genai
 
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
 GEMINI_KEY = os.environ.get('GEMINI_KEY', "AIzaSyBHWahWkqVT9C4yT4efcvFdfH0BfgJV9Bs")
 DB_NAME = "abood-gpt.db"
 
-# تهيئة Gemini API
+# تكوين Gemini
 genai.configure(api_key=GEMINI_KEY)
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
@@ -62,7 +62,6 @@ CATEGORIES = {
     ]
 }
 
-
 # حالات المحادثة
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
 
@@ -87,14 +86,13 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>AI Engine: Google Gemini 2.5 Flash</p>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "timestamp": time.time(), "ai_engine": "gemini-2.5-flash"}
+    return {"status": "active", "timestamp": time.time()}
 
 @app.route('/ping')
 def ping():
@@ -242,55 +240,14 @@ def split_message(text, max_length=4000):
     
     return parts
 
-# --- وظائف Gemini API ---
-def get_gemini_text_analysis(prompt, temperature=0.7):
-    """الحصول على تحليل نصي من Gemini"""
-    try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(
-                temperature=temperature,
-                max_output_tokens=1200,
-            )
-        )
-        return response.text.strip()
-    except Exception as e:
-        print(f"Error in get_gemini_text_analysis: {e}")
-        return f"⚠️ حدث خطأ في الاتصال بالذكاء الاصطناعي: {str(e)}"
-
-def get_gemini_vision_analysis(prompt, image_data):
-    """الحصول على تحليل بصري من Gemini"""
-    try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        
-        # إنشاء محتوى متعدد الوسائط
-        content = [
-            prompt,
-            {
-                "mime_type": "image/jpeg",
-                "data": image_data
-            }
-        ]
-        
-        response = model.generate_content(
-            content,
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.3,
-                max_output_tokens=1200,
-            )
-        )
-        return response.text.strip()
-    except Exception as e:
-        print(f"Error in get_gemini_vision_analysis: {e}")
-        return f"⚠️ حدث خطأ في تحليل الصورة: {str(e)}"
-
 # --- وظائف نظام التوصية الجديد ---
-def get_symbol_analysis(symbol):
+def get_gemini_analysis(symbol):
     """الحصول على تحليل من Gemini للعملة"""
-    
-    prompt = f"""
-    بصفتك محللاً مالياً وخبيراً في استراتيجيات التداول الكمي والتقني، قم بإجراء تحليل معمق لعملة {symbol} وفق بروتوكول "تلاقي الأدلة" (Confluence Analysis):
+    try:
+        model = genai.GenerativeModel('gemini-pro')
+        
+        prompt = f"""
+        بصفتك محللاً مالياً وخبيراً في استراتيجيات التداول الكمي والتقني، قم بإجراء تحليل معمق لعملة {symbol} وفق بروتوكول "تلاقي الأدلة" (Confluence Analysis):
 
 المرحلة 1 (التحليل الهيكلي Multi-TF):
 - حدد اتجاه السوق (Market Structure) على الفريم اليومي (السياق العام) وفريم 4 ساعات (التنفيذ).
@@ -309,7 +266,7 @@ def get_symbol_analysis(symbol):
 📊 **تقرير الفحص الفني لعملة {symbol}**
 
 - **الاتجاه العام**: (صاعد 🟢 / هابط 🔴 / عرضي 🟡)
-- **السعر الحالي**: [السعر اللحظي]
+- **السعر الحالي**: [تقدير أو إشارة مني]
 - **مستوى الثقة**: % (بناءً على عدد المؤشرات المتوافقة)
 
 🎯 **خطة التداول (Trading Plan)**:
@@ -325,9 +282,20 @@ def get_symbol_analysis(symbol):
 
 ⏳ **الإطار الزمني المتوقع**: (قصير / متوسط / طويل)
 ⚠️ **تنبيه المخاطر**: (نقطة إلغاء السيناريو الصاعد أو الهابط).
-    """
-    
-    return get_gemini_text_analysis(prompt, temperature=0.1)
+        """
+        
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=1500,
+                temperature=0.1
+            )
+        )
+        
+        return response.text.strip()
+    except Exception as e:
+        print(f"Error in get_gemini_analysis: {e}")
+        return "⚠️ حدث خطأ في اتصال المحلل. يرجى المحاولة مرة أخرى."
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء وضع التوصية"""
@@ -375,7 +343,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     # إذا وجدت العملة، ابدأ التحليل
     if symbol_to_analyze:
         wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
-        analysis = get_symbol_analysis(symbol_to_analyze)
+        analysis = get_gemini_analysis(symbol_to_analyze)
         
         final_msg = (
             f"📈 **نتائج توصية {symbol_to_analyze}**\n"
@@ -448,7 +416,7 @@ async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CHAT_MODE
 
 async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة رسائل الدردشة مع برومبت قوي"""
+    """معالجة رسائل الدردشة مع Gemini"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
@@ -588,11 +556,20 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     wait_msg = await update.message.reply_text("Obeida Trading 🤔...")
     
     try:
-        # إنشاء المحتوى الكامل
-        full_prompt = f"{selected_prompt}\n\nالسؤال: {user_message}"
+        # استخدام Gemini
+        model = genai.GenerativeModel('gemini-pro')
         
-        # استدعاء Gemini API
-        result = get_gemini_text_analysis(full_prompt, temperature=0.7)
+        full_prompt = f"{selected_prompt}\n\nسؤال المستخدم: {user_message}"
+        
+        response = model.generate_content(
+            full_prompt,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=1500,
+                temperature=0.7
+            )
+        )
+        
+        result = response.text
         
         # تنظيف النص من التكرارات
         result = clean_repeated_text(result)
@@ -633,14 +610,14 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         
     except Exception as e:
-        print(f"خطأ في الدردشة: {e}")
-        await wait_msg.edit_text("❌ حدث خطأ غير متوقع. النظام يعمل على الإصلاح تلقائياً...")
+        print(f"خطأ في الدردشة مع Gemini: {e}")
+        await wait_msg.edit_text("❌ حدث خطأ في اتصال الخدمة. يرجى المحاولة مرة أخرى لاحقاً.")
     
     return CHAT_MODE
 
-# --- كود تحليل الصور ---
+# --- كود تحليل الصور مع Gemini ---
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني"""
+    """معالجة الصور للتحليل الفني مع Gemini"""
     user_id = update.effective_user.id
     candle, trade_time = get_user_setting(user_id)
     
@@ -660,14 +637,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     await photo.download_to_drive(path)
 
     try:
-        # قراءة الصورة كبيانات ثنائية
-        with open(path, "rb") as f:
-            image_data = f.read()
-        
         # تنسيق وقت الصفقة للبرومبت
         time_for_prompt = format_trade_time_for_prompt(trade_time)
         
-        # برومبت آمن للتحليل الفني - تم تعديله لمنع التكرار
+        # برومبت تحليل الصورة
         prompt = f"""
         [SYSTEM_TASK: TOTAL_MARKET_DECRYPTION_V6]
 بصفتك خبير استراتيجيات تداول في صناديق التحوط، ومتمكن من دمج مدارس (SMC + ICT + Wyckoff + Order Flow)، قم بتحليل الشارت المرفق بدقة متناهية:
@@ -766,29 +739,28 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - **تحذير التلاعب**: (احتمالية وجود SFP أو تأثير أخبار قريبة)
         """
         
-        # استدعاء Gemini Vision API
-        result = get_gemini_vision_analysis(prompt, image_data)
+        # استخدام Gemini Vision
+        model = genai.GenerativeModel('gemini-pro-vision')
         
-        # ✅ تنظيف النص من التكرار
+        import PIL.Image
+        img = PIL.Image.open(path)
+        
+        response = model.generate_content([
+            prompt,
+            img
+        ])
+        
+        result = response.text.strip()
+        
+        # تنظيف النص من التكرار
         result = clean_repeated_text(result)
-        
-        # ✅ إزالة أي تكرار محتمل
-        # إزالة "### تحليل الشارت المرفق" إذا كانت موجودة
-        if "### تحليل الشارت المرفق" in result:
-            parts = result.split("### تحليل الشارت المرفق")
-            if len(parts) > 1:
-                result = parts[1].strip()
-        
-        # إزالة أي "نتائج الفحص الفني:" إذا كانت موجودة
-        if "نتائج الفحص الفني:" in result:
-            result = result.replace("نتائج الفحص الفني:", "📊 **التحليل الفني:**").strip()
         
         keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
         # تنسيق وقت الصفقة للعرض
         time_display = format_trade_time_for_prompt(trade_time)
         
-        # ✅ إعداد النص النهائي بدون تكرار
+        # إعداد النص النهائي
         full_result = (
             f"✅ **تم التحليل بنجاح!**\n"
             f"📈 **نتائج تحليل الشارت:**\n"
@@ -830,9 +802,9 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         
     except Exception as e:
-        print(f"خطأ في تحليل الصورة: {e}")
+        print(f"خطأ في تحليل الصورة مع Gemini: {e}")
         keyboard = [["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text("❌ **حدث خطأ في إرسال الصورة.**\nيرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.")
+        await wait_msg.edit_text("❌ **حدث خطأ في تحليل الصورة.**\nيرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.")
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -1059,7 +1031,6 @@ def run_flask_server():
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
-    print("🤖 AI Engine: Google Gemini 2.5 Flash")
     
     # تهيئة قاعدة البيانات
     init_db()
@@ -1114,7 +1085,7 @@ def run_telegram_bot():
 def main():
     """الدالة الرئيسية"""
     print("🚀 Starting Obeida Trading...")
-    print("🔧 Powered by Google Gemini 2.5 Flash")
+    print(f"🔑 Using Gemini API with key: {GEMINI_KEY[:15]}...")
     
     # تشغيل Flask في thread منفصل
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
