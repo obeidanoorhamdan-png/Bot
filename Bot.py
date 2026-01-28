@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import base64
 import os
@@ -11,6 +12,8 @@ import google.generativeai as genai
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
+import PIL.Image
+from io import BytesIO
 
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
@@ -19,6 +22,10 @@ DB_NAME = "abood-gpt.db"
 
 # تكوين Gemini
 genai.configure(api_key=GEMINI_KEY)
+
+# إعداد التسجيل
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
@@ -153,9 +160,10 @@ def format_trade_time_for_prompt(trade_time):
         return f"مدة الصفقة المتوقعة: {trade_time}"
 
 # --- معالجة الصور ---
-def encode_image(image_path):
-    with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode('utf-8')
+async def download_photo(photo_file):
+    """تحميل الصورة إلى الذاكرة بدون حفظ في ملف"""
+    photo_bytes = await photo_file.download_as_bytearray()
+    return BytesIO(photo_bytes)
 
 # --- دوال المساعدة للتعامل مع النصوص ---
 def clean_repeated_text(text):
@@ -294,7 +302,7 @@ def get_gemini_analysis(symbol):
         
         return response.text.strip()
     except Exception as e:
-        print(f"Error in get_gemini_analysis: {e}")
+        logger.error(f"Error in get_gemini_analysis: {e}")
         return "⚠️ حدث خطأ في اتصال المحلل. يرجى المحاولة مرة أخرى."
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -556,17 +564,23 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     wait_msg = await update.message.reply_text("Obeida Trading 🤔...")
     
     try:
-        # استخدام Gemini
+        # استخدام Gemini مع مهلة زمنية
         model = genai.GenerativeModel('gemini-pro')
         
         full_prompt = f"{selected_prompt}\n\nسؤال المستخدم: {user_message}"
         
-        response = model.generate_content(
-            full_prompt,
-            generation_config=genai.types.GenerationConfig(
-                max_output_tokens=1500,
-                temperature=0.7
-            )
+        response = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: model.generate_content(
+                    full_prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        max_output_tokens=1500,
+                        temperature=0.7
+                    )
+                )
+            ),
+            timeout=30.0
         )
         
         result = response.text
@@ -609,13 +623,43 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=ReplyKeyboardMarkup(chat_keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         
+    except asyncio.TimeoutError:
+        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد للتحليل. يرجى إرسال صورة أصغر أو المحاولة مرة أخرى لاحقاً.")
     except Exception as e:
-        print(f"خطأ في الدردشة مع Gemini: {e}")
+        logger.error(f"خطأ في الدردشة مع Gemini: {e}")
         await wait_msg.edit_text("❌ حدث خطأ في اتصال الخدمة. يرجى المحاولة مرة أخرى لاحقاً.")
     
     return CHAT_MODE
 
 # --- كود تحليل الصور مع Gemini والبرومبت المحدد ---
+def analyze_image_with_gemini(image_data, prompt):
+    """دالة متزامنة لتحليل الصورة مع Gemini"""
+    try:
+        # تحويل bytes إلى صورة
+        img = PIL.Image.open(BytesIO(image_data))
+        
+        # استخدام gemini-pro-vision
+        model = genai.GenerativeModel('gemini-pro-vision')
+        response = model.generate_content([prompt, img])
+        
+        if response and response.text:
+            return response.text.strip()
+        else:
+            # محاولة باستخدام نموذج النص إذا فشل Vision
+            model_text = genai.GenerativeModel('gemini-pro')
+            text_response = model_text.generate_content(
+                f"{prompt}\n\nهذا تحليل لصورة رسم بياني. قدم تحليلاً فنيًا بناءً على الوصف.",
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=1500,
+                    temperature=0.3
+                )
+            )
+            return text_response.text.strip()
+            
+    except Exception as e:
+        logger.error(f"خطأ في تحليل الصورة: {e}")
+        raise e
+
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور للتحليل الفني مع Gemini"""
     user_id = update.effective_user.id
@@ -631,12 +675,13 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return MAIN_MENU
 
-    wait_msg = await update.message.reply_text("جاري تحليل صورة 📊...")
-    photo = await update.message.photo[-1].get_file()
-    path = f"img_{user_id}_{int(time.time())}.jpg"
-    await photo.download_to_drive(path)
-
+    wait_msg = await update.message.reply_text("📊 جاري تحليل الصورة... (قد يستغرق حتى 30 ثانية)")
+    
     try:
+        # تحميل الصورة مباشرة إلى الذاكرة
+        photo_file = await update.message.photo[-1].get_file()
+        photo_bytes = await photo_file.download_as_bytearray()
+        
         # تنسيق وقت الصفقة للبرومبت
         time_for_prompt = format_trade_time_for_prompt(trade_time)
         
@@ -739,44 +784,20 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - **تحذير التلاعب**: (احتمالية وجود SFP أو تأثير أخبار قريبة)
         """
         
-        # استخدام Gemini Vision
-        try:
-            import PIL.Image
-            img = PIL.Image.open(path)
-            
-            # استخدام gemini-pro-vision
-            model = genai.GenerativeModel('gemini-pro-vision')
-            response = model.generate_content([prompt, img])
-            
-            if response.text:
-                result = response.text.strip()
-            else:
-                raise Exception("لم يتم الحصول على رد من Gemini")
-                
-        except Exception as e:
-            print(f"خطأ في نموذج Vision: {e}")
-            # استخدام نموذج النص العادي كبديل
-            model = genai.GenerativeModel('gemini-pro')
-            text_prompt = f"""
-            {prompt}
-            
-            ملاحظة: الصورة المرفقة هي لرسم بياني (شارت) مع قراءات الأسعار.
-            قم بتحليل الرسم البياني بناءً على التعليمات أعلاه.
-            """
-            response = model.generate_content(
-                text_prompt,
-                generation_config=genai.types.GenerationConfig(
-                    max_output_tokens=2000,
-                    temperature=0.1
-                )
-            )
-            result = response.text.strip()
+        # استدعاء Gemini مع مهلة زمنية
+        analysis_text = await asyncio.wait_for(
+            asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: analyze_image_with_gemini(photo_bytes, prompt)
+            ),
+            timeout=45.0  # مهلة 45 ثانية
+        )
         
-        if not result:
-            result = "⚠️ لم أتمكن من تحليل الصورة بدقة. يرجى إرسال صورة أوضح للشارت."
+        if not analysis_text:
+            raise Exception("لم يتم الحصول على تحليل من Gemini")
         
-        # تنظيف النص من التكرار
-        result = clean_repeated_text(result)
+        # تنظيف النص
+        analysis_text = clean_repeated_text(analysis_text)
         
         keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
@@ -788,7 +809,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             f"✅ **تم تحليل الصورة بنجاح!**\n"
             f"📈 **نتائج التحليل الفني:**\n"
             f"━━━━━━━━━━━━━━━━\n"
-            f"{result}\n\n"
+            f"{analysis_text}\n\n"
             f"📊 **الإعدادات المستخدمة:**\n"
             f"• سرعة الشموع: {candle}\n"
             f"• {time_display}\n\n"
@@ -796,27 +817,14 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             f"🤖 **Obeida Trading - نظام التحليل الفني**"
         )
         
-        # تنظيف النهائي من التكرارات
-        full_result = clean_repeated_text(full_result)
-        
-        # تقسيم النتيجة إذا كانت طويلة
+        # إرسال النتيجة
         if len(full_result) > 4000:
             parts = split_message(full_result, max_length=4000)
-            
-            # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
-            await wait_msg.edit_text(
-                parts[0],
-                parse_mode="Markdown"
-            )
-            
-            # إرسال الأجزاء المتبقية
+            await wait_msg.edit_text(parts[0], parse_mode="Markdown")
             for part in parts[1:]:
                 await update.message.reply_text(part, parse_mode="Markdown")
         else:
-            await wait_msg.edit_text(
-                full_result,
-                parse_mode="Markdown"
-            )
+            await wait_msg.edit_text(full_result, parse_mode="Markdown")
         
         # إرسال الأزرار
         await update.message.reply_text(
@@ -824,36 +832,43 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         
-    except Exception as e:
-        print(f"❌ خطأ في تحليل الصورة: {type(e).__name__}: {str(e)}")
+    except asyncio.TimeoutError:
+        await wait_msg.edit_text(
+            "⏱️ **تجاوز الوقت المحدد للتحليل**\n\n"
+            "التحليل استغرق وقتاً أطول من المتوقع.\n"
+            "يمكنك:\n"
+            "1. إرسال صورة أصغر حجماً\n"
+            "2. المحاولة مرة أخرى لاحقاً\n"
+            "3. استخدام ميزة التوصيات النصية",
+            reply_markup=ReplyKeyboardMarkup(
+                [["📊 تحليل صورة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]],
+                resize_keyboard=True
+            )
+        )
+        logger.warning(f"انتهت مهلة تحليل الصورة للمستخدم {user_id}")
         
-        # رسالة خطأ واضحة
-        error_message = (
-            f"❌ **حدث خطأ في تحليل الصورة**\n\n"
-            f"**التفاصيل:** {str(e)[:200]}\n\n"
+    except Exception as e:
+        logger.error(f"خطأ في تحليل الصورة: {type(e).__name__}: {str(e)}")
+        
+        error_msg = (
+            f"❌ **حدث خطأ في التحليل**\n\n"
+            f"**السبب:** {str(e)[:150]}\n\n"
             f"**الحلول المقترحة:**\n"
             f"1. تأكد من وضوح الصورة وجودتها\n"
-            f"2. أرسل صورة بحجم أصغر\n"
-            f"3. حاول مرة أخرى بعد قليل\n"
-            f"4. استخدم ميزة التوصيات كبديل\n\n"
-            f"يمكنك المحاولة مرة أخرى أو الرجوع للقائمة الرئيسية."
+            "2. أرسل صورة بحجم أصغر (أقل من 2MB)\n"
+            "3. حاول مرة أخرى بعد قليل\n"
+            "4. تأكد من اتصال الإنترنت\n\n"
+            f"يمكنك المحاولة مرة أخرى أو استخدام التوصيات النصية."
         )
-        
-        keyboard = [["📊 تحليل صورة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
         await wait_msg.edit_text(
-            error_message,
+            error_msg,
             parse_mode="Markdown",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+            reply_markup=ReplyKeyboardMarkup(
+                [["📊 تحليل صورة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]],
+                resize_keyboard=True
+            )
         )
-        
-    finally:
-        # تنظيف الملف المؤقت
-        try:
-            if os.path.exists(path):
-                os.remove(path)
-        except Exception as cleanup_error:
-            print(f"Cleanup error: {cleanup_error}")
     
     return MAIN_MENU
 
@@ -916,7 +931,8 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"الإعدادات الحالية:\n"
                 f"• سرعة الشموع: {candle}\n"
                 f"• {time_display}\n\n"
-                f"أرسل صورة الرسم البياني (الشارت) الآن:",
+                f"أرسل صورة الرسم البياني (الشارت) الآن:\n"
+                f"📝 **ملاحظة:** يفضل إرسال صور واضحة بحجم معقول",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
                 parse_mode="Markdown"
             )
@@ -1017,7 +1033,12 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
         return MAIN_MENU
     
     await update.message.reply_text(
-        "📤 **الرجاء إرسال صورة الشارت فقط**\nأو اضغط 'الرجوع للقائمة الرئيسية'",
+        "📤 **الرجاء إرسال صورة الشارت فقط**\n"
+        "⚠️ **نصائح للحصول على أفضل نتيجة:**\n"
+        "• تأكد من وضوح الصورة\n"
+        "• تجنب الصور الكبيرة جداً\n"
+        "• تأكد من ظهور الأرقام بوضوح\n\n"
+        "أو اضغط 'الرجوع للقائمة الرئيسية'",
         reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True, one_time_keyboard=False)
     )
     return ANALYZE_MODE
@@ -1124,6 +1145,7 @@ def run_telegram_bot():
     
     print("✅ Telegram Bot initialized successfully")
     print("📡 Bot is now polling for updates...")
+    print("🤖 Gemini API configured successfully")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
@@ -1133,6 +1155,14 @@ def main():
     print("🚀 Starting Obeida Trading...")
     print(f"🔑 Using Gemini API")
     
+    # اختبار اتصال Gemini
+    try:
+        model = genai.GenerativeModel('gemini-pro')
+        response = model.generate_content("Test")
+        print("✅ Gemini API connection test successful")
+    except Exception as e:
+        print(f"⚠️ Warning: Gemini API connection may have issues: {e}")
+    
     # تشغيل Flask في thread منفصل
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
@@ -1140,7 +1170,11 @@ def main():
     print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
     
     # تشغيل Telegram bot في thread الرئيسي
-    run_telegram_bot()
+    try:
+        run_telegram_bot()
+    except Exception as e:
+        print(f"❌ Fatal error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
