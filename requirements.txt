@@ -1,9 +1,8 @@
 python-telegram-bot
 flask
 requests
-python-dotenv
-gunicorn
-Pillow
-black
-pylint
-pytest
+google-generativeai
+pillow
+sqlite3
+aiohttp
+pytz
