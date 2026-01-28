@@ -615,7 +615,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-# --- كود تحليل الصور مع Gemini ---
+# --- كود تحليل الصور مع Gemini والبرومبت المحدد ---
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور للتحليل الفني مع Gemini"""
     user_id = update.effective_user.id
@@ -633,14 +633,14 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
     wait_msg = await update.message.reply_text("جاري تحليل صورة 📊...")
     photo = await update.message.photo[-1].get_file()
-    path = f"img_{user_id}.jpg"
+    path = f"img_{user_id}_{int(time.time())}.jpg"
     await photo.download_to_drive(path)
 
     try:
         # تنسيق وقت الصفقة للبرومبت
         time_for_prompt = format_trade_time_for_prompt(trade_time)
         
-        # برومبت تحليل الصورة
+        # البرومبت المحدد
         prompt = f"""
         [SYSTEM_TASK: TOTAL_MARKET_DECRYPTION_V6]
 بصفتك خبير استراتيجيات تداول في صناديق التحوط، ومتمكن من دمج مدارس (SMC + ICT + Wyckoff + Order Flow)، قم بتحليل الشارت المرفق بدقة متناهية:
@@ -740,17 +740,40 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         """
         
         # استخدام Gemini Vision
-        model = genai.GenerativeModel('gemini-pro-vision')
+        try:
+            import PIL.Image
+            img = PIL.Image.open(path)
+            
+            # استخدام gemini-pro-vision
+            model = genai.GenerativeModel('gemini-pro-vision')
+            response = model.generate_content([prompt, img])
+            
+            if response.text:
+                result = response.text.strip()
+            else:
+                raise Exception("لم يتم الحصول على رد من Gemini")
+                
+        except Exception as e:
+            print(f"خطأ في نموذج Vision: {e}")
+            # استخدام نموذج النص العادي كبديل
+            model = genai.GenerativeModel('gemini-pro')
+            text_prompt = f"""
+            {prompt}
+            
+            ملاحظة: الصورة المرفقة هي لرسم بياني (شارت) مع قراءات الأسعار.
+            قم بتحليل الرسم البياني بناءً على التعليمات أعلاه.
+            """
+            response = model.generate_content(
+                text_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=2000,
+                    temperature=0.1
+                )
+            )
+            result = response.text.strip()
         
-        import PIL.Image
-        img = PIL.Image.open(path)
-        
-        response = model.generate_content([
-            prompt,
-            img
-        ])
-        
-        result = response.text.strip()
+        if not result:
+            result = "⚠️ لم أتمكن من تحليل الصورة بدقة. يرجى إرسال صورة أوضح للشارت."
         
         # تنظيف النص من التكرار
         result = clean_repeated_text(result)
@@ -762,8 +785,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # إعداد النص النهائي
         full_result = (
-            f"✅ **تم التحليل بنجاح!**\n"
-            f"📈 **نتائج تحليل الشارت:**\n"
+            f"✅ **تم تحليل الصورة بنجاح!**\n"
+            f"📈 **نتائج التحليل الفني:**\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"{result}\n\n"
             f"📊 **الإعدادات المستخدمة:**\n"
@@ -802,12 +825,35 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         
     except Exception as e:
-        print(f"خطأ في تحليل الصورة مع Gemini: {e}")
-        keyboard = [["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text("❌ **حدث خطأ في تحليل الصورة.**\nيرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.")
+        print(f"❌ خطأ في تحليل الصورة: {type(e).__name__}: {str(e)}")
+        
+        # رسالة خطأ واضحة
+        error_message = (
+            f"❌ **حدث خطأ في تحليل الصورة**\n\n"
+            f"**التفاصيل:** {str(e)[:200]}\n\n"
+            f"**الحلول المقترحة:**\n"
+            f"1. تأكد من وضوح الصورة وجودتها\n"
+            f"2. أرسل صورة بحجم أصغر\n"
+            f"3. حاول مرة أخرى بعد قليل\n"
+            f"4. استخدم ميزة التوصيات كبديل\n\n"
+            f"يمكنك المحاولة مرة أخرى أو الرجوع للقائمة الرئيسية."
+        )
+        
+        keyboard = [["📊 تحليل صورة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+        
+        await wait_msg.edit_text(
+            error_message,
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        
     finally:
-        if os.path.exists(path):
-            os.remove(path)
+        # تنظيف الملف المؤقت
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception as cleanup_error:
+            print(f"Cleanup error: {cleanup_error}")
     
     return MAIN_MENU
 
@@ -1085,7 +1131,7 @@ def run_telegram_bot():
 def main():
     """الدالة الرئيسية"""
     print("🚀 Starting Obeida Trading...")
-    print(f"🔑 Using Gemini API with key: {GEMINI_KEY[:15]}...")
+    print(f"🔑 Using Gemini API")
     
     # تشغيل Flask في thread منفصل
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
