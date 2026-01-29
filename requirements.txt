@@ -2,9 +2,10 @@ python-telegram-bot
 flask
 requests
 python-dotenv
-pillow
-aiohttp
-emoji
-colorama
-pytz
+Pillow
 gunicorn
+APScheduler
+python-multipart
+pytz
+tzlocal
+httpx
