@@ -13,8 +13,10 @@ from flask import Flask
 
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyBHWahWkqVT9C4yT4efcvFdfH0BfgJV9Bs")
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={GEMINI_API_KEY}"
+# تم تغيير API من Mistral إلى POE
+POE_API_KEY = os.environ.get('POE_API_KEY', "56swP2xRwXifJnqa6mUR9eJ0Zz-RDQPje33bGgUkiw0")
+POE_URL = "https://api.poe.com/v1/chat/completions"
+POE_MODEL = "Gemini-2.5-Flash"
 DB_NAME = "abood-gpt.db"
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
@@ -24,7 +26,7 @@ TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-M
 CATEGORIES = {
     "فوركس - عملات رئيسية 💹": [
         "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", 
-        "USD/CHF", "USD/CAD", "NZD/USD"
+        "USD/CHF", "USD/CAD", "NZد/USD"
     ],
     "فوركس - تقاطعات اليورو 🇪🇺": [
         "EUR/GBP", "EUR/JPY", "EUR/AUD", "EUR/CAD", 
@@ -58,7 +60,6 @@ CATEGORIES = {
         "ADA/USD", "DOT/USD", "LTC/USD"
     ]
 }
-
 
 # حالات المحادثة
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
@@ -152,8 +153,15 @@ def format_trade_time_for_prompt(trade_time):
 
 # --- معالجة الصور ---
 def encode_image(image_path):
-    with open(image_path, "rb") as f:
-        return base64.b64encode(f.read()).decode('utf-8')
+    """تحويل الصورة إلى base64 بشكل صحيح"""
+    try:
+        with open(image_path, "rb") as image_file:
+            # قراءة الملف وترميزه إلى base64
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+        return encoded_string
+    except Exception as e:
+        print(f"Error encoding image: {e}")
+        return None
 
 # --- دوال المساعدة للتعامل مع النصوص ---
 def clean_repeated_text(text):
@@ -238,10 +246,11 @@ def split_message(text, max_length=4000):
     
     return parts
 
-# --- وظائف نظام التوصية الجديد ---
-def get_gemini_analysis(symbol):
-    """الحصول على تحليل من Gemini للعملة"""
+# --- وظائف نظام التوصية الجديد مع POE API ---
+def get_poe_analysis(symbol):
+    """الحصول على تحليل من POE API للعملة"""
     headers = {
+        "Authorization": f"Bearer {POE_API_KEY}",
         "Content-Type": "application/json"
     }
     
@@ -281,29 +290,20 @@ def get_gemini_analysis(symbol):
 
 ⏳ **الإطار الزمني المتوقع**: (قصير / متوسط / طويل)
 ⚠️ **تنبيه المخاطر**: (نقطة إلغاء السيناريو الصاعد أو الهابط).
-
     """
     
     body = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }],
-        "generationConfig": {
-            "temperature": 0.1,
-            "maxOutputTokens": 1200
-        }
+        "model": POE_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1
     }
 
     try:
-        response = requests.post(GEMINI_URL, json=body, headers=headers, timeout=25)
+        response = requests.post(POE_URL, json=body, headers=headers, timeout=25)
         response.raise_for_status()
-        result = response.json()
-        if 'candidates' in result and len(result['candidates']) > 0:
-            return result['candidates'][0]['content']['parts'][0]['text'].strip()
-        else:
-            return "⚠️ لم يتم الحصول على تحليل من Gemini API."
+        return response.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
-        print(f"Error in get_gemini_analysis: {e}")
+        print(f"Error in get_poe_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -352,7 +352,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     # إذا وجدت العملة، ابدأ التحليل
     if symbol_to_analyze:
         wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
-        analysis = get_gemini_analysis(symbol_to_analyze)
+        analysis = get_poe_analysis(symbol_to_analyze)
         
         final_msg = (
             f"📈 **نتائج توصية {symbol_to_analyze}**\n"
@@ -399,7 +399,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     )
     return RECOMMENDATION_MODE
 
-# --- 🚀 برومبت قوي للدردشة ---
+# --- 🚀 برومبت قوي للدردشة مع POE API ---
 async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء وضع الدردشة المتقدم"""
     keyboard = [
@@ -425,7 +425,7 @@ async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CHAT_MODE
 
 async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة رسائل الدردشة مع Gemini"""
+    """معالجة رسائل الدردشة مع POE API"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
@@ -565,32 +565,26 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     wait_msg = await update.message.reply_text("Obeida Trading 🤔...")
     
     try:
-        # استدعاء واجهة Gemini
+        # استدعاء واجهة POE API
         payload = {
-            "contents": [{
-                "parts": [
-                    {"text": selected_prompt},
-                    {"text": user_message}
-                ]
-            }],
-            "generationConfig": {
-                "maxOutputTokens": 1200,
-                "temperature": 0.7
-            }
+            "model": POE_MODEL,
+            "messages": [
+                {"role": "system", "content": selected_prompt},
+                {"role": "user", "content": user_message}
+            ],
+            "max_tokens": 1200,
+            "temperature": 0.7
         }
         
         headers = {
+            "Authorization": f"Bearer {POE_API_KEY}",
             "Content-Type": "application/json"
         }
         
-        response = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(POE_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
-            result_data = response.json()
-            if 'candidates' in result_data and len(result_data['candidates']) > 0:
-                result = result_data['candidates'][0]['content']['parts'][0]['text']
-            else:
-                result = "⚠️ لم يتم الحصول على إجابة من Gemini API."
+            result = response.json()['choices'][0]['message']['content']
             
             # تنظيف النص من التكرارات
             result = clean_repeated_text(result)
@@ -631,7 +625,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             
         else:
-            print(f"Gemini API Error: {response.status_code} - {response.text}")
+            print(f"POE API Error: {response.status_code} - {response.text}")
             await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
     
     except requests.exceptions.Timeout:
@@ -645,9 +639,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-# --- كود تحليل الصور ---
+# --- كود تحليل الصور مع POE API ---
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني باستخدام Gemini"""
+    """معالجة الصور للتحليل الفني"""
     user_id = update.effective_user.id
     candle, trade_time = get_user_setting(user_id)
     
@@ -667,8 +661,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     await photo.download_to_drive(path)
 
     try:
-        with open(path, "rb") as image_file:
-            image_data = base64.b64encode(image_file.read()).decode('utf-8')
+        base64_img = encode_image(path)
+        
+        if not base64_img:
+            raise Exception("Failed to encode image")
         
         # تنسيق وقت الصفقة للبرومبت
         time_for_prompt = format_trade_time_for_prompt(trade_time)
@@ -766,63 +762,43 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - **مستوى الثقة**: [% مع ذكر عدد التاكيدات]
 - **المدة المتوقعة 🕧**: [عدد الشموع للوصول للهدف]
 - **نقطة الإلغاء**: [السعر الذي يفسد التحليل]
-
-⚠️ **إدارة المخاطر**:
-- **نقطة الإلغاء**: (السعر الذي يكسر الفرضية الحالية)
-- **تحذير التلاعب**: (احتمالية وجود SFP أو تأثير أخبار قريبة)
         """
         
+        # بناء payload لـ POE API مع الصورة
         payload = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": "image/jpeg",
-                            "data": image_data
-                        }
-                    }
-                ]
-            }],
-            "generationConfig": {
-                "maxOutputTokens": 1200,
-                "temperature": 0.3
-            }
+            "model": POE_MODEL,
+            "messages": [
+                {
+                    "role": "user", 
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
+                    ]
+                }
+            ],
+            "max_tokens": 1500,
+            "temperature": 0.3
         }
         
         headers = {
+            "Authorization": f"Bearer {POE_API_KEY}",
             "Content-Type": "application/json"
         }
         
-        response = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=45)
+        response = requests.post(POE_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
-            result_data = response.json()
-            if 'candidates' in result_data and len(result_data['candidates']) > 0:
-                result = result_data['candidates'][0]['content']['parts'][0]['text'].strip()
-            else:
-                result = "⚠️ لم يتم الحصول على تحليل من Gemini API."
+            result = response.json()['choices'][0]['message']['content'].strip()
             
-            # ✅ تنظيف النص من التكرار
+            # تنظيف النص من التكرار
             result = clean_repeated_text(result)
-            
-            # ✅ إزالة أي تكرار محتمل
-            # إزالة "### تحليل الشارت المرفق" إذا كانت موجودة
-            if "### تحليل الشارت المرفق" in result:
-                parts = result.split("### تحليل الشارت المرفق")
-                if len(parts) > 1:
-                    result = parts[1].strip()
-            
-            # إزالة أي "نتائج الفحص الفني:" إذا كانت موجودة
-            if "نتائج الفحص الفني:" in result:
-                result = result.replace("نتائج الفحص الفني:", "📊 **التحليل الفني:**").strip()
             
             keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
             
             # تنسيق وقت الصفقة للعرض
             time_display = format_trade_time_for_prompt(trade_time)
             
-            # ✅ إعداد النص النهائي بدون تكرار
+            # إعداد النص النهائي
             full_result = (
                 f"✅ **تم التحليل بنجاح!**\n"
                 f"📈 **نتائج تحليل الشارت:**\n"
@@ -863,7 +839,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
             )
         else:
-            print(f"Gemini Vision API Error: {response.status_code} - {response.text}")
+            print(f"POE API Error: {response.status_code} - {response.text}")
             keyboard = [["الرجوع للقائمة الرئيسية"]]
             await wait_msg.edit_text(f"❌ **خطأ في إرسال الصورة:** {response.status_code}")
             
