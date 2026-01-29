@@ -1,12 +1,10 @@
 python-telegram-bot
 flask
 requests
-sqlite3
 python-dotenv
-pybase64
-pytz
-colorama
-emoji
 pillow
 aiohttp
-python-multipart
+emoji
+colorama
+pytz
+gunicorn
