@@ -13,10 +13,8 @@ from flask import Flask
 
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
-# تم تغيير API من Mistral إلى POE
-POE_API_KEY = os.environ.get('POE_API_KEY', "56swP2xRwXifJnqa6mUR9eJ0Zz-RDQPje33bGgUkiw0")
-POE_URL = "https://api.poe.com/v1/chat/completions"
-POE_MODEL = "Gemini-2.5-Flash"
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', "AIzaSyB-zsT70rHcIh1BJKbbifsKOfDM3Lvz0jc")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
 DB_NAME = "abood-gpt.db"
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
@@ -26,7 +24,7 @@ TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-M
 CATEGORIES = {
     "فوركس - عملات رئيسية 💹": [
         "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", 
-        "USD/CHF", "USD/CAD", "NZد/USD"
+        "USD/CHF", "USD/CAD", "NZD/USD"
     ],
     "فوركس - تقاطعات اليورو 🇪🇺": [
         "EUR/GBP", "EUR/JPY", "EUR/AUD", "EUR/CAD", 
@@ -60,6 +58,7 @@ CATEGORIES = {
         "ADA/USD", "DOT/USD", "LTC/USD"
     ]
 }
+
 
 # حالات المحادثة
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
@@ -155,10 +154,8 @@ def format_trade_time_for_prompt(trade_time):
 def encode_image(image_path):
     """تحويل الصورة إلى base64 بشكل صحيح"""
     try:
-        with open(image_path, "rb") as image_file:
-            # قراءة الملف وترميزه إلى base64
-            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
-        return encoded_string
+        with open(image_path, "rb") as f:
+            return base64.b64encode(f.read()).decode('utf-8')
     except Exception as e:
         print(f"Error encoding image: {e}")
         return None
@@ -246,13 +243,9 @@ def split_message(text, max_length=4000):
     
     return parts
 
-# --- وظائف نظام التوصية الجديد مع POE API ---
-def get_poe_analysis(symbol):
-    """الحصول على تحليل من POE API للعملة"""
-    headers = {
-        "Authorization": f"Bearer {POE_API_KEY}",
-        "Content-Type": "application/json"
-    }
+# --- وظائف نظام التوصية الجديد ---
+def get_gemini_analysis(symbol):
+    """الحصول على تحليل من Gemini للعملة"""
     
     prompt = f"""
     بصفتك محللاً مالياً وخبيراً في استراتيجيات التداول الكمي والتقني، قم بإجراء تحليل معمق لعملة {symbol} وفق بروتوكول "تلاقي الأدلة" (Confluence Analysis):
@@ -292,18 +285,38 @@ def get_poe_analysis(symbol):
 ⚠️ **تنبيه المخاطر**: (نقطة إلغاء السيناريو الصاعد أو الهابط).
     """
     
-    body = {
-        "model": POE_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.1,
+            "maxOutputTokens": 1200
+        }
+    }
+    
+    headers = {
+        "Content-Type": "application/json"
     }
 
     try:
-        response = requests.post(POE_URL, json=body, headers=headers, timeout=25)
+        response = requests.post(GEMINI_URL, json=payload, headers=headers, timeout=25)
         response.raise_for_status()
-        return response.json()['choices'][0]['message']['content'].strip()
+        
+        # استخراج النص من استجابة Gemini
+        result = response.json()
+        if 'candidates' in result and len(result['candidates']) > 0:
+            if 'content' in result['candidates'][0] and 'parts' in result['candidates'][0]['content']:
+                return result['candidates'][0]['content']['parts'][0]['text'].strip()
+        
+        return "⚠️ حدث خطأ في تحليل النص من Gemini."
+        
     except Exception as e:
-        print(f"Error in get_poe_analysis: {e}")
+        print(f"Error in get_gemini_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -352,7 +365,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     # إذا وجدت العملة، ابدأ التحليل
     if symbol_to_analyze:
         wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
-        analysis = get_poe_analysis(symbol_to_analyze)
+        analysis = get_gemini_analysis(symbol_to_analyze)
         
         final_msg = (
             f"📈 **نتائج توصية {symbol_to_analyze}**\n"
@@ -399,7 +412,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     )
     return RECOMMENDATION_MODE
 
-# --- 🚀 برومبت قوي للدردشة مع POE API ---
+# --- 🚀 برومبت قوي للدردشة ---
 async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء وضع الدردشة المتقدم"""
     keyboard = [
@@ -425,7 +438,7 @@ async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CHAT_MODE
 
 async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة رسائل الدردشة مع POE API"""
+    """معالجة رسائل الدردشة مع برومبت قوي"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
@@ -565,67 +578,80 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     wait_msg = await update.message.reply_text("Obeida Trading 🤔...")
     
     try:
-        # استدعاء واجهة POE API
+        # استدعاء واجهة Gemini
         payload = {
-            "model": POE_MODEL,
-            "messages": [
-                {"role": "system", "content": selected_prompt},
-                {"role": "user", "content": user_message}
+            "contents": [
+                {
+                    "parts": [
+                        {"text": selected_prompt},
+                        {"text": user_message}
+                    ]
+                }
             ],
-            "max_tokens": 1200,
-            "temperature": 0.7
+            "generationConfig": {
+                "maxOutputTokens": 1200,
+                "temperature": 0.7
+            }
         }
         
         headers = {
-            "Authorization": f"Bearer {POE_API_KEY}",
             "Content-Type": "application/json"
         }
         
-        response = requests.post(POE_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content']
+            result = response.json()
             
-            # تنظيف النص من التكرارات
-            result = clean_repeated_text(result)
-            
-            # إضافة تذييل مميز
-            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - المساعد الذكي "
-            result = result + footer
-            
-            # أزرار الدردشة المتقدمة
-            chat_keyboard = [
-                ["🚀 مساعد شامل", "💼 استشارات احترافية"],
-                ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
-                ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
-                ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
-            ]
-            
-            # تقسيم الرسالة الطويلة
-            if len(result) > 4000:
-                parts = split_message(result, max_length=4000)
-                for i, part in enumerate(parts):
-                    if i == 0:
+            # استخراج النص من استجابة Gemini
+            if 'candidates' in result and len(result['candidates']) > 0:
+                if 'content' in result['candidates'][0] and 'parts' in result['candidates'][0]['content']:
+                    response_text = result['candidates'][0]['content']['parts'][0]['text'].strip()
+                    
+                    # تنظيف النص من التكرارات
+                    response_text = clean_repeated_text(response_text)
+                    
+                    # إضافة تذييل مميز
+                    footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - المساعد الذكي "
+                    response_text = response_text + footer
+                    
+                    # أزرار الدردشة المتقدمة
+                    chat_keyboard = [
+                        ["🚀 مساعد شامل", "💼 استشارات احترافية"],
+                        ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
+                        ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
+                        ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
+                    ]
+                    
+                    # تقسيم الرسالة الطويلة
+                    if len(response_text) > 4000:
+                        parts = split_message(response_text, max_length=4000)
+                        for i, part in enumerate(parts):
+                            if i == 0:
+                                await wait_msg.edit_text(
+                                    f"Obeida Trading 💬\n\n{part}",
+                                    parse_mode="Markdown"
+                                )
+                            else:
+                                await update.message.reply_text(part, parse_mode="Markdown")
+                    else:
                         await wait_msg.edit_text(
-                            f"Obeida Trading 💬\n\n{part}",
+                            f"Obeida Trading 💬\n\n{response_text}",
                             parse_mode="Markdown"
                         )
-                    else:
-                        await update.message.reply_text(part, parse_mode="Markdown")
+                    
+                    # إرسال الأزرار بعد الرد
+                    await update.message.reply_text(
+                        "🔽 **اختر مجالاً آخر أو اطرح سؤالاً جديداً:**",
+                        reply_markup=ReplyKeyboardMarkup(chat_keyboard, resize_keyboard=True, one_time_keyboard=False)
+                    )
+                else:
+                    await wait_msg.edit_text("❌ خطأ في تنسيق الاستجابة من Gemini.")
             else:
-                await wait_msg.edit_text(
-                    f"Obeida Trading 💬\n\n{result}",
-                    parse_mode="Markdown"
-                )
-            
-            # إرسال الأزرار بعد الرد
-            await update.message.reply_text(
-                "🔽 **اختر مجالاً آخر أو اطرح سؤالاً جديداً:**",
-                reply_markup=ReplyKeyboardMarkup(chat_keyboard, resize_keyboard=True, one_time_keyboard=False)
-            )
+                await wait_msg.edit_text("❌ لم يتم الحصول على رد من Gemini.")
             
         else:
-            print(f"POE API Error: {response.status_code} - {response.text}")
+            print(f"Gemini API Error: {response.status_code} - {response.text}")
             await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
     
     except requests.exceptions.Timeout:
@@ -639,7 +665,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-# --- كود تحليل الصور مع POE API ---
+# --- كود تحليل الصور ---
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور للتحليل الفني"""
     user_id = update.effective_user.id
@@ -664,12 +690,15 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         base64_img = encode_image(path)
         
         if not base64_img:
-            raise Exception("Failed to encode image")
+            await wait_msg.edit_text("❌ فشل في تحويل الصورة. يرجى المحاولة مرة أخرى.")
+            if os.path.exists(path):
+                os.remove(path)
+            return MAIN_MENU
         
         # تنسيق وقت الصفقة للبرومبت
         time_for_prompt = format_trade_time_for_prompt(trade_time)
         
-        # برومبت آمن للتحليل الفني
+        # برومبت آمن للتحليل الفني - تم تعديله لمنع التكرار
         prompt = f"""
         [SYSTEM_TASK: TOTAL_MARKET_DECRYPTION_V6]
 بصفتك خبير استراتيجيات تداول في صناديق التحوط، ومتمكن من دمج مدارس (SMC + ICT + Wyckoff + Order Flow)، قم بتحليل الشارت المرفق بدقة متناهية:
@@ -764,82 +793,106 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - **نقطة الإلغاء**: [السعر الذي يفسد التحليل]
         """
         
-        # بناء payload لـ POE API مع الصورة
         payload = {
-            "model": POE_MODEL,
-            "messages": [
+            "contents": [
                 {
-                    "role": "user", 
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
+                    "parts": [
+                        {"text": prompt},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/jpeg",
+                                "data": base64_img
+                            }
+                        }
                     ]
                 }
             ],
-            "max_tokens": 1500,
-            "temperature": 0.3
+            "generationConfig": {
+                "maxOutputTokens": 1200,
+                "temperature": 0.3
+            }
         }
         
         headers = {
-            "Authorization": f"Bearer {POE_API_KEY}",
             "Content-Type": "application/json"
         }
         
-        response = requests.post(POE_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=45)
         
         if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content'].strip()
+            result = response.json()
             
-            # تنظيف النص من التكرار
-            result = clean_repeated_text(result)
-            
-            keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
-            
-            # تنسيق وقت الصفقة للعرض
-            time_display = format_trade_time_for_prompt(trade_time)
-            
-            # إعداد النص النهائي
-            full_result = (
-                f"✅ **تم التحليل بنجاح!**\n"
-                f"📈 **نتائج تحليل الشارت:**\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"{result}\n\n"
-                f"📊 **الإعدادات المستخدمة:**\n"
-                f"• سرعة الشموع: {candle}\n"
-                f"• {time_display}\n\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"🤖 **Obeida Trading - نظام التحليل الفني**"
-            )
-            
-            # تنظيف النهائي من التكرارات
-            full_result = clean_repeated_text(full_result)
-            
-            # تقسيم النتيجة إذا كانت طويلة
-            if len(full_result) > 4000:
-                parts = split_message(full_result, max_length=4000)
-                
-                # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
-                await wait_msg.edit_text(
-                    parts[0],
-                    parse_mode="Markdown"
-                )
-                
-                # إرسال الأجزاء المتبقية
-                for part in parts[1:]:
-                    await update.message.reply_text(part, parse_mode="Markdown")
+            # استخراج النص من استجابة Gemini
+            if 'candidates' in result and len(result['candidates']) > 0:
+                if 'content' in result['candidates'][0] and 'parts' in result['candidates'][0]['content']:
+                    response_text = result['candidates'][0]['content']['parts'][0]['text'].strip()
+                    
+                    # ✅ تنظيف النص من التكرار
+                    response_text = clean_repeated_text(response_text)
+                    
+                    # ✅ إزالة أي تكرار محتمل
+                    # إزالة "### تحليل الشارت المرفق" إذا كانت موجودة
+                    if "### تحليل الشارت المرفق" in response_text:
+                        parts = response_text.split("### تحليل الشارت المرفق")
+                        if len(parts) > 1:
+                            response_text = parts[1].strip()
+                    
+                    # إزالة أي "نتائج الفحص الفني:" إذا كانت موجودة
+                    if "نتائج الفحص الفني:" in response_text:
+                        response_text = response_text.replace("نتائج الفحص الفني:", "📊 **التحليل الفني:**").strip()
+                    
+                    keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+                    
+                    # تنسيق وقت الصفقة للعرض
+                    time_display = format_trade_time_for_prompt(trade_time)
+                    
+                    # ✅ إعداد النص النهائي بدون تكرار
+                    full_result = (
+                        f"✅ **تم التحليل بنجاح!**\n"
+                        f"📈 **نتائج تحليل الشارت:**\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"{response_text}\n\n"
+                        f"📊 **الإعدادات المستخدمة:**\n"
+                        f"• سرعة الشموع: {candle}\n"
+                        f"• {time_display}\n\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"🤖 **Obeida Trading - نظام التحليل الفني**"
+                    )
+                    
+                    # تنظيف النهائي من التكرارات
+                    full_result = clean_repeated_text(full_result)
+                    
+                    # تقسيم النتيجة إذا كانت طويلة
+                    if len(full_result) > 4000:
+                        parts = split_message(full_result, max_length=4000)
+                        
+                        # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
+                        await wait_msg.edit_text(
+                            parts[0],
+                            parse_mode="Markdown"
+                        )
+                        
+                        # إرسال الأجزاء المتبقية
+                        for part in parts[1:]:
+                            await update.message.reply_text(part, parse_mode="Markdown")
+                    else:
+                        await wait_msg.edit_text(
+                            full_result,
+                            parse_mode="Markdown"
+                        )
+                    
+                    # إرسال الأزرار
+                    await update.message.reply_text(
+                        "📊 **اختر الإجراء التالي:**",
+                        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+                    )
+                else:
+                    await wait_msg.edit_text("❌ خطأ في تنسيق الاستجابة من Gemini.")
             else:
-                await wait_msg.edit_text(
-                    full_result,
-                    parse_mode="Markdown"
-                )
-            
-            # إرسال الأزرار
-            await update.message.reply_text(
-                "📊 **اختر الإجراء التالي:**",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-            )
+                await wait_msg.edit_text("❌ لم يتم الحصول على تحليل من Gemini.")
+                
         else:
-            print(f"POE API Error: {response.status_code} - {response.text}")
+            print(f"Gemini Vision API Error: {response.status_code} - {response.text}")
             keyboard = [["الرجوع للقائمة الرئيسية"]]
             await wait_msg.edit_text(f"❌ **خطأ في إرسال الصورة:** {response.status_code}")
             
