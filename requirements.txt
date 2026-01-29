@@ -1,11 +1,11 @@
 python-telegram-bot
 flask
 requests
+pillow
 python-dotenv
-Pillow
-gunicorn
-APScheduler
-python-multipart
+aiohttp
+apscheduler
+cachetools
+emoji
 pytz
-tzlocal
-httpx
+pytz-deprecation-shim
