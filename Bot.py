@@ -35,44 +35,28 @@ CATEGORIES = {
         "GBP/JPY", "GBP/AUD", "GBP/CAD", "GBP/NZD", 
         "GBP/CHF"
     ],
-    "سوق الـ OTC 📉": [
-        "EUR/USD (OTC)", "GBP/USD (OTC)", "USD/JPY (OTC)", 
-        "USD/CHF (OTC)", "NZD/USD (OTC)", "AUD/USD (OTC)",
-        "EUR/GBP (OTC)", "EUR/JPY (OTC)", "GBP/JPY (OTC)",
-        "Gold (OTC)", "Silver (OTC)", "Bitcoin (OTC)"
-    ],
     "عملات ثانوية وأخرى 💱": [
-        "AUD/JPY", "AUD/CAD", "AUD/NZD", "AUD/CHF",
-        "CAD/JPY", "CAD/CHF", "NZD/JPY", "NZD/CAD", 
-        "NZD/CHF", "CHF/JPY"
+        "AUD/JPY", "AUD/CAD", "AUD/NZD", "CAD/JPY", 
+        "NZD/JPY", "CHF/JPY"
     ],
     "عملات غريبة (Exotics) 🌍": [
         "USD/TRY", "USD/ZAR", "USD/MXN", "USD/SGD", 
-        "USD/NOK", "USD/SEK", "USD/DKK", "USD/HKD",
-        "USD/SAR", "USD/AED", "USD/CNH", "EUR/TRY"
+        "USD/NOK", "USD/SEK"
     ],
     "مؤشرات عالمية 📊": [
         "S&P 500", "Dow Jones (US30)", "DAX 40 (GER40)", 
-        "FTSE 100", "CAC 40", "Nikkei 225", "ASX 200", 
-        "Hang Seng", "Euro Stoxx 50", "VIX Index"
+        "FTSE 100", "CAC 40", "Nikkei 225", "ASX 200", "Hang Seng"
     ],
     "معادن وطاقة 🏗️": [
         "الذهب (XAUUSD)", "الفضة (XAGUSD)", "البلاتين (XPTUSD)", 
-        "النحاس (Copper)", "نفط برنت (UKOIL)", "النفط الخام (USOIL)", 
-        "الغاز الطبيعي", "البلاديوم (XPDUSD)"
+        "النحاس (Copper)", "نفط برنت (UKOIL)", "النفط الخام (USOIL)", "الغاز الطبيعي"
     ],
     "ناسداك وتكنولوجيا 🖥️": [
-        "NAS100", "US Tech 100", "FANG+", "Bitcoin Cash"
+        "NAS100", "US Tech 100", "FANG+"
     ],
     "عملات رقمية ₿": [
         "BTC/USD", "ETH/USD", "SOL/USD", "XRP/USD", 
-        "ADA/USD", "DOT/USD", "LTC/USD", "AVAX/USD",
-        "LINK/USD", "DOGE/USD", "SHIB/USD", "MATIC/USD"
-    ],
-    "أسهم عالمية 🏛️": [
-        "Apple (AAPL)", "Tesla (TSLA)", "Amazon (AMZN)", 
-        "Google (GOOGL)", "Microsoft (MSFT)", "Nvidia (NVDA)",
-        "Meta", "Netflix (NFLX)", "Alibaba"
+        "ADA/USD", "DOT/USD", "LTC/USD"
     ]
 }
 
@@ -765,7 +749,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
 🚨 **التحديثات الاستراتيجية الحاسمة المدمجة**:
 
-### 🔥 **الثلاثية القاتلة التي تم إصلاحها**:
+ 🔥 **الثلاثية القاتلة التي تم إصلاحها**:
 
 1. **صراع "المؤشر" ضد "السعر" (The Indicator Trap)**:
    - **القاعدة الجديدة**: عندما يكون RSI في تشبع (>70 أو <30) ويستمر السعر في **الزخم العمودي** مع أحجام متزايدة ← **تجاهل إشارة التشبع** والانحياز للاتجاه السعري.
