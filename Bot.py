@@ -16,7 +16,7 @@ from flask import Flask
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
 GROQ_KEY = os.environ.get('GROQ_KEY', "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")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
+GROQ_MODEL = "llama-3.2-90b-vision-preview"
 DB_NAME = "abood-gpt.db"
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
@@ -24,7 +24,7 @@ TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-M
 
 # توزيع العملات للنظام الجديد
 CATEGORIES = {
-    " أزواج العملات 🏛️": [
+    "أزواج العملات 🏛️": [
         "EUR/USD (OTC)", "GBP/USD (OTC)", "USD/JPY (OTC)", "USD/CHF (OTC)",
         "AUD/USD (OTC)", "USD/CAD (OTC)", "NZD/USD (OTC)", "EUR/GBP (OTC)",
         "EUR/JPY (OTC)", "GBP/JPY (OTC)", "EUR/CHF (OTC)", "AUD/JPY (OTC)",
@@ -36,7 +36,7 @@ CATEGORIES = {
         "DAX 40 (OTC)", "CAC 40 (OTC)", "FTSE 100 (OTC)", 
         "Hang Seng (OTC)", "Nikkei 225 (OTC)"
     ],
-    " سلع وطاقة 🕯️": [
+    "سلع وطاقة 🕯️": [
         "Gold (OTC)", "Silver (OTC)", "UKOIL (OTC)", 
         "USOIL (OTC)", "Natural Gas (OTC)"
     ],
@@ -699,7 +699,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔰 **القواعد الأساسية الحاكمة**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 1. **المدرسة المعتمدة:** SMC (Smart Money Concepts) كإطار عمل رئيسي
 2. **الدرع الأساسي (Fundamental Shield):** {news_warning if news_warning else "✅ الوضع آمن من الأخبار"}
 3. **كشف وهم الزخم:** تحقق من استدامة الحركة وليست مجرد شمعة خبر
@@ -709,7 +708,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 **المرحلة 1: الفحص الأولي والتحذيرات**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 ### 1.1 نظام الأمان ثلاثي الطبقات
 **الطبقة 1: الدرع الأساسي**
 {news_warning if news_warning else "✅ الوضع آمن من الأخبار"}
@@ -727,7 +725,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📈 **المرحلة 2: التحليل الهيكلي المتقدم**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 ### 2.1 تحديد مدرسة التحليل بوضوح
 - **الإطار:** SMC مع دعم بالتحليل الكلاسيكي عند الحاجة
 - **التنسيق:** استخدام مصطلحات SMC بدقة (Order Blocks, FVG, Liquidity)
@@ -750,7 +747,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 💰 **المرحلة 3: تحليل السيولة والزخم**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 ### 3.1 كشف وهم الزخم (Momentum Illusion)
 **علامات الزخم الوهمي:**
 1. **شمعة الخبر المنفردة:** كبيرة ومعزولة عن السياق
@@ -773,7 +769,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🎯 **المرحلة 4: نظام القرار الذكي**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 ### 4.1 فلتر التلاقي الثلاثي
 **يجب توفر 3/3 من:**
 1. **POI (منطقة الاهتمام):** Order Block أو FVG صالح
@@ -794,9 +789,16 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 4. موقع السعر في منطقة Equilibrium
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎯 المرحلة 5: 📉 تحليل مؤشر MACD (تأكيد الزخم):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. ​المرحلة الحالية: [تحديد: تقاطع إيجابي Bullish / سلبي Bearish / أو عرضي] + تحديد زاوية التقاطع (حادة أم منفرجة).
+2. ​موقع خط الصفر: [فوق الصفر / تحت الصفر] + تحديد المسافة عن خط الصفر (تباعد مفرط أم قريب).
+3. ​حالة الهيستوجرام: [متوسع Expanding / متقلص Contracting] + ربطها بقوة الشموع الاندفاعية (Displacement).
+4. ​الدايفرجنس (SMC Context): [فحص التباين] + هل حدث الدايفرجنس عند منطقة سيولة (Liquidity Sweep) أو POI؟
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🔬 **التعليمات الفنية التفصيلية:**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 **1. تحليل البصمة الزمنية:**
 - حدد موقع السعر بالنسبة لـ Kill Zone
 - اذكر إذا كنا داخل أو خارج مناطق السيولة العالية
@@ -985,14 +987,14 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             )
         else:
             print(f"Groq Vision API Error: {response.status_code} - {response.text}")
-            keyboard = [["الرجوع للقائمة الرئيسية"]]
+            keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
             await wait_msg.edit_text(f"❌ **خطأ في إرسال الصورة:** {response.status_code}")
             
     except requests.exceptions.Timeout:
         await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
     except Exception as e:
         print(f"خطأ في تحليل الصورة: {e}")
-        keyboard = [["الرجوع للقائمة الرئيسية"]]
+        keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
         await wait_msg.edit_text("❌ **حدث خطأ في إرسال الصورة.**\nيرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.")
     finally:
         if os.path.exists(path):
