@@ -16,7 +16,7 @@ from flask import Flask
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
 GROQ_KEY = os.environ.get('GROQ_KEY', "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")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
+GROQ_MODEL = "llama-3.1-70b-versatile"
 DB_NAME = "abood-gpt.db"
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
@@ -73,25 +73,123 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Obeida Trading</title>
+        <title>Obeida Trading Bot</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-            h1 { color: #2c3e50; }
-            .status { background: #2ecc71; color: white; padding: 10px 20px; border-radius: 5px; display: inline-block; }
+            body { 
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+                text-align: center; 
+                padding: 40px; 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                min-height: 100vh;
+            }
+            .container {
+                background: rgba(255, 255, 255, 0.1);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 40px;
+                max-width: 800px;
+                margin: 0 auto;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                border: 1px solid rgba(255,255,255,0.2);
+            }
+            h1 { 
+                color: white; 
+                font-size: 2.8em;
+                margin-bottom: 20px;
+                text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            }
+            .status { 
+                background: linear-gradient(45deg, #00b09b, #96c93d);
+                color: white; 
+                padding: 15px 30px; 
+                border-radius: 50px; 
+                display: inline-block;
+                font-weight: bold;
+                font-size: 1.2em;
+                margin: 20px 0;
+                box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            }
+            .features {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 20px;
+                margin: 40px 0;
+                text-align: left;
+            }
+            .feature-item {
+                background: rgba(255,255,255,0.15);
+                padding: 20px;
+                border-radius: 15px;
+                border: 1px solid rgba(255,255,255,0.1);
+            }
+            .stats {
+                display: flex;
+                justify-content: center;
+                gap: 30px;
+                margin-top: 40px;
+                flex-wrap: wrap;
+            }
+            .stat-item {
+                background: rgba(255,255,255,0.1);
+                padding: 20px;
+                border-radius: 15px;
+                min-width: 150px;
+            }
         </style>
     </head>
     <body>
-        <h1> 📊 Obeida Trading Telegram Bot 📊</h1>
-        <p>Chat & Technical Analysis Bot</p>
-        <div class="status">✅ Obeida Trading Running</div>
-        <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
+        <div class="container">
+            <h1>🤖 Obeida Trading Telegram Bot</h1>
+            <p style="font-size: 1.3em; opacity: 0.9;">Advanced Trading Analysis & AI Assistant</p>
+            
+            <div class="status">✅ Bot Status: RUNNING</div>
+            
+            <div class="features">
+                <div class="feature-item">
+                    <h3>📊 تحليل فني متقدم</h3>
+                    <p>تحليل الشارتات باستخدام الذكاء الاصطناعي</p>
+                </div>
+                <div class="feature-item">
+                    <h3>🤖 مساعد ذكي</h3>
+                    <p>دردشة متقدمة في جميع المجالات</p>
+                </div>
+                <div class="feature-item">
+                    <h3>📈 توصيات تداول</h3>
+                    <p>نظام توصيات للعملات والمؤشرات</p>
+                </div>
+            </div>
+            
+            <div style="margin: 40px 0;">
+                <h3>📡 معلومات النظام</h3>
+                <p><strong>آخر تحديث:</strong> """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
+                <p><strong>إصدار النظام:</strong> 2.0.1</p>
+                <p><strong>نموذج الذكاء الاصطناعي:</strong> """ + GROQ_MODEL + """</p>
+            </div>
+            
+            <div class="stats">
+                <div class="stat-item">
+                    <h3>⚙️ API Status</h3>
+                    <p style="color: #4CAF50;">● Active</p>
+                </div>
+                <div class="stat-item">
+                    <h3>🕒 Uptime</h3>
+                    <p>24/7</p>
+                </div>
+                <div class="stat-item">
+                    <h3>🔐 Security</h3>
+                    <p style="color: #4CAF50;">● Secure</p>
+                </div>
+            </div>
+        </div>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "timestamp": time.time()}
+    return {"status": "active", "timestamp": time.time(), "model": GROQ_MODEL, "version": "2.0.1"}
 
 @app.route('/ping')
 def ping():
@@ -166,7 +264,7 @@ def format_trade_time_for_prompt(trade_time):
     else:
         return f"مدة الصفقة المتوقعة: {trade_time}"
 
-# --- معالجة الصور بشكل صحيح ---
+# --- معالجة الصور ---
 def encode_image(image_path):
     """تحويل الصورة إلى base64 بشكل صحيح"""
     try:
@@ -183,49 +281,41 @@ def clean_repeated_text(text):
     if not text:
         return ""
     
-    if "📊 **نتائج الفحص الفني**:" in text:
-        text = re.sub(r'(📊 \*\*نتائج الفحص الفني\*\*:[\s\S]*?)(?=📊 \*\*نتائج الفحص الفني\*\*:)', '', text, flags=re.DOTALL)
-    
-    if "### تحليل الشارت المرفق" in text:
-        sections = text.split("### تحليل الشارت المرفق")
-        if len(sections) > 1:
-            text = "### تحليل الشارت المرفق" + sections[1]
-    
+    # إزالة التكرارات الشائعة
     patterns_to_clean = [
-        r'📊\s*\*\*التحليل الفني\*\*:',
-        r'🎯\s*\*\*التوصية والتوقعات\*\*:',
-        r'⚠️\s*\*\*إدارة المخاطر\*\*:',
-        r'📝\s*\*\*ملاحظات التحليل\*\*:'
+        (r'(📊\s*\*\*نتائج الفحص الفني\*\*:[\s\S]*?)(?=📊\s*\*\*نتائج الفحص الفني\*\*:)', ''),
+        (r'(###\s*تحليل الشارت المرفق[\s\S]*?)(?=###\s*تحليل الشارت المرفق)', ''),
+        (r'(🎯\s*\*\*التوصية والتوقعات\*\*:[\s\S]*?)(?=🎯\s*\*\*التوصية والتوقعات\*\*:)', ''),
+        (r'(⚠️\s*\*\*إدارة المخاطر\*\*:[\s\S]*?)(?=⚠️\s*\*\*إدارة المخاطر\*\*:)', ''),
     ]
     
-    for pattern in patterns_to_clean:
-        matches = re.findall(pattern, text)
-        if len(matches) > 1:
-            parts = re.split(pattern, text)
-            if len(parts) > 1:
-                text = parts[0] + re.search(pattern, text).group() + parts[1]
-                for i in range(2, len(parts)):
-                    text += parts[i]
+    for pattern, replacement in patterns_to_clean:
+        text = re.sub(pattern, replacement, text, flags=re.DOTALL)
     
+    # تقسيم النص إلى فقرات وإزالة التكرار
     paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
-    
-    unique_paragraphs = []
     seen_paragraphs = set()
+    unique_paragraphs = []
     
     for paragraph in paragraphs:
-        key = paragraph[:50].strip().lower()
-        if key not in seen_paragraphs:
+        # إنشاء مفتاح فريد للفقرات المتشابهة
+        if len(paragraph) > 20:
+            key = paragraph[:100].strip().lower()
+            if key not in seen_paragraphs:
+                unique_paragraphs.append(paragraph)
+                seen_paragraphs.add(key)
+        else:
             unique_paragraphs.append(paragraph)
-            seen_paragraphs.add(key)
     
     cleaned_text = '\n\n'.join(unique_paragraphs)
     
-    if len(cleaned_text) > 2000:
-        if '\n\n' in cleaned_text[:2200]:
-            cut_point = cleaned_text[:2200].rfind('\n\n')
-            cleaned_text = cleaned_text[:cut_point] + "\n\n📋 ...تم اختصار النتيجة"
+    # تقصير النص إذا كان طويلاً جداً
+    if len(cleaned_text) > 3000:
+        if '\n\n' in cleaned_text[:2800]:
+            cut_point = cleaned_text[:2800].rfind('\n\n')
+            cleaned_text = cleaned_text[:cut_point] + "\n\n📋 ...تم اختصار النتيجة للحفاظ على الوضوح"
         else:
-            cleaned_text = cleaned_text[:2000] + "...\n\n📋 تم اختصار النتيجة"
+            cleaned_text = cleaned_text[:2800] + "...\n\n📋 تم اختصار النتيجة"
     
     return cleaned_text
 
@@ -250,6 +340,27 @@ def split_message(text, max_length=4000):
     
     return parts
 
+def safe_api_call(url, headers, json_data, timeout=30):
+    """استدعاء API آمن مع معالجة الأخطاء"""
+    try:
+        response = requests.post(url, headers=headers, json=json_data, timeout=timeout)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP Error: {e}")
+        if hasattr(e.response, 'status_code'):
+            if e.response.status_code == 401:
+                return {"error": "❌ **خطأ في التوثيق**: يرجى التحقق من مفتاح API"}
+            elif e.response.status_code == 429:
+                return {"error": "❌ **تم تجاوز الحد المسموح**: يرجى الانتظار قليلاً"}
+        return {"error": f"❌ **خطأ في الخادم**: {e}"}
+    except requests.exceptions.Timeout:
+        print("Request Timeout")
+        return {"error": "⏱️ **تجاوز الوقت المحدد**: يرجى المحاولة مرة أخرى"}
+    except Exception as e:
+        print(f"General Error: {e}")
+        return {"error": f"⚠️ **حدث خطأ**: {str(e)}"}
+
 # --- وظائف نظام التوصية الجديد ---
 def get_groq_analysis(symbol):
     """الحصول على تحليل من Groq API للعملة"""
@@ -259,122 +370,86 @@ def get_groq_analysis(symbol):
     }
     
     prompt = f"""
-    بصفتك محللاً مالياً وخبيراً في استراتيجيات التداول الكمي والتقني، قم بإجراء تحليل معمق لعملة {symbol} وفق بروتوكول "تلاقي الأدلة" (Confluence Analysis):
-
-⚠️ **الطبقة الأولى: صمام الأمان المطلق (ULTIMATE_PROTOCOL_ZERO) - الإلغاء الفوري عند فقدان أي شرط:**
-
-1. **حتمية الاستنفاذ (Exhaustion Imperative)**: إذا كانت آخر شمعة ذات جسم كبير (Effort) فشلت في إغلاق أعلى/أدنى من الهيكل الرئيسي، يُعتبر السوق في حالة "إرهاق نهائي" والصفقة ممنوعة.
-
-2. **توافق الفركتلات الزمنية (Temporal Fractal Alignment)**: يجب أن يكون هناك تطابق بين حركة الفريم الحالي والفريم الأعلى والأدنى على الأقل في 3 نقاط رئيسية، وإلا فهي "حركة وهمية".
-
-3. **سيولة المغناطيس المزدوج (Dual Magnetic Liquidity)**: يُلغى الدخول إذا لم نر سحباً للسيولة (Sweep) في الاتجاه المعاكس يتبعه تشكيل فخ (Inducement) ثم ارتداد قوي مع ترك فجوة (FVG).
-
-4. **نقطة التوازن الكونية (Cosmic Equilibrium Point - CEP)**: يجب أن يكون الدخول فقط على مستويات التصحيح العميقة 0.618-0.786-0.886 من آخر موجة مع تطابقها مع منطقة التراكم (Accumulation Zone).
-
-5. **قاعدة الثبات الثنائي (Binary Stability Rule)**: يشترط إغلاق شمعتين متتاليتين بجسم كامل خارج منطقة التذبذب الأساسية مع تضاعف الحجم في الشمعة الثانية.
-
-🔬 **الطبقة الثانية: النظام التحليلي المتقدم (21 مرحلة - Advanced Analytical Matrix):**
-
-[قسم البصمة الرقمية والبنية الخفية]
-1. **التدقيق الرقمي الكمي (Quantum Digital Audit)**: فحص دقة كل رقم في الشارت مع تطبيق معادلة التطابق: السعر الحالي ÷ 1.618 يجب أن يطابق نقطة محورية رئيسية.
-
-2. **رسم الهيكل الخفي (Invisible Structure Mapping)**: تحديد الاتجاه العام ورسم القمم والقيعان الوهمية (التي تشير إليها الذيول دون أن يلمسها السعر).
-
-3. **مواءمة الفركتلات المتعددة (Multi-Fractal Alignment)**: التأكد من توافق حركة 5 فريمات مختلفة معاً (D1 → H4 → H1 → 30M → 15M).
-
-4. **قصة السوق الكاملة (Full Market Narrative)**: تحديد المرحلة الحالية بدقة: (التجميع الأولي - الاختبار - إعادة التجميع - التوزيع - الهبوط - التراكم النهائي).
-
-[قسم تشريح السيولة الذكية]
-5. **خرائط السيولة الكمومية (Quantum Liquidity Maps)**: رسم EQL (سيولة القمم المتساوية) و EQH (سيولة القيعان المتساوية) مع السيولة الخارجية البعيدة.
-
-6. **رصد مناطق التضليل (Deception Zone Detection)**: تحديد مناطق الإغراء الثلاثية (Inducement Triad) التي يستخدمها البنك المركزي لجذب التجزئة.
-
-7. **مرشح التلاعب المتقدم (Advanced Manipulation Filter)**: التمييز بين الكسر الحقيقي (BOS) والسحب الوهمي باستخدام 5 مؤشرات: حجم التداول + RSI + MACD + التيول + سرعة الحركة.
-
-8. **تحليل الجهد مقابل النتائج المتعددة (Multi-Effort vs Result)**: مقارنة 3 شموع متتالية من حيث الحجم والجسم والتيول لتحديد نية السوق الحقيقية.
-
-[قسم الهندسة السعرية المتطورة]
-9. **مناطق العرض/الطلب الديناميكية (Dynamic S/D Zones)**: بناء مناطق تعتمد على الكثافة وليس فقط ردود الفعل السابقة مع إعطاء وزن لكل منطقة.
-
-10. **تحقق من كتل الأوامر الذكية (Smart Order Block Validation)**: تحديد الـ Order Blocks النشطة بناءً على 3 معايير: حجم السيولة + وقت التشكيل + سرعة رد الفعل.
-
-11. **شبكة الفجوات السعرية (FVG Network Analysis)**: رصد الفجوات المتداخلة بين الفريمات المختلفة وتحديد أيها سيملأ أولاً.
-
-12. **مصفاة الخصم/البريميوم (Premium/Discount Matrix)**: تحديد مناطق الـ OTE المثالية مع إضافة عامل الوقت (Time Factor) لكل مستوى.
-
-[قسم المؤشرات الكمية المتقدمة]
-13. **مجموعة المؤشرات الكمية (Quantitative Indicators Suite)**:
-    - **RSI Divergence Hunter**: البحث عن 3 أنواع من الدايفرجنس (Reg, Hidden, Exhaustion)
-    - **MACD Wave Analyzer**: تحليل موجات MACD وتقاطعاتها مع خط الإشارة
-    - **Volume Profile Scanner**: تحليل توزيع الحجم عند مستويات السعر المختلفة
-    - **VWAP + Bollinger Bands Fusion**: تقاطع VWAP مع نطاقات بولينجر
-    - **Fibonacci Time Zones**: تطبيق مستويات فيبوناتشي الزمنية مع السعرية
-    - **Market Structure Break Detector**: كاشف كسر الهياكل مع تأكيدات متعددة
-
-[قسم مصفاة التنفيذ الذكي]
-14. **مصفاة الدخول المثلى (Optimal Entry Matrix)**: تتطلب تلاقي 4 عناصر: OB + FVG + Sweep + Time Fib Level.
-
-15. **النمذجة الزمنية الكمية (Quantitative Temporal Modeling)**: حساب الوقت المطلوب للوصول لكل هدف باستخدام معادلة: (المسافة ÷ متوسط السرعة التاريخية) × عامل التصحيح.
-
-16. **مفتاح الإلغاء الذكي (Smart Kill Switch)**: تحديد 3 نقاط إلغاء: فنية + زمنية + حجمية.
-
-17. **تحليل التشفير للذيول (Wick Cryptanalysis Pro)**: دراسة التيول باستخدام نظرية المعلومات لتحديد نية المؤسسات.
-
-[قسم إدارة المخاطر المتطورة]
-18. **مصفاة المخاطر الكمية (Quantitative Risk Matrix)**:
-    - نسبة العائد/المخاطرة: لا تقل عن 1:3
-    - أقصى مخاطرة: 2% من رأس المال
-    - تقييم احتمالية النجاح: بناءً على 7 عوامل
-
-19. **نظام الحماية المتدرج (Tiered Protection System)**:
-    - **Stop Loss الأساسي**: خلف أقوى منطقة دعم/مقاومة
-    - **Stop Loss الديناميكي**: يتحرك مع السعر بعد تحقيق TP1
-    - **Stop Loss الزمني**: إذا لم يتحرك السعر لصالحك خلال X شموع
-
-20. **تحليل السياق الاقتصادي المصغر (Micro Economic Context)**:
-    - تأثير الأخبار على المدى القريب
-    - أوقات التداول النشطة
-    - ساعات السيولة العالية
-
-قدم التحليل باللغة العربية وبالتنسيق التالي حصراً (بدون تكرار للمعلومات):
-
-📊 **تقرير الفحص الفني لعملة {symbol}**:
-- **البصمة الزمنية**: (داخل/خارج منطقة القتل السعري - Kill Zone)
-- **حالة الهيكل**: (صاعد/هابط) + (مرحلة وايكوف الحالية)
-- **خريطة السيولة**: (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
-- **الفجوات السعرية (FVG)**: (المناطق التي سيعود السعر لتغطيتها)
-
-🎯 **الإشارة التنفيذية**:
-- **السعر الحالي**: [اذكر السعر الدقيق الذي تراه الآن للتأكد من دقة القراءة]
-- **القرار الفني**: (شراء 🟢 / بيع 🔴)
-- **قوة الإشارة 🔰**: (🔥 عالية - تلاقي 3 مدارس / ⚡ متوسطة / ❄️ ضعيفة)
-- **نقطة الدخول (Entry)**: [السعر الدقيق بناءً على الـ Order Block]
-- **الأهداف الربحية (TPs)**:
-    - 🎯 **TP1**: [سحب أول سيولة داخلية]
-    - 🎯 **TP2**: [الهدف الرئيسي - منطقة عرض/طلب قوية]
-    - 🎯 **TP3**: [استهداف السيولة الخارجية (Major SSL/BSL) أو سد فجوة سعرية على فريم أكبر]
-- **وقف الخسارة (SL)**: [السعر مع 3 طبقات حماية]
-- **المدة المتوقعة 🕧**: [عدد الشموع للوصول للهدف TP1 قم بتحويلها الى دقائق كل شمعة 1 دقيقة]
-
-⚠️ **إدارة المخاطر**:
-- **مستوى الثقة**: [% مع ذكر عدد التاكيدات]
-- **نقطة الإلغاء**: [السعر الذي يفسد التحليل]
+    🔍 **تحليل تقني متقدم لعملة {symbol}** - بروتوكول متعدد الطبقات
+    
+    ⚠️ **الطبقة 1: فحص الجدوى المبدئي (Pre-Flight Check)**
+    1. **التحقق من السياق الزمني**: هل نحن داخل Kill Zone أم خارجه؟
+    2. **فحص تأثير الأخبار**: أي أخبار اقتصادية قادمة خلال 4 ساعات؟
+    3. **تقييم السيولة الحالية**: حجم التداول الحالي مقارنة بالمتوسط
+    
+    📊 **الطبقة 2: التحليل الهيكلي المتقدم**
+    1. **تحديد الاتجاه الرئيسي** على 3 أطر زمنية (D1, H4, H1)
+    2. **رسم الهيكل السعري** (Market Structure)
+    3. **تحديد Order Blocks النشطة** في الاتجاه الحالي
+    4. **رصد Fair Value Gaps (FVG)** التي تحتاج للتغطية
+    
+    💰 **الطبقة 3: تحليل السيولة**
+    1. **خريطة السيولة المتساوية** (Equal Highs/Lows)
+    2. **مناطق Inducement** (الإغراء)
+    3. **أهداف السحب المتوقعة** (Liquidity Targets)
+    
+    🎯 **الطبقة 4: نظام الدخول الذكي**
+    **شرط التفعيل الإلزامي**: يجب توفر واحد مما يلي:
+    - اختبار Order Block مع إغلاق شمعة تأكيد
+    - سد فجوة سعرية مع زيادة حجم
+    - كسر مستوى مع تأكيد RSI فوق/تحت 50
+    
+    ⚡ **معايير الدخول (يجب توفر 3/4):**
+    1. **مواءمة الفركتلات**: تطابق الاتجاه في 3 أطر زمنية
+    2. **موقع السعر**: في منطقة Discount للشراء أو Premium للبيع
+    3. **نمط الشموع**: Pin Bar, Engulfing, أو Inside Bar قوي
+    4. **تأكيد المؤشر**: RSI أو MACD يؤكد الاتجاه
+    
+    ⚠️ **إدارة المخاطر الإلزامية:**
+    - **نسبة RR**: لا تقل عن 1:2
+    - **نقطة الإلغاء**: السعر الذي يفسد التحليل
+    - **أقصى مخاطرة**: 2% من رأس المال
+    
+    **📋 التنسيق المطلوب للرد:**
+    
+    📊 **التحليل الهيكلي:**
+    - **الاتجاه الرئيسي**: [صاعد/هابط/جانبي]
+    - **المرحلة الحالية**: [Accumulation/Redistribution/Markup/Markdown]
+    - **الهيكل السعري**: [Higher Highs/Lower Highs/...]
+    
+    🎯 **الإشارة التنفيذية:**
+    - **السعر الحالي**: [قراءة دقيقة من البيانات المتاحة]
+    - **التوصية**: [شراء/بيع/انتظار]
+    - **شرط التفعيل**: [الشرط الذي يجب تحققه قبل الدخول]
+    - **نقطة الدخول**: [السعر المحدد مع شرط الإغلاق]
+    - **الأهداف**: 
+        TP1: [سعر + احتمالية]
+        TP2: [سعر + احتمالية]
+        TP3: [سعر + احتمالية]
+    - **وقف الخسارة**: [سعر مع 3 طبقات حماية]
+    
+    🧠 **ركن "افهم سوقك":**
+    - **فلسفة الصفقة**: [لماذا هذه النقطة بالذات؟]
+    - **سيناريو التلاعب**: [ما الذي قد يخرب الصفقة؟]
+    - **الدرس الفني**: [قاعدة مستخلصة من هذا التحليل]
+    
+    ⚠️ **نقطة الإلغاء (إلزامية):**
+    - **السعر**: [السعر الذي يبطل التحليل]
+    - **الزمن**: [مدة انتظار قصوى قبل الإلغاء]
+    
+    **ملاحظة**: لا تعطِ توصية إذا لم تتوفر الشروط بوضوح.
     """
     
     body = {
         "model": GROQ_MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1,
+        "temperature": 0.3,
         "max_tokens": 1500
     }
 
-    try:
-        response = requests.post(GROQ_URL, json=body, headers=headers, timeout=25)
-        response.raise_for_status()
-        return response.json()['choices'][0]['message']['content'].strip()
-    except Exception as e:
-        print(f"Error in get_groq_analysis: {e}")
-        return "⚠️ حدث خطأ في الاتصال بالمحلل."
+    result = safe_api_call(GROQ_URL, headers, body, timeout=30)
+    
+    if "error" in result:
+        return result["error"]
+    elif "choices" in result:
+        return result['choices'][0]['message']['content'].strip()
+    else:
+        return "⚠️ حدث خطأ غير متوقع في الاتصال بالمحلل."
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء وضع التوصية"""
@@ -382,7 +457,7 @@ async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAUL
     reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
     
     await update.message.reply_text(
-        "🚀 **نظام التوصيات **\n\n"
+        "🚀 **نظام التوصيات المتقدم**\n\n"
         "اختر القسم المطلوب من الأزرار:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
     )
@@ -391,6 +466,7 @@ async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAUL
 async def handle_recommendation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة اختيارات نظام التوصية"""
     user_text = update.message.text.strip()
+    user_id = update.effective_user.id
     
     # العودة للقائمة الرئيسية
     if user_text == "الرجوع للقائمة الرئيسية":
@@ -407,38 +483,70 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
         keyboard.append(["🔙 العودة للقائمة", "الرجوع للقائمة الرئيسية"])
         
         await update.message.reply_text(
-            f"📍 قسم: {user_text}\nاختر العملة الآن:",
+            f"📍 **قسم:** {user_text}\n"
+            f"📊 **عدد العملات:** {len(CATEGORIES[user_text])}\n\n"
+            f"اختر العملة الآن:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         )
         return CATEGORY_SELECTION
     
     # التحقق من العملة المختارة
     symbol_to_analyze = None
-    for category_list in CATEGORIES.values():
-        if user_text in category_list:
+    category_name = ""
+    for category, symbols in CATEGORIES.items():
+        if user_text in symbols:
             symbol_to_analyze = user_text
+            category_name = category
             break
     
     # إذا وجدت العملة، ابدأ التحليل
     if symbol_to_analyze:
-        wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
+        wait_msg = await update.message.reply_text(
+            f"⏳ **جاري تحليل {symbol_to_analyze}**\n"
+            f"📊 **القسم:** {category_name}\n"
+            f"⏰ **الوقت:** {datetime.now().strftime('%H:%M')}"
+        )
+        
         analysis = get_groq_analysis(symbol_to_analyze)
         
-        final_msg = (
-            f"📈 **نتائج توصية {symbol_to_analyze}**\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"{analysis}\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Obeida Trading - نظام التوصيات**"
-        )
-        
-        # تنظيف النص من التكرارات
-        final_msg = clean_repeated_text(final_msg)
-        
-        await wait_msg.edit_text(
-            final_msg,
-            parse_mode="Markdown"
-        )
+        # إذا كان هناك خطأ
+        if analysis.startswith("❌") or analysis.startswith("⚠️") or analysis.startswith("⏱️"):
+            await wait_msg.edit_text(
+                analysis + "\n\n🔙 **العودة لنظام التوصيات**",
+                parse_mode="Markdown"
+            )
+        else:
+            final_msg = (
+                f"📈 **تقرير تحليل {symbol_to_analyze}**\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"{analysis}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"📊 **ملخص التنفيذ:**\n"
+                f"• وقت التحليل: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+                f"• مدة الصلاحية: 4-6 ساعات\n"
+                f"• مصدر التحليل: Obeida Trading AI\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"⚠️ **تحذير المخاطر:**\n"
+                f"التداول في الأسواق المالية يحمل مخاطر. هذه ليست نصيحة استثمارية."
+            )
+            
+            # تنظيف النص من التكرارات
+            final_msg = clean_repeated_text(final_msg)
+            
+            # تقسيم النص إذا كان طويلاً
+            if len(final_msg) > 4000:
+                parts = split_message(final_msg, max_length=4000)
+                await wait_msg.edit_text(
+                    parts[0],
+                    parse_mode="Markdown"
+                )
+                for part in parts[1:]:
+                    await update.message.reply_text(part, parse_mode="Markdown")
+            else:
+                await wait_msg.edit_text(
+                    final_msg,
+                    parse_mode="Markdown"
+                )
         
         # عرض الأزرار للاستمرار
         reply_keyboard = [[key] for key in CATEGORIES.keys()]
@@ -481,14 +589,14 @@ async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="🚀 **وضع الدردشة Obeida Trading**\n\n"
-             "أنا مساعدك الذكي متعدد المواهب:\n"
-             "• مستشار استثماري وتحليلات مالية\n"
-             "• خبير برمجي وتقني\n"
-             "• محلل بيانات واستراتيجيات\n"
-             "• كاتب محتوى إبداعي\n"
-             "• مساعد شخصي ذكي\n\n"
-             "اختر مجال المساعدة أو أرسل سؤالك مباشرة:",
+        text="🚀 **وضع الدردشة المتقدم - Obeida Trading**\n\n"
+             "🤖 **أنا مساعدك الذكي متعدد المواهب:**\n"
+             "• 📊 مستشار استثماري وتحليلات مالية\n"
+             "• 💻 خبير برمجي وتقني\n"
+             "• 📈 محلل بيانات واستراتيجيات\n"
+             "• ✍️ كاتب محتوى إبداعي\n"
+             "• 🧠 مساعد شخصي ذكي\n\n"
+             "**اختر مجال المساعدة أو أرسل سؤالك مباشرة:**",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
     )
@@ -632,7 +740,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return CHAT_MODE
     
     # إظهار حالة المعالجة
-    wait_msg = await update.message.reply_text("Obeida Trading 🤔...")
+    wait_msg = await update.message.reply_text("🤔 Obeida Trading يفكر...")
     
     try:
         # استدعاء واجهة Groq
@@ -642,7 +750,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 {"role": "system", "content": selected_prompt},
                 {"role": "user", "content": user_message}
             ],
-            "max_tokens": 1200,
+            "max_tokens": 1500,
             "temperature": 0.7
         }
         
@@ -651,17 +759,19 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Content-Type": "application/json"
         }
         
-        response = requests.post(GROQ_URL, headers=headers, json=payload, timeout=60)
+        result = safe_api_call(GROQ_URL, headers, payload, timeout=60)
         
-        if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content']
+        if "error" in result:
+            await wait_msg.edit_text(result["error"])
+        elif "choices" in result:
+            ai_response = result['choices'][0]['message']['content']
             
             # تنظيف النص من التكرارات
-            result = clean_repeated_text(result)
+            ai_response = clean_repeated_text(ai_response)
             
             # إضافة تذييل مميز
-            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - المساعد الذكي "
-            result = result + footer
+            footer = f"\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - المساعد الذكي • {datetime.now().strftime('%H:%M')}"
+            ai_response = ai_response + footer
             
             # أزرار الدردشة المتقدمة
             chat_keyboard = [
@@ -672,19 +782,19 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             ]
             
             # تقسيم الرسالة الطويلة
-            if len(result) > 4000:
-                parts = split_message(result, max_length=4000)
+            if len(ai_response) > 4000:
+                parts = split_message(ai_response, max_length=4000)
                 for i, part in enumerate(parts):
                     if i == 0:
                         await wait_msg.edit_text(
-                            f"Obeida Trading 💬\n\n{part}",
+                            f"💬 **Obeida Trading يرد:**\n\n{part}",
                             parse_mode="Markdown"
                         )
                     else:
                         await update.message.reply_text(part, parse_mode="Markdown")
             else:
                 await wait_msg.edit_text(
-                    f"Obeida Trading 💬\n\n{result}",
+                    f"💬 **Obeida Trading يرد:**\n\n{ai_response}",
                     parse_mode="Markdown"
                 )
             
@@ -693,16 +803,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "🔽 **اختر مجالاً آخر أو اطرح سؤالاً جديداً:**",
                 reply_markup=ReplyKeyboardMarkup(chat_keyboard, resize_keyboard=True, one_time_keyboard=False)
             )
-            
         else:
-            print(f"Groq API Error: {response.status_code} - {response.text}")
-            await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
+            await wait_msg.edit_text("❌ **حدث خطأ غير متوقع في الاستجابة**")
     
-    except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد. السؤال يحتاج تفكيراً أعمق!\nيمكنك إعادة صياغة السؤال بشكل أوضح.")
-    except requests.exceptions.RequestException as e:
-        print(f"Network error in chat: {e}")
-        await wait_msg.edit_text("🌐 خطأ في الاتصال. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.")
     except Exception as e:
         print(f"خطأ في الدردشة: {e}")
         await wait_msg.edit_text("❌ حدث خطأ غير متوقع. النظام يعمل على الإصلاح تلقائياً...")
@@ -783,7 +886,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             kill_zone_status = "خارج مناطق القتل الرئيسية"
         
         # البرومبت الكامل مع جميع التحسينات
-        prompt = f"""[SYSTEM: ULTIMATE_MARKET_ANALYZER_PRO_V9]
+        prompt = f"""[SYSTEM: ULTIMATE_MARKET_ANALYZER_PRO_V10]
 أنت محلل فني خبير في مدرسة Smart Money Concepts (SMC). مهمتك هي تحليل الشارت المرفق وتقديم التوصيات وفقاً للتنسيق المحدد.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -792,45 +895,37 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
 1. **المدرسة المعتمدة:** SMC (Smart Money Concepts) كإطار عمل رئيسي
 2. **الدرع الأساسي (Fundamental Shield):** {news_warning if news_warning else "✅ الوضع آمن من الأخبار"}
-3. **كشف وهم الزخم:** تحقق من استدامة الحركة وليست مجرد شمعة خبر
-4. **استخراج البيانات:** إحداثيات دقيقة من المحور اليميني
+3. **شرط التفعيل:** لا تعطِ توصية دخول بدون شرط تفعيل واضح
+4. **استخراج البيانات:** قراءة دقيقة للمحاور السعرية أولاً
 5. **فلتر الجدوى:** نسبة RR ≥ 1:2 مع تعديل الأخبار
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📊 **المرحلة 1: الفحص الأولي والتحذيرات**
+📊 **المرحلة 1: استخراج البيانات الرقمية (إلزامي)**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### 1.1 نظام الأمان ثلاثي الطبقات
-**الطبقة 1: الدرع الأساسي**
-{news_warning if news_warning else "✅ الوضع آمن من الأخبار"}
+### 1.1 قراءة المحاور بدقة:
+**🔍 اتبع هذه الخطوات بالترتيب:**
+1. **مسح المحور السعري اليميني** واستخراج الأرقام
+2. **تحديد السعر الحالي** من آخر شمعة مكتملة
+3. **استخراج أعلى سعر (High)** وأقل سعر (Low) من آخر 5 شموع
+4. **التحقق من الدقة** بمقارنة موقع الشموع مع الأرقام
 
-**الطبقة 2: كشف وهم الزخم**
-- **فحص الشموع الكبيرة:** هل هي شمعة خبر معزولة؟
-- **اختبار الاستدامة:** 3 شموع متتالية في نفس الاتجاه
-- **تحليل المتابعة:** هل هناك Follow-through بعد الحركة الكبيرة؟
-
-**الطبقة 3: التحقق من البيانات**
-- استخراج إحداثيات السعر من المحور اليميني بدقة
-- التحقق من توافق الأرقام مع شكل الشموع
-- تحديد النطاق السعري الحقيقي
+### 1.2 تسجيل النتائج:
+- **السعر الحالي الدقيق:** [_____]
+- **أعلى سعر قريب:** [_____]
+- **أقل سعر قريب:** [_____]
+- **النطاق السعري:** [_____]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📈 **المرحلة 2: التحليل الهيكلي المتقدم**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### 2.1 تحديد مدرسة التحليل بوضوح
+### 2.1 تحديد مدرسة التحليل:
 - **الإطار:** SMC مع دعم بالتحليل الكلاسيكي عند الحاجة
 - **التنسيق:** استخدام مصطلحات SMC بدقة (Order Blocks, FVG, Liquidity)
 - **الهيكل:** تحديد BOS (Break of Structure) و CHoCH (Change of Character)
 
-### 2.2 استخراج الإحداثيات الرقمية
-**عملية إلزامية:**
-1. قراءة الأرقام من المحور السعري اليميني
-2. تحديد أعلى وأقل سعر ظاهر
-3. حساب النسب المئوية للحركات
-4. التحقق من دقة القراءة بمقارنة الشموع مع الأرقام
-
-### 2.3 مصفاة التسعير (PD Array)
+### 2.2 مصفاة التسعير (PD Array):
 - **نطاق التعامل:** تحديد القمة والقاع الرئيسيين
 - **خط التوازن (50%):** حساب النقطة الوسطى
 - **منطقة الخصم (Discount):** تحت 50% - مثالي للشراء
@@ -841,20 +936,20 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 💰 **المرحلة 3: تحليل السيولة والزخم**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### 3.1 كشف وهم الزخم (Momentum Illusion)
+### 3.1 كشف وهم الزخم (Momentum Illusion):
 **علامات الزخم الوهمي:**
 1. **شمعة الخبر المنفردة:** كبيرة ومعزولة عن السياق
 2. **فجوات سعرية:** قبل أو بعد الشمعة الكبيرة
 3. **غياب المتابعة:** حركة قوية بدون استمرارية
 4. **الذيول الطويلة جداً:** إشارة ضعف في الاختبار
 
-**اختبار الزخم الحقيقي:**
+### 3.2 اختبار الزخم الحقيقي:
 - 3 شموع متتالية في نفس الاتجاه
 - تدرج في حجم الأجسام
 - توافق مع الهيكل العام
 - زيادة في أحجام التداول
 
-### 3.2 خرائط السيولة المتقدمة
+### 3.3 خرائط السيولة المتقدمة:
 - **السيولة المتساوية:** Equal Highs/Lows
 - **فخاخ الإغراء:** مناطق Inducement
 - **سحب السيولة:** Liquidity Sweeps
@@ -864,23 +959,26 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 🎯 **المرحلة 4: نظام القرار الذكي**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### 4.1 فلتر التلاقي الثلاثي
-**يجب توفر 3/3 من:**
+### 4.1 شرط التفعيل الإلزامي (يجب توفر واحد):
+1. **اختبار Order Block** مع إغلاق شمعة تأكيد
+2. **سد فجوة سعرية (FVG)** مع زيادة حجم التداول
+3. **كسر مستوى سيولة** مع تأكيد RSI فوق/تحت 50
+
+### 4.2 فلتر التلاقي الثلاثي (يجب توفر 3/3):
 1. **POI (منطقة الاهتمام):** Order Block أو FVG صالح
 2. **نموذج الشموع:** Pin Bar، Engulfing، Inside Bar
 3. **تأكيد إضافي:** حجم، مؤشر، أو سياق زمني
 
-### 4.2 تعديل المخاطر حسب الأخبار
+### 4.3 تعديل المخاطر حسب الأخبار:
 **معامل التعديل:** ×{news_risk_multiplier}
 - **Stop Loss المعدل:** = SL العادي × {news_risk_multiplier}
 - **الحجم المعدل:** = الحجم العادي ÷ {news_risk_multiplier}
 - **نسبة RR المطلوبة:** ≥ 1:{max(3, 2 * news_risk_multiplier)}
 
-### 4.3 شروط الحظر الكامل
-**ممنوع الدخول إذا:**
+### 4.4 شروط الحظر الكامل (ممنوع الدخول إذا):
 1. خبر عالي التأثير ±30 دقيقة
 2. زخم وهمي واضح (شمعة كبيرة معزولة)
-3. عدم استيفاء فلتر التلاقي الثلاثي
+3. عدم استيفاء شرط التفعيل
 4. موقع السعر في منطقة Equilibrium
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -892,106 +990,52 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - **حالة السيولة:** {session_vol}
 - **تأثير الأخبار:** {news_impact} (معامل ×{news_risk_multiplier})
 - **التوقيت:** {current_time.strftime('%Y-%m-%d %H:%M GMT')}
+- **البصمة الزمنية:** {kill_zone_status}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🎯 **التنسيق المطلوب للإجابة (يجب الالتزام حرفياً):**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📊 **التحليل الفني:**
-- **البصمة الزمنية:** {kill_zone_status}
-- **حالة الهيكل:** (صاعد/هابط) + (مرحلة وايكوف الحالية)
-- **خريطة السيولة:** (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
+- **استخراج البيانات:** [السعر الحالي، أعلى سعر، أقل سعر]
+- **حالة الهيكل:** (صاعد/هابط/جانبي) + (مرحلة وايكوف)
+- **خريطة السيولة:** (أقرب فخ سيولة Inducement)
 - **الفجوات السعرية (FVG):** (المناطق التي سيعود السعر لتغطيتها)
 
 🎯 **الإشارة التنفيذية:**
-- **السعر الحالي:** [اذكر السعر الدقيق الذي تراه الآن للتأكد من دقة القراءة]
-- **حالة الشمعة:** [مازالت مفتوحة / مغلقة حديثاً]
-- **القرار الفني:** (شراء 🟢 / بيع 🔴 / الإحتفاظ 🟡)
-- **قوة الإشارة 🔰:** (عالية جدا 💥 (مؤشرات + 5تلاقي)/🔥 عالية (تلاقي 4 مؤشرات)/⚡ متوسطة (مؤشرات 3 تلاقي)/❄️ ضعيفة (مؤشرات 3 من تقل))
-- **نقطة الدخول (Entry):** [السعر الدقيق بناءً على الـ Order Block + شرط الإغلاق]
-- **الأهداف الربحية (TPs):**
-  - 🎯 **TP1:** [سحب أول سيولة داخلية], [احتمالية الوصول]
+- **السعر الحالي:** [السعر الدقيق المستخرج من المحور]
+- **القرار الفني:** (شراء 🟢 / بيع 🔴 / الإحتفاظ 🟡 / انتظار)
+- **شرط التفعيل:** [الشرط الواضح الذي يجب تحققه قبل الدخول]
+- **قوة الإشارة 🔰:** (عالية جدا 💥 / 🔥 عالية / ⚡ متوسطة / ❄️ ضعيفة)
+- **نقطة الدخول:** [السعر مع شرط الإغلاق]
+- **الأهداف الربحية:**
+  - 🎯 **TP1:** [سحب أول سيولة داخلية]
   - 🎯 **TP2:** [الهدف الرئيسي - منطقة عرض/طلب قوية]
-  - 🎯 **TP3:** [استهدف السيولة الخارجية (Major SSL/BSL) أو سد فجوة سعرية على فريم أكبر]
-- **وقف الخسارة (SL):** [السعر مع 3 طبقات حماية]
-- **المدة المتوقعة 🕧:** [عدد الدقائق للوصول للهدف TP1 بناءً على نوع الزخم]
+  - 🎯 **TP3:** [استهداف السيولة الخارجية]
+- **وقف الخسارة:** [السعر مع 3 طبقات حماية]
+- **المدة المتوقعة 🕧:** [عدد الدقائق للوصول للهدف TP1]
 
-🧠 **ركن "افهم سوقك" (التفسير المنطقي):**
-- فلسفة الدخول: [لماذا هذه النقطة بالذات؟ اشرح دمج السيولة مع الشموع]
-- كاشف التلاعب: [ما هي الإشارة التي لو ظهرت تعني أن صناع السوق يغيرون اتجاههم الآن؟]
-- درس الساعة: [قاعدة فنية واحدة مستخلصة من هذا الشارت لتطوير مهاراتك]
+🧠 **ركن "افهم سوقك":**
+- **فلسفة الدخول:** [لماذا هذه النقطة بالذات؟]
+- **كاشف التلاعب:** [إشارة تغيير اتجاه صناع السوق]
+- **درس الساعة:** [قاعدة فنية مستخلصة]
 
-⚠️ **سيناريو الطوارئ (الغدر):**
-- اخرج فوراً إذا رأيت [سلوك سعري معين] حتى لو لم يصل السعر للستوب لوز.
-
-*(حالة الزخم: [اندفاعي/ضعيف/تصحيحي/عرضي] بناءً على تلاقي RSI مع الشموع)*
+⚠️ **سيناريو الطوارئ:**
+- **اخرج فوراً إذا:** [سلوك سعري معين]
 
 ⚠️ **إدارة المخاطر:**
 - **مستوى الثقة:** [% مع ذكر عدد التاكيدات]
 - **نقطة الإلغاء:** [السعر الذي يفسد التحليل]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔬 **التعليمات الفنية التفصيلية:**
+🔬 **التعليمات النهائية:**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-**1. تحليل البصمة الزمنية:**
-- حدد موقع السعر بالنسبة لـ Kill Zone
-- اذكر إذا كنا داخل أو خارج مناطق السيولة العالية
-- ضع في الاعتبار تأثير الأخبار إذا كان {news_impact != '🟢 منخفض'}
-
-**2. تحليل الهيكل:**
-- حدد الاتجاه الرئيسي بناءً على قمم وقيعان أعلى/أخفض
-- اذكر مرحلة وايكوف الحالية (Accumulation, Distribution, Markup, Markdown)
-- حدد Order Blocks النشطة
-
-**3. خريطة السيولة:**
-- ابحث عن Equal Highs/Lows القريبة
-- حدد مناطق Inducement (الإغراء)
-- اذكر أهداف السيولة المستهدفة
-
-**4. الفجوات السعرية (FVG):**
-- ابحث عن Fair Value Gaps المفتوحة
-- حدد الفجوات التي يحتاج السعر لتغطيتها
-- اذكر إذا كانت فجوات استمرارية أو منهكة
-
-**5. تحليل الزخم مع RSI:**
-- قارن حركة RSI مع حركة الشموع
-- حدد إذا كان الزخم اندفاعي، ضعيف، تصحيحي، أو عرضي
-- ابحث عن Divergence بين RSI والسعر
-
-**6. حساب قوة الإشارة:**
-- عالية جداً 💥: 5 مؤشرات متقاطعة أو أكثر
-- عالية 🔥: 4 مؤشرات متقاطعة
-- متوسطة ⚡: 3 مؤشرات متقاطعة
-- ضعيفة ❄️: 3 مؤشرات متفرقة
-
-**7. تحديد مستويات التداول:**
-- الدخول: عند Order Block مع شرط إغلاق الشمعة
-- TP1: أول هدف سيولة داخلي
-- TP2: منطقة عرض/طلب قوية
-- TP3: هدف سيولة خارجي رئيسي
-- SL: مع 3 طبقات حماية (سعرية، زمنية، حجمية)
-
-**8. ركن "افهم سوقك":**
-- اشرح الفلسفة خلف نقطة الدخول
-- حدد إشارات التلاعب المحتملة
-- قدم درساً فني واحداً من الشارت
-
-**9. إدارة المخاطر:**
-- احسب مستوى الثقة بناءً على عدد التاكيدات
-- حدد نقطة الإلغاء بوضوح
-- ضع في الاعتبار معامل المخاطرة ×{news_risk_multiplier}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ **ملاحظات هامة:**
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-1. يجب أن تكون جميع الإجابات واقعية ومبنية على ما تراه في الصورة
-2. لا تخترع أرقاماً أو مستويات غير موجودة
-3. إذا لم تتمكن من قراءة سعر معين، اذكر ذلك بوضوح
-4. كن صادقاً في تقييم قوة الإشارة
-5. لا تقدم توصية إذا لم تتوفر الشروط الكافية
-6. ضع تحذيراً واضحاً إذا كان {news_impact != '🟢 منخفض'}
+1. **ابدأ باستخراج البيانات** من المحاور أولاً
+2. **لا تعطِ توصية دخول** بدون شرط تفعيل واضح
+3. **تأكد من دقة الأسعار** المستخرجة
+4. **كون صادقاً** في تقييم قوة الإشارة
+5. **لا تخترع أرقاماً** غير موجودة في الصورة
 
 الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه.
 """
@@ -1021,39 +1065,34 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             "Content-Type": "application/json"
         }
         
-        response = requests.post(GROQ_URL, headers=headers, json=payload, timeout=60)
+        result = safe_api_call(GROQ_URL, headers, payload, timeout=60)
         
-        if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content'].strip()
+        if "error" in result:
+            await wait_msg.edit_text(result["error"])
+            return MAIN_MENU
+            
+        elif "choices" in result:
+            analysis_result = result['choices'][0]['message']['content'].strip()
             
             # تنظيف النص من التكرار
-            result = clean_repeated_text(result)
+            analysis_result = clean_repeated_text(analysis_result)
             
-            # إزالة أي تكرار محتمل
-            if "### تحليل الشارت المرفق" in result:
-                parts = result.split("### تحليل الشارت المرفق")
-                if len(parts) > 1:
-                    result = parts[1].strip()
-            
-            if "نتائج الفحص الفني:" in result:
-                result = result.replace("نتائج الفحص الفني:", "📊 **التحليل الفني:**").strip()
-            
+            # تنسيق النتيجة النهائية
             keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
             
-            # تنسيق وقت الصفقة للعرض
-            time_display = format_trade_time_for_prompt(trade_time)
-            
-            # إعداد النص النهائي بدون تكرار
+            # إعداد النص النهائي
             full_result = (
                 f"✅ **تم التحليل بنجاح!**\n"
                 f"📈 **نتائج تحليل الشارت:**\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"{result}\n\n"
+                f"{analysis_result}\n\n"
                 f"📊 **الإعدادات المستخدمة:**\n"
                 f"• سرعة الشموع: {candle}\n"
-                f"• {time_display}\n\n"
+                f"• {time_for_prompt}\n"
+                f"• جلسة السوق: {session_name}\n"
+                f"• تأثير الأخبار: {news_impact}\n\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"🤖 **Obeida Trading - نظام التحليل الفني**"
+                f"🤖 **Obeida Trading - نظام التحليل الفني المتقدم**"
             )
             
             # تنظيف النهائي من التكرارات
@@ -1084,12 +1123,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
             )
         else:
-            print(f"Groq Vision API Error: {response.status_code} - {response.text}")
-            keyboard = [["الرجوع للقائمة الرئيسية"]]
-            await wait_msg.edit_text(f"❌ **خطأ في إرسال الصورة:** {response.status_code}")
+            await wait_msg.edit_text("❌ **حدث خطأ في تحليل الصورة**")
             
-    except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
     except Exception as e:
         print(f"خطأ في تحليل الصورة: {e}")
         keyboard = [["الرجوع للقائمة الرئيسية"]]
@@ -1103,19 +1138,30 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 # --- الدوال الأساسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء البوت"""
+    user_id = update.effective_user.id
+    
     keyboard = [
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
         ["💬 دردشة", "📈 توصية"]
     ]
     
-    await update.message.reply_text(
+    welcome_message = (
         "🚀 **أهلاً بك في Obeida Trading **\n\n"
-        "🤖 **المميزات الجديدة:**\n"
-        "• تحليل فني متقدم للشارتات\n"
-        "• 🆕 دردشة \n"
-        "• 📈 نظام توصيات جاهزة\n"
-        "• إعدادات تخصيص كاملة\n"
-        "اختر أحد الخيارات:",
+        "🤖 **المميزات المتقدمة:**\n"
+        "• 📊 تحليل فني متقدم للشارتات\n"
+        "• 💬 دردشة ذكية متعددة التخصصات\n"
+        "• 📈 نظام توصيات جاهزة للعملات\n"
+        "• ⚙️ إعدادات تخصيص كاملة\n"
+        "• 🔒 نظام أمان متقدم (Kill Zones)\n\n"
+        "📡 **إحصائيات النظام:**\n"
+        f"• إصدار النظام: 2.0.1\n"
+        f"• نموذج الذكاء: {GROQ_MODEL}\n"
+        f"• الوقت الحالي: {datetime.now().strftime('%H:%M')}\n\n"
+        "**اختر أحد الخيارات:**"
+    )
+    
+    await update.message.reply_text(
+        welcome_message,
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
     )
@@ -1132,7 +1178,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(
             "⚙️ **إعدادات التحليل الفني**\n\n"
-            "حدد سرعة الشموع للبدء:",
+            "📊 **حدد سرعة الشموع للبدء:**",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         return SETTINGS_CANDLE
@@ -1155,11 +1201,11 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             time_display = format_trade_time_for_prompt(trade_time)
             
             await update.message.reply_text(
-                f"📊 **جاهز للتحليل**\n\n"
-                f"الإعدادات الحالية:\n"
+                f"📊 **جاهز للتحليل المتقدم**\n\n"
+                f"⚙️ **الإعدادات الحالية:**\n"
                 f"• سرعة الشموع: {candle}\n"
                 f"• {time_display}\n\n"
-                f"أرسل صورة الرسم البياني (الشارت) الآن:",
+                f"**📤 أرسل صورة الرسم البياني (الشارت) الآن:**",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
                 parse_mode="Markdown"
             )
@@ -1173,7 +1219,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
     await update.message.reply_text(
-        "اختر أحد الخيارات من القائمة:",
+        "🔍 **اختر أحد الخيارات من القائمة:**",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
     )
     return MAIN_MENU
@@ -1199,11 +1245,11 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
         
         await update.message.reply_text(
             f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n"
-            f"الآن حدد **مدة الصفقة** المتوقعة:\n\n"
-            f"📊 **خيارات مدة الصفقة:**\n"
-            f"• **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة\n"
-            f"• **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة\n"
-            f"• **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة\n\n"
+            f"**📊 الآن حدد مدة الصفقة المتوقعة:**\n\n"
+            f"**خيارات مدة الصفقة:**\n"
+            f"• **📈 قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة\n"
+            f"• **📉 متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة\n"
+            f"• **📊 طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة\n\n"
             f"اختر الإطار الزمني المناسب لاستراتيجيتك:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
@@ -1234,10 +1280,13 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
         candle, _ = get_user_setting(user_id)
         
         await update.message.reply_text(
-            f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
+            f"🎉 **تم حفظ الإعدادات بنجاح!**\n\n"
             f"✅ سرعة الشموع: {candle}\n"
             f"✅ مدة الصفقة: {user_message}\n\n"
-            f"يمكنك الآن تحليل صورة أو الدردشة:",
+            f"**🚀 يمكنك الآن استخدام المميزات:**\n"
+            f"• تحليل صورة شارت\n"
+            f"• الدردشة الذكية\n"
+            f"• نظام التوصيات",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
         )
@@ -1249,7 +1298,6 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
 async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة وضع التحليل"""
     user_message = update.message.text
-    user_id = update.effective_user.id
     
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
@@ -1260,7 +1308,8 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
         return MAIN_MENU
     
     await update.message.reply_text(
-        "📤 **الرجاء إرسال صورة الشارت فقط**\nأو اضغط 'الرجوع للقائمة الرئيسية'",
+        "📤 **الرجاء إرسال صورة الشارت فقط**\n"
+        "أو اضغط 'الرجوع للقائمة الرئيسية'",
         reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True, one_time_keyboard=False)
     )
     return ANALYZE_MODE
@@ -1285,7 +1334,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     📈 **نظام التوصيات:**
     • تحليل فني للعملات والمؤشرات
-    • أربعة أقسام رئيسية
+    • 9 أقسام رئيسية
     • توصيات مفصلة لكل عملة
     • تحليل سريع ومباشر
     
@@ -1300,6 +1349,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • نظام توصيات العملات
     • حفظ إعداداتك الشخصية
     • واجهة سهلة بالأزرار
+    • نظام أمان متقدم
     """
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -1320,6 +1370,8 @@ def run_flask_server():
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
+    print(f"📡 Model: {GROQ_MODEL}")
+    print(f"🔑 API Key: {'*' * 20}{GROQ_KEY[-8:] if GROQ_KEY else 'NOT SET'}")
     
     # تهيئة قاعدة البيانات
     init_db()
@@ -1362,9 +1414,6 @@ def run_telegram_bot():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cancel", cancel))
     
-    # إضافة معالج للنصوص
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
-    
     print("✅ Telegram Bot initialized successfully")
     print("📡 Bot is now polling for updates...")
     
@@ -1373,16 +1422,31 @@ def run_telegram_bot():
 
 def main():
     """الدالة الرئيسية"""
-    print("🚀 Starting Obeida Trading...")
+    print("🚀 Starting Obeida Trading Bot v2.0.1...")
+    print("=" * 50)
+    print(f"📊 System Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🤖 AI Model: {GROQ_MODEL}")
+    print(f"💾 Database: {DB_NAME}")
+    print("=" * 50)
     
-    # تشغيل Flask في thread منفصل
-    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
-    flask_thread.start()
-    
-    print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
-    
-    # تشغيل Telegram bot في thread الرئيسي
-    run_telegram_bot()
+    try:
+        # تشغيل Flask في thread منفصل
+        flask_thread = threading.Thread(target=run_flask_server, daemon=True)
+        flask_thread.start()
+        
+        port = os.environ.get('PORT', 8080)
+        print(f"🌐 Flask server started on port {port}")
+        print(f"🔗 Health Check: http://localhost:{port}/health")
+        print("=" * 50)
+        
+        # تشغيل Telegram bot في thread الرئيسي
+        run_telegram_bot()
+        
+    except Exception as e:
+        print(f"❌ Critical Error: {e}")
+        print("🔄 Restarting in 10 seconds...")
+        time.sleep(10)
+        main()
 
 if __name__ == "__main__":
     main()
