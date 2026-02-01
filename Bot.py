@@ -16,7 +16,7 @@ from flask import Flask
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
 GROQ_KEY = os.environ.get('GROQ_KEY', "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")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.2-90b-vision-preview"
+GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
 DB_NAME = "abood-gpt.db"
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
