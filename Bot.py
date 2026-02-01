@@ -14,7 +14,7 @@ from flask import Flask
 
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
-GROQ_KEY = os.environ.get('GROQ_KEY', "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")
+GROQ_KEY = os.environ.get('GROQ_KEY', "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")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
 DB_NAME = "abood-gpt.db"
