@@ -79,7 +79,7 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>AI Provider: SambaNova Systems</p>
+        <p>pro Provider: Obeida Trading Systems</p>
     </body>
     </html>
     """
@@ -581,7 +581,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             result = clean_repeated_text(result)
             
             # إضافة تذييل مميز
-            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - المساعد الذكي (Powered by SambaNova)"
+            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - Obeida Trading 🤖"
             result = result + footer
             
             # أزرار الدردشة المتقدمة
@@ -616,7 +616,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             
         else:
-            print(f"SambaNova API Error: {response.status_code} - {response.text}")
+            print(f"Obeida Trading Error: {response.status_code} - {response.text}")
             await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
     
     except requests.exceptions.Timeout:
@@ -1031,7 +1031,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
             )
         else:
-            print(f"SambaNova Vision API Error: {response.status_code} - {response.text}")
+            print(f"Obeida Vision Error: {response.status_code} - {response.text}")
             keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
             await wait_msg.edit_text(f"❌ **خطأ في إرسال الصورة:** {response.status_code}")
             
@@ -1062,7 +1062,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 🆕 دردشة \n"
         "• 📈 نظام توصيات جاهزة\n"
         "• إعدادات تخصيص كاملة\n"
-        "• ⚡ مدعوم بـ SambaNova AI\n\n"
         "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -1248,7 +1247,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • نظام توصيات العملات
     • حفظ إعداداتك الشخصية
     • واجهة سهلة بالأزرار
-    • ⚡ مدعوم بـ SambaNova AI
     """
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -1269,7 +1267,7 @@ def run_flask_server():
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
-    print(f"⚡ AI Provider: SambaNova Systems")
+    print(f"⚡ AI Provider: Obeida Trading Systems")
     print(f"🔑 API Key: {SAMBA_KEY[:8]}...{SAMBA_KEY[-8:] if len(SAMBA_KEY) > 16 else ''}")
     print(f"🌐 API URL: {SAMBA_URL}")
     print(f"🤖 Model: {SAMBA_MODEL}")
@@ -1326,7 +1324,7 @@ def run_telegram_bot():
 
 def main():
     """الدالة الرئيسية"""
-    print("🚀 Starting Obeida Trading with SambaNova AI...")
+    print("🚀 Starting Obeida Trading ...")
     print("=" * 60)
     
     # تشغيل Flask في thread منفصل
@@ -1341,3 +1339,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
