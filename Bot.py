@@ -14,9 +14,17 @@ from flask import Flask
 
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
-GROQ_KEY = os.environ.get('GROQ_KEY', "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")
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.2-11b-vision-preview"
+
+# ⚡ إعدادات SambaNova API
+SAMBA_KEY = os.environ.get('SAMBA_KEY', "4a1034e0-bee8-41ef-8fb7-fb195fb5da72")
+SAMBA_URL = "https://api.sambanova.ai/v1/chat/completions"
+SAMBA_MODEL = "Llama-4-Maverick-17B-128E-Instruct"
+
+# استخدم إعدادات SambaNova بدلاً من Groq
+GROQ_KEY = SAMBA_KEY
+GROQ_URL = SAMBA_URL
+GROQ_MODEL = SAMBA_MODEL
+
 DB_NAME = "abood-gpt.db"
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
@@ -71,13 +79,14 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
+        <p>AI Provider: SambaNova Systems</p>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "timestamp": time.time()}
+    return {"status": "active", "ai_provider": "SambaNova", "timestamp": time.time()}
 
 @app.route('/ping')
 def ping():
@@ -237,10 +246,10 @@ def split_message(text, max_length=4000):
     return parts
 
 # --- وظائف نظام التوصية الجديد ---
-def get_groq_analysis(symbol):
-    """الحصول على تحليل من Groq API للعملة"""
+def get_sambanova_analysis(symbol):
+    """الحصول على تحليل من SambaNova API للعملة"""
     headers = {
-        "Authorization": f"Bearer {GROQ_KEY}",
+        "Authorization": f"Bearer {SAMBA_KEY}",
         "Content-Type": "application/json"
     }
     
@@ -274,18 +283,18 @@ def get_groq_analysis(symbol):
     """
     
     body = {
-        "model": GROQ_MODEL,
+        "model": SAMBA_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens": 1500
     }
 
     try:
-        response = requests.post(GROQ_URL, json=body, headers=headers, timeout=25)
+        response = requests.post(SAMBA_URL, json=body, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
-        print(f"Error in get_groq_analysis: {e}")
+        print(f"Error in get_sambanova_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -334,7 +343,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     # إذا وجدت العملة، ابدأ التحليل
     if symbol_to_analyze:
         wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
-        analysis = get_groq_analysis(symbol_to_analyze)
+        analysis = get_sambanova_analysis(symbol_to_analyze)
         
         final_msg = (
             f"📈 **نتائج توصية {symbol_to_analyze}**\n"
@@ -547,9 +556,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     wait_msg = await update.message.reply_text("Obeida Trading 🤔...")
     
     try:
-        # استدعاء واجهة Groq
+        # استدعاء واجهة SambaNova
         payload = {
-            "model": GROQ_MODEL,
+            "model": SAMBA_MODEL,
             "messages": [
                 {"role": "system", "content": selected_prompt},
                 {"role": "user", "content": user_message}
@@ -559,11 +568,11 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         }
         
         headers = {
-            "Authorization": f"Bearer {GROQ_KEY}",
+            "Authorization": f"Bearer {SAMBA_KEY}",
             "Content-Type": "application/json"
         }
         
-        response = requests.post(GROQ_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(SAMBA_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
@@ -572,7 +581,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             result = clean_repeated_text(result)
             
             # إضافة تذييل مميز
-            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - المساعد الذكي "
+            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - المساعد الذكي (Powered by SambaNova)"
             result = result + footer
             
             # أزرار الدردشة المتقدمة
@@ -607,7 +616,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             
         else:
-            print(f"Groq API Error: {response.status_code} - {response.text}")
+            print(f"SambaNova API Error: {response.status_code} - {response.text}")
             await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
     
     except requests.exceptions.Timeout:
@@ -895,7 +904,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 📊 **المعطيات الفنية:**
 • **إطار الزمن:** {candle} ({candle_category})
 • **استراتيجية التداول:** {trading_strategy}
-• **نوع الأصل:** {asset_type if 'asset_type' in locals() else 'غير محدد'}
 • **جلسة السوق:** {session_name} ({session_time})
 • **حالة السيولة:** {session_vol}
 • **تأثير الأخبار:** {news_impact} (معامل ×{news_risk_multiplier})
@@ -934,7 +942,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 """
         
         payload = {
-            "model": GROQ_MODEL,
+            "model": SAMBA_MODEL,
             "messages": [
                 {
                     "role": "user", 
@@ -957,11 +965,11 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         }
         
         headers = {
-            "Authorization": f"Bearer {GROQ_KEY}",
+            "Authorization": f"Bearer {SAMBA_KEY}",
             "Content-Type": "application/json"
         }
         
-        response = requests.post(GROQ_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(SAMBA_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content'].strip()
@@ -1023,7 +1031,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
             )
         else:
-            print(f"Groq Vision API Error: {response.status_code} - {response.text}")
+            print(f"SambaNova Vision API Error: {response.status_code} - {response.text}")
             keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
             await wait_msg.edit_text(f"❌ **خطأ في إرسال الصورة:** {response.status_code}")
             
@@ -1054,6 +1062,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 🆕 دردشة \n"
         "• 📈 نظام توصيات جاهزة\n"
         "• إعدادات تخصيص كاملة\n"
+        "• ⚡ مدعوم بـ SambaNova AI\n\n"
         "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -1239,6 +1248,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • نظام توصيات العملات
     • حفظ إعداداتك الشخصية
     • واجهة سهلة بالأزرار
+    • ⚡ مدعوم بـ SambaNova AI
     """
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -1259,6 +1269,10 @@ def run_flask_server():
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
+    print(f"⚡ AI Provider: SambaNova Systems")
+    print(f"🔑 API Key: {SAMBA_KEY[:8]}...{SAMBA_KEY[-8:] if len(SAMBA_KEY) > 16 else ''}")
+    print(f"🌐 API URL: {SAMBA_URL}")
+    print(f"🤖 Model: {SAMBA_MODEL}")
     
     # تهيئة قاعدة البيانات
     init_db()
@@ -1312,17 +1326,18 @@ def run_telegram_bot():
 
 def main():
     """الدالة الرئيسية"""
-    print("🚀 Starting Obeida Trading...")
+    print("🚀 Starting Obeida Trading with SambaNova AI...")
+    print("=" * 60)
     
     # تشغيل Flask في thread منفصل
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
     print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
+    print("=" * 60)
     
     # تشغيل Telegram bot في thread الرئيسي
     run_telegram_bot()
 
 if __name__ == "__main__":
     main()
-
