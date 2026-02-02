@@ -26,7 +26,7 @@ TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-M
 CATEGORIES = {
     "أزواج العملات 🏛️": [
         "EUR/USD (OTC)", "GBP/USD (OTC)", "USD/JPY (OTC)", "USD/CHF (OTC)",
-        "AUD/USD (OTC)", "USD/CAD (OTC)", "NZD/USD (OTC)", "EUR/GBP (OTC)",
+        "AUD/USD (OTC)", "USD/CAD (OTC)", "NZ$/USD (OTC)", "EUR/GBP (OTC)",
         "EUR/JPY (OTC)", "GBP/JPY (OTC)", "EUR/CHF (OTC)", "AUD/JPY (OTC)",
         "EUR/AUD (OTC)", "EUR/CAD (OTC)", "GBP/AUD (OTC)", "CAD/JPY (OTC)",
         "CHF/JPY (OTC)", "NZD/JPY (OTC)", "GBP/CHF (OTC)", "AUD/CAD (OTC)"
@@ -623,80 +623,14 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-# --- كود تحليل الصور المحسن والمدمج الكامل ---
-async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني المتقدم مع جميع التحسينات"""
-    user_id = update.effective_user.id
-    candle, trade_time = get_user_setting(user_id)
+# --- برومبت تحليل الصور المقسم بشكل صحيح ---
+def get_image_analysis_prompt(candle, trade_time, session_name, session_time, session_vol, 
+                              news_impact, news_warning, news_risk_multiplier, current_time,
+                              kill_zone_status):
+    """إنشاء برومبت تحليل الصور بطريقة آمنة ومقسمة"""
     
-    if not candle or not trade_time:
-        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-        await update.message.reply_text(
-            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-
-    wait_msg = await update.message.reply_text("📊 **جاري تحليل الصورة بدقة متقدمة...**")
-    photo = await update.message.photo[-1].get_file()
-    path = f"img_{user_id}_{int(time.time())}.jpg"
-    
-    try:
-        await photo.download_to_drive(path)
-        base64_img = encode_image(path)
-        
-        if not base64_img:
-            await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
-            if os.path.exists(path):
-                os.remove(path)
-            return MAIN_MENU
-        
-        # الحصول على معلومات السيولة والتوقيت
-        session_name, session_time, session_vol = get_market_session()
-        current_time = datetime.utcnow()
-        current_hour = current_time.hour
-        current_minute = current_time.minute
-        
-        # ========== نظام الدرع الأساسي (Fundamental Shield) ==========
-        news_impact = "🟢 منخفض"
-        news_warning = ""
-        news_risk_multiplier = 1.0
-        
-        # تحديد أوقات الأخبار الخطيرة
-        high_impact_hours = [
-            (13, 30), (15, 0), (19, 0),  # أخبار أمريكية رئيسية
-            (8, 0), (9, 0), (10, 0)      # أخبار أوروبية
-        ]
-        
-        # تحقق إذا كنا في نطاق ساعة من خبر عالي التأثير
-        for news_hour, news_minute in high_impact_hours:
-            time_diff = abs((current_hour * 60 + current_minute) - (news_hour * 60 + news_minute))
-            if time_diff <= 60:  # خلال ساعة من الخبر
-                news_impact = "🔴 عالي جداً"
-                news_risk_multiplier = 2.5
-                news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة"
-                break
-            elif time_diff <= 120:  # خلال ساعتين من الخبر
-                news_impact = "🟡 متوسط"
-                news_risk_multiplier = 1.5
-                news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
-                break
-        
-        # ========== الفلتر الزمني (Kill Zones) ==========
-        kill_zone_status = ""
-        if 8 <= current_hour < 11:  # London Kill Zone
-            kill_zone_status = "داخل منطقة القتل السعري (لندن 8-11 GMT)"
-        elif 13 <= current_hour < 16:  # New York Kill Zone
-            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 13-16 GMT)"
-        elif 22 <= current_hour or current_hour < 7:  # Asian Session
-            kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
-        else:
-            kill_zone_status = "خارج مناطق القتل الرئيسية"
-        
-        # البرومبت الجديد الكامل
-        prompt = f"""
+    # الجزء 1: القواعد الأساسية
+    prompt_part_1 = f"""
 أنت محلل فني خبير في مدرسة Smart Money Concepts (SMC) متخصص في الأسهم والصناديق والسلع والكريبتو والعملات. مهمتك هي تحليل الشارت المرفق وتقديم التوصيات وفقاً للتنسيق المحدد.
 
 🔰 **القواعد الأساسية الحاكمة**
@@ -738,7 +672,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - تجنب الدخول في آخر 10 ثوانٍ من الشمعة
 - استخدام أوامر معلقة بدلاً من الدخول المباشر
 - زيادة هامش الـ SL بنسبة 20% في الفريمات الصغيرة
-
+"""
+    
+    # الجزء 2: تحليل الارتباط السعري
+    prompt_part_2 = f"""
 # 1.3 تحليل الارتباط السعري (Correlation Analysis)
 **للعملات (Forex):**
 - مراعاة حركة مؤشر الدولار (DXY) وإن لم يكن ظاهراً
@@ -776,7 +713,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - **منطقة الغلاء (Premium):** فوق 50% - مثالي للبيع
 - **فلتر التسعير الديناميكي:** لا شراء إلا في منطقة الخصم (Discount) إلا في حالة واحدة: إذا حدث 'كسر هيكل' (BOS) بزخم عالٍ، يُسمح بالدخول مع الكسر مباشرة لضمان عدم ضياع الفرصة في الاتجاه المندفع.
 - **مناطق الطوارئ:** تحديد مناطق الشراء/البيع القصوى (أقل من 20% أو أعلى من 80%)
-
+"""
+    
+    # الجزء 3: تحليل السيولة والزخم
+    prompt_part_3 = f"""
 💰 **المرحلة 3: تحليل السيولة والزخم المتقدم**
 
 # 3.1 كشف وهم الزخم (Momentum Illusion)
@@ -812,7 +752,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - خروج جزئي عند أول شمعة رفض كبيرة
 - تحريك SL إلى نقطة التعادل عند الشك
 - عدم الدخول ضد اتجاه 3 شموع قوية
-
+"""
+    
+    # الجزء 4: نظام القرار الذكي
+    prompt_part_4 = f"""
 🎯 **المرحلة 4: نظام القرار الذكي المحسن**
 
 # 4.1 فلتر التلاقي الرباعي (4/4 معايير)
@@ -843,7 +786,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 2. **السيولة والزخم:** تتابع الشموع، حجم التداول
 3. **المؤشرات (تأكيد فقط):** MACD، RSI (تجاهل عند التعارض الواضح)
 4. **السياق الزمني:** الإطار الأعلى والجلسات
-
+"""
+    
+    # الجزء 5: مراقبة سلوك الشموع
+    prompt_part_5 = f"""
 📊 **المرحلة 5: مراقبة سلوك الشموع (Reaction Phase)**
 
 # 5.1 تحليل استجابة الشموع عند نقاط الاهتمام
@@ -889,7 +835,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - إذا لم يتم تأكيد الإشارة خلال 3 شموع → تجاهل الإشارة
 - إذا تم اختراق POI ثم العودة خلال شمعة واحدة → إشارة قوية
 - إذا تذبذب السعر داخل POI لأكثر من 5 شموع → ضعف في الزخم
-
+"""
+    
+    # الجزء 6: تحليل MACD
+    prompt_part_6 = f"""
 📉 **المرحلة 6: تحليل مؤشر MACD المحسن**
 
 # 6.1 التحليل الرباعي المحسن
@@ -915,7 +864,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 2. إذا كان MACD يتعارض مع 3 شموع متتالية → تقليل حجم الصفقة 50%
 3. إذا كان MACD يتعارض مع كسر هيكل (BOS) → تأجيل الدخول شمعة واحدة
 4. إذا كان التعارض مع الدايفرجنس الواضح → اعتباره تحذيراً، ليس حظراً
-
+"""
+    
+    # الجزء 7: تحليل تعدد الإطارات
+    prompt_part_7 = f"""
 ⏰ **المرحلة 7: تحليل تعدد الإطارات المتقدم**
 
 # 7.1 نظام الإطارات الأربعة
@@ -942,7 +894,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 2. MTF1: ارتداد إلى منطقة طلب قوية
 3. MTF2: Order Block نشط في Premium
 4. LTF: إشارة بيع مع إغلاق تحت مستوى
-
+"""
+    
+    # الجزء 8: نظام درجات الثقة
+    prompt_part_8 = f"""
 🎯 **المرحلة 8: نظام درجات الثقة المتقدم**
 
 # 8.1 معايير التقييم المحسنة
@@ -973,7 +928,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - **55-69 نقطة:** ⚡ متوسط (60% حجم)
 - **40-54 نقطة:** ❄️ ضعيف (30% حجم أو تجنب)
 - **أقل من 40:** 🚫 مرفوض (لا تدخل)
-
+"""
+    
+    # الجزء 9: تحليل الحجم
+    prompt_part_9 = f"""
 📊 **المرحلة 9: تحليل حركة الحجم المتقدم**
 
 # 9.1 أنماط الحجم الحرجة
@@ -988,7 +946,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - **منطقة القيمة (VA):** 70% من التداولات = نطاق التوازن
 - **منطقة القيمة الممتدة (EVA):** خارج VA = إشارة قوية
 - **مناطق الحجم المنخفض:** مناطق الاختراق المحتملة
-
+"""
+    
+    # الجزء 10: إدارة الصفقات
+    prompt_part_10 = f"""
 🔄 **المرحلة 10: إدارة الصفقات الديناميكية المحسنة**
 
 # 10.1 إستراتيجية الخروج المتدرج
@@ -1016,7 +977,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - **الدخول المؤجل:** انتظار إغلاق 3 شموع بعد الإشارة
 - **الحجم المتدرج:** الدخول على دفعات (33%، 33%، 34%)
 - **الخروج المبكر:** خروج عند 70% من TP1 في الفريمات الصغيرة
-
+"""
+    
+    # الجزء 11: التحليل السلوكي
+    prompt_part_11 = f"""
 🧠 **المرحلة 11: التحليل السلوكي المتقدم**
 
 # 11.1 حالات السوق النفسية
@@ -1045,7 +1009,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 - البحث عن تأكيد من نمطين مختلفين على الأقل
 - تجنب التداول في أوقات السيولة المنخفضة
 - استخدام أوامر معلقة بعيدة عن السعر الحالي
-
+"""
+    
+    # الجزء 12: التعليمات الفنية والتنسيق
+    prompt_part_12 = f"""
 🔬 **التعليمات الفنية التفصيلية المتقدمة:**
 
 **1. تحليل البصمة الزمنية:**
@@ -1122,7 +1089,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
 📊 **المعطيات الفنية:**
 - **إطار الزمن:** {candle}
-- **نوع الأصل:** {asset_type if 'asset_type' in locals() else 'غير محدد'}
+- **نوع الأصل:** غير محدد (يتم تحديده من الصورة)
 - **جلسة السوق:** {session_name} ({session_time})
 - **حالة السيولة:** {session_vol}
 - **تأثير الأخبار:** {news_impact} (معامل ×{news_risk_multiplier})
@@ -1175,6 +1142,94 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
 الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه.
 """
+    
+    # دمج الأجزاء بشكل صحيح
+    full_prompt = (
+        prompt_part_1 + prompt_part_2 + prompt_part_3 + prompt_part_4 + 
+        prompt_part_5 + prompt_part_6 + prompt_part_7 + prompt_part_8 + 
+        prompt_part_9 + prompt_part_10 + prompt_part_11 + prompt_part_12
+    )
+    
+    return full_prompt
+
+# --- كود تحليل الصور المحسن والمدمج الكامل ---
+async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور للتحليل الفني المتقدم مع جميع التحسينات"""
+    user_id = update.effective_user.id
+    candle, trade_time = get_user_setting(user_id)
+    
+    if not candle or not trade_time:
+        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
+        await update.message.reply_text(
+            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
+            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
+
+    wait_msg = await update.message.reply_text("📊 **جاري تحليل الصورة بدقة متقدمة...**")
+    photo = await update.message.photo[-1].get_file()
+    path = f"img_{user_id}_{int(time.time())}.jpg"
+    
+    try:
+        await photo.download_to_drive(path)
+        base64_img = encode_image(path)
+        
+        if not base64_img:
+            await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
+            if os.path.exists(path):
+                os.remove(path)
+            return MAIN_MENU
+        
+        # الحصول على معلومات السيولة والتوقيت
+        session_name, session_time, session_vol = get_market_session()
+        current_time = datetime.utcnow()
+        current_hour = current_time.hour
+        current_minute = current_time.minute
+        
+        # ========== نظام الدرع الأساسي (Fundamental Shield) ==========
+        news_impact = "🟢 منخفض"
+        news_warning = ""
+        news_risk_multiplier = 1.0
+        
+        # تحديد أوقات الأخبار الخطيرة
+        high_impact_hours = [
+            (13, 30), (15, 0), (19, 0),  # أخبار أمريكية رئيسية
+            (8, 0), (9, 0), (10, 0)      # أخبار أوروبية
+        ]
+        
+        # تحقق إذا كنا في نطاق ساعة من خبر عالي التأثير
+        for news_hour, news_minute in high_impact_hours:
+            time_diff = abs((current_hour * 60 + current_minute) - (news_hour * 60 + news_minute))
+            if time_diff <= 60:  # خلال ساعة من الخبر
+                news_impact = "🔴 عالي جداً"
+                news_risk_multiplier = 2.5
+                news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة"
+                break
+            elif time_diff <= 120:  # خلال ساعتين من الخبر
+                news_impact = "🟡 متوسط"
+                news_risk_multiplier = 1.5
+                news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
+                break
+        
+        # ========== الفلتر الزمني (Kill Zones) ==========
+        kill_zone_status = ""
+        if 8 <= current_hour < 11:  # London Kill Zone
+            kill_zone_status = "داخل منطقة القتل السعري (لندن 8-11 GMT)"
+        elif 13 <= current_hour < 16:  # New York Kill Zone
+            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 13-16 GMT)"
+        elif 22 <= current_hour or current_hour < 7:  # Asian Session
+            kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
+        else:
+            kill_zone_status = "خارج مناطق القتل الرئيسية"
+        
+        # استخدام الدالة الجديدة للحصول على البرومبت
+        prompt = get_image_analysis_prompt(
+            candle, trade_time, session_name, session_time, session_vol,
+            news_impact, news_warning, news_risk_multiplier, current_time,
+            kill_zone_status
+        )
         
         payload = {
             "model": GROQ_MODEL,
@@ -1192,11 +1247,11 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     ]
                 }
             ],
-            "max_tokens": 2500,
-            "temperature": 0.10,  # ✅ المزيج المثالي بين دقة 0.1 ومرونة 0.2
-            "top_p": 0.90,
-            "frequency_penalty": 0.05,
-            "presence_penalty": 0.05,
+            "max_tokens": 2000,
+            "temperature": 0.12,
+            "top_p": 0.95,
+            "frequency_penalty": 0.1,
+            "presence_penalty": 0.1
         }
         
         headers = {
@@ -1573,4 +1628,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
