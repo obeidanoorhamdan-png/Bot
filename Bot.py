@@ -15,15 +15,15 @@ from flask import Flask
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
 
-# ⚡ إعدادات Azure OpenAI GPT-4o API
-GITHUB_TOKEN = "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"
-GITHUB_URL = "https://models.inference.ai.azure.com/chat/completions"
-GITHUB_MODEL = "gpt-4o"
+# ⚡ إعدادات SambaNova API
+SAMBA_KEY = os.environ.get('SAMBA_KEY', "4a1034e0-bee8-41ef-8fb7-fb195fb5da72")
+SAMBA_URL = "https://api.sambanova.ai/v1/chat/completions"
+SAMBA_MODEL = "Llama-4-Maverick-17B-128E-Instruct"
 
-# استخدم إعدادات Azure OpenAI بدلاً من SambaNova
-SAMBA_KEY = GITHUB_TOKEN
-SAMBA_URL = GITHUB_URL
-SAMBA_MODEL = GITHUB_MODEL
+# استخدم إعدادات SambaNova بدلاً من Groq
+GROQ_KEY = SAMBA_KEY
+GROQ_URL = SAMBA_URL
+GROQ_MODEL = SAMBA_MODEL
 
 DB_NAME = "abood-gpt.db"
 
@@ -79,14 +79,14 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>AI Provider: Obeida Trading Systems (Azure OpenAI GPT-4o)</p>
+        <p>pro Provider: Obeida Trading Systems</p>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "ai_provider": "Azure OpenAI GPT-4o", "timestamp": time.time()}
+    return {"status": "active", "ai_provider": "SambaNova", "timestamp": time.time()}
 
 @app.route('/ping')
 def ping():
@@ -246,10 +246,10 @@ def split_message(text, max_length=4000):
     return parts
 
 # --- وظائف نظام التوصية الجديد ---
-def get_gpt4o_analysis(symbol):
-    """الحصول على تحليل من Azure OpenAI GPT-4o API للعملة"""
+def get_sambanova_analysis(symbol):
+    """الحصول على تحليل من SambaNova API للعملة"""
     headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Authorization": f"Bearer {SAMBA_KEY}",
         "Content-Type": "application/json"
     }
     
@@ -283,18 +283,18 @@ def get_gpt4o_analysis(symbol):
     """
     
     body = {
-        "model": GITHUB_MODEL,
+        "model": SAMBA_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens": 1500
     }
 
     try:
-        response = requests.post(GITHUB_URL, json=body, headers=headers, timeout=30)
+        response = requests.post(SAMBA_URL, json=body, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
-        print(f"Error in get_gpt4o_analysis: {e}")
+        print(f"Error in get_sambanova_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -343,7 +343,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     # إذا وجدت العملة، ابدأ التحليل
     if symbol_to_analyze:
         wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
-        analysis = get_gpt4o_analysis(symbol_to_analyze)
+        analysis = get_sambanova_analysis(symbol_to_analyze)
         
         final_msg = (
             f"📈 **نتائج توصية {symbol_to_analyze}**\n"
@@ -556,9 +556,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     wait_msg = await update.message.reply_text("Obeida Trading 🤔...")
     
     try:
-        # استدعاء واجهة Azure OpenAI GPT-4o
+        # استدعاء واجهة SambaNova
         payload = {
-            "model": GITHUB_MODEL,
+            "model": SAMBA_MODEL,
             "messages": [
                 {"role": "system", "content": selected_prompt},
                 {"role": "user", "content": user_message}
@@ -568,11 +568,11 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         }
         
         headers = {
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Authorization": f"Bearer {SAMBA_KEY}",
             "Content-Type": "application/json"
         }
         
-        response = requests.post(GITHUB_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(SAMBA_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
@@ -942,7 +942,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 """
         
         payload = {
-            "model": GITHUB_MODEL,
+            "model": SAMBA_MODEL,
             "messages": [
                 {
                     "role": "user", 
@@ -965,11 +965,11 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         }
         
         headers = {
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Authorization": f"Bearer {SAMBA_KEY}",
             "Content-Type": "application/json"
         }
         
-        response = requests.post(GITHUB_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(SAMBA_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content'].strip()
@@ -1267,10 +1267,10 @@ def run_flask_server():
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
-    print(f"⚡ AI Provider: Azure OpenAI GPT-4o")
-    print(f"🔑 API Key: {GITHUB_TOKEN[:8]}...{GITHUB_TOKEN[-8:] if len(GITHUB_TOKEN) > 16 else ''}")
-    print(f"🌐 API URL: {GITHUB_URL}")
-    print(f"🤖 Model: {GITHUB_MODEL}")
+    print(f"⚡ AI Provider: Obeida Trading Systems")
+    print(f"🔑 API Key: {SAMBA_KEY[:8]}...{SAMBA_KEY[-8:] if len(SAMBA_KEY) > 16 else ''}")
+    print(f"🌐 API URL: {SAMBA_URL}")
+    print(f"🤖 Model: {SAMBA_MODEL}")
     
     # تهيئة قاعدة البيانات
     init_db()
@@ -1339,3 +1339,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
