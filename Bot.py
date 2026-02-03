@@ -955,8 +955,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 }
             ],
             "max_tokens": 2000,
-            "temperature": 0.0,
-            "top_p": 1,
+            "temperature": 0.15,
+            "top_p": 0.95,
             "random_seed": 42,
         }
         
@@ -1263,6 +1263,7 @@ def run_flask_server():
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
+    print(f"⚡ Powered by - Obeida Trading")
     print(f"🤖 Model: {MISTRAL_MODEL}")
     
     # تهيئة قاعدة البيانات
@@ -1317,7 +1318,7 @@ def run_telegram_bot():
 
 def main():
     """الدالة الرئيسية"""
-    print("🚀 Starting Obeida Trading ...")
+    print("🤖 Starting Powered by - Obeida Trading ...")
     print("=" * 60)
     
     # تشغيل Flask في thread منفصل
