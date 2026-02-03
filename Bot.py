@@ -15,10 +15,10 @@ from flask import Flask
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
 
-# ⚡ إعدادات SambaNova API
-SAMBA_KEY = os.environ.get('SAMBA_KEY', "4a1034e0-bee8-41ef-8fb7-fb195fb5da72")
-SAMBA_URL = "https://api.sambanova.ai/v1/chat/completions"
-SAMBA_MODEL = "Llama-4-Maverick-17B-128E-Instruct"
+# ⚡ إعدادات OpenRouter API الجديدة
+OPENROUTER_KEY = os.environ.get('OPENROUTER_KEY', "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")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODEL = "google/gemma-3-27b-it:free"
 
 DB_NAME = "abood-gpt.db"
 
@@ -74,14 +74,14 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>pro Provider: Obeida Trading Systems</p>
+        <p>AI Provider: OpenRouter (Google Gemma 3)</p>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "ai_provider": "SambaNova", "timestamp": time.time()}
+    return {"status": "active", "ai_provider": "OpenRouter", "model": OPENROUTER_MODEL, "timestamp": time.time()}
 
 @app.route('/ping')
 def ping():
@@ -241,10 +241,10 @@ def split_message(text, max_length=4000):
     return parts
 
 # --- وظائف نظام التوصية الجديد ---
-def get_sambanova_analysis(symbol):
-    """الحصول على تحليل من SambaNova API للعملة"""
+def get_openrouter_analysis(symbol):
+    """الحصول على تحليل من OpenRouter API للعملة"""
     headers = {
-        "Authorization": f"Bearer {SAMBA_KEY}",
+        "Authorization": f"Bearer {OPENROUTER_KEY}",
         "Content-Type": "application/json"
     }
     
@@ -278,18 +278,18 @@ def get_sambanova_analysis(symbol):
     """
     
     body = {
-        "model": SAMBA_MODEL,
+        "model": OPENROUTER_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens": 1500
     }
 
     try:
-        response = requests.post(SAMBA_URL, json=body, headers=headers, timeout=30)
+        response = requests.post(OPENROUTER_URL, json=body, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
-        print(f"Error in get_sambanova_analysis: {e}")
+        print(f"Error in get_openrouter_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -338,7 +338,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     # إذا وجدت العملة، ابدأ التحليل
     if symbol_to_analyze:
         wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
-        analysis = get_sambanova_analysis(symbol_to_analyze)
+        analysis = get_openrouter_analysis(symbol_to_analyze)
         
         final_msg = (
             f"📈 **نتائج توصية {symbol_to_analyze}**\n"
@@ -551,9 +551,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     wait_msg = await update.message.reply_text("Obeida Trading 🤔...")
     
     try:
-        # استدعاء واجهة SambaNova
+        # استدعاء واجهة OpenRouter
         payload = {
-            "model": SAMBA_MODEL,
+            "model": OPENROUTER_MODEL,
             "messages": [
                 {"role": "system", "content": selected_prompt},
                 {"role": "user", "content": user_message}
@@ -563,11 +563,13 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         }
         
         headers = {
-            "Authorization": f"Bearer {SAMBA_KEY}",
-            "Content-Type": "application/json"
+            "Authorization": f"Bearer {OPENROUTER_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://telegram.org",
+            "X-Title": "Obeida Trading Bot"
         }
         
-        response = requests.post(SAMBA_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
@@ -576,7 +578,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             result = clean_repeated_text(result)
             
             # إضافة تذييل مميز
-            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - Obeida Trading 🤖"
+            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - Powered by OpenRouter 🤖"
             result = result + footer
             
             # أزرار الدردشة المتقدمة
@@ -937,7 +939,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 """
         
         payload = {
-            "model": SAMBA_MODEL,
+            "model": OPENROUTER_MODEL,
             "messages": [
                 {
                     "role": "user", 
@@ -960,11 +962,13 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         }
         
         headers = {
-            "Authorization": f"Bearer {SAMBA_KEY}",
-            "Content-Type": "application/json"
+            "Authorization": f"Bearer {OPENROUTER_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://telegram.org",
+            "X-Title": "Obeida Trading Bot"
         }
         
-        response = requests.post(SAMBA_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content'].strip()
@@ -995,7 +999,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 f"• سرعة الشموع: {candle}\n"
                 f"• {time_display}\n\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"🤖 **Obeida Trading - Obeida Trading**"
+                f"🤖 **Obeida Trading - Powered by OpenRouter**"
             )
             
             # تنظيف النهائي من التكرارات
@@ -1262,10 +1266,10 @@ def run_flask_server():
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
-    print(f"⚡ AI Provider: Obeida Trading Systems")
-    print(f"🔑 API Key: {SAMBA_KEY[:8]}...{SAMBA_KEY[-8:] if len(SAMBA_KEY) > 16 else ''}")
-    print(f"🌐 API URL: {SAMBA_URL}")
-    print(f"🤖 Model: {SAMBA_MODEL}")
+    print(f"⚡ AI Provider: OpenRouter")
+    print(f"🔑 API Key: {OPENROUTER_KEY[:8]}...{OPENROUTER_KEY[-8:] if len(OPENROUTER_KEY) > 16 else ''}")
+    print(f"🌐 API URL: {OPENROUTER_URL}")
+    print(f"🤖 Model: {OPENROUTER_MODEL}")
     
     # تهيئة قاعدة البيانات
     init_db()
