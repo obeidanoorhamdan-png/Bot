@@ -15,15 +15,10 @@ from flask import Flask
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
 
-# ⚡ إعدادات Google Gemini API
-API_KEY = "AIzaSyBPqtClmT6pRz0mnWOPo7JyVJ9oXgQFLNE"
-MODEL_NAME = "gemini-3-flash-preview"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={API_KEY}"
-
-# استخدام إعدادات Gemini بدلاً من SambaNova
-AI_KEY = API_KEY
-AI_URL = GEMINI_URL
-AI_MODEL = MODEL_NAME
+# ⚡ إعدادات SambaNova API
+SAMBA_KEY = os.environ.get('SAMBA_KEY', "4a1034e0-bee8-41ef-8fb7-fb195fb5da72")
+SAMBA_URL = "https://api.sambanova.ai/v1/chat/completions"
+SAMBA_MODEL = "Llama-4-Maverick-17B-128E-Instruct"
 
 DB_NAME = "abood-gpt.db"
 
@@ -79,14 +74,14 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>AI Provider: Google Gemini API</p>
+        <p>pro Provider: Obeida Trading Systems</p>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "ai_provider": "Google Gemini", "timestamp": time.time()}
+    return {"status": "active", "ai_provider": "SambaNova", "timestamp": time.time()}
 
 @app.route('/ping')
 def ping():
@@ -246,9 +241,10 @@ def split_message(text, max_length=4000):
     return parts
 
 # --- وظائف نظام التوصية الجديد ---
-def get_gemini_analysis(symbol):
-    """الحصول على تحليل من Google Gemini API للعملة"""
+def get_sambanova_analysis(symbol):
+    """الحصول على تحليل من SambaNova API للعملة"""
     headers = {
+        "Authorization": f"Bearer {SAMBA_KEY}",
         "Content-Type": "application/json"
     }
     
@@ -282,31 +278,18 @@ def get_gemini_analysis(symbol):
     """
     
     body = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }],
-        "generationConfig": {
-            "temperature": 0.1,
-            "maxOutputTokens": 1500
-        }
+        "model": SAMBA_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 1500
     }
 
     try:
-        response = requests.post(AI_URL, json=body, headers=headers, timeout=30)
+        response = requests.post(SAMBA_URL, json=body, headers=headers, timeout=30)
         response.raise_for_status()
-        result = response.json()
-        
-        # استخراج النص من استجابة Gemini API
-        if 'candidates' in result and len(result['candidates']) > 0:
-            if 'content' in result['candidates'][0] and 'parts' in result['candidates'][0]['content']:
-                text_parts = result['candidates'][0]['content']['parts']
-                if text_parts and len(text_parts) > 0 and 'text' in text_parts[0]:
-                    return text_parts[0]['text'].strip()
-        
-        # إذا لم نجد النص بالطريقة العادية
-        return str(result).strip()[:1000] + "..."
+        return response.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
-        print(f"Error in get_gemini_analysis: {e}")
+        print(f"Error in get_sambanova_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -355,7 +338,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     # إذا وجدت العملة، ابدأ التحليل
     if symbol_to_analyze:
         wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
-        analysis = get_gemini_analysis(symbol_to_analyze)
+        analysis = get_sambanova_analysis(symbol_to_analyze)
         
         final_msg = (
             f"📈 **نتائج توصية {symbol_to_analyze}**\n"
@@ -568,40 +551,26 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     wait_msg = await update.message.reply_text("Obeida Trading 🤔...")
     
     try:
-        # استدعاء واجهة Gemini API
+        # استدعاء واجهة SambaNova
         payload = {
-            "contents": [{
-                "parts": [
-                    {"text": selected_prompt + "\n\n" + user_message}
-                ]
-            }],
-            "generationConfig": {
-                "maxOutputTokens": 1200,
-                "temperature": 0.7
-            }
+            "model": SAMBA_MODEL,
+            "messages": [
+                {"role": "system", "content": selected_prompt},
+                {"role": "user", "content": user_message}
+            ],
+            "max_tokens": 1200,
+            "temperature": 0.7
         }
         
         headers = {
+            "Authorization": f"Bearer {SAMBA_KEY}",
             "Content-Type": "application/json"
         }
         
-        response = requests.post(AI_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(SAMBA_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
-            result_data = response.json()
-            
-            # استخراج النص من استجابة Gemini API
-            if 'candidates' in result_data and len(result_data['candidates']) > 0:
-                if 'content' in result_data['candidates'][0] and 'parts' in result_data['candidates'][0]['content']:
-                    text_parts = result_data['candidates'][0]['content']['parts']
-                    if text_parts and len(text_parts) > 0 and 'text' in text_parts[0]:
-                        result = text_parts[0]['text'].strip()
-                    else:
-                        result = "⚠️ لم أتمكن من استخراج الرد بشكل صحيح."
-                else:
-                    result = "⚠️ استجابة API غير متوقعة."
-            else:
-                result = "⚠️ لم أتلق استجابة من الذكاء الاصطناعي."
+            result = response.json()['choices'][0]['message']['content']
             
             # تنظيف النص من التكرارات
             result = clean_repeated_text(result)
@@ -968,45 +937,37 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 """
         
         payload = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": "image/jpeg",
-                            "data": base64_img
+            "model": SAMBA_MODEL,
+            "messages": [
+                {
+                    "role": "user", 
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url", 
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_img}"
+                            }
                         }
-                    }
-                ]
-            }],
-            "generationConfig": {
-                "maxOutputTokens": 2500,
-                "temperature": 0.10,
-                "topP": 0.90
-            }
+                    ]
+                }
+            ],
+            "max_tokens": 2500,
+            "temperature": 0.10,
+            "top_p": 0.90,
+            "frequency_penalty": 0.05,
+            "presence_penalty": 0.05,
         }
         
         headers = {
+            "Authorization": f"Bearer {SAMBA_KEY}",
             "Content-Type": "application/json"
         }
         
-        response = requests.post(AI_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(SAMBA_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
-            result_data = response.json()
-            
-            # استخراج النص من استجابة Gemini API
-            if 'candidates' in result_data and len(result_data['candidates']) > 0:
-                if 'content' in result_data['candidates'][0] and 'parts' in result_data['candidates'][0]['content']:
-                    text_parts = result_data['candidates'][0]['content']['parts']
-                    if text_parts and len(text_parts) > 0 and 'text' in text_parts[0]:
-                        result = text_parts[0]['text'].strip()
-                    else:
-                        result = "⚠️ لم أتمكن من استخراج التحليل بشكل صحيح."
-                else:
-                    result = "⚠️ استجابة API غير متوقعة."
-            else:
-                result = "⚠️ لم أتلق استجابة من الذكاء الاصطناعي."
+            result = response.json()['choices'][0]['message']['content'].strip()
             
             # تنظيف النص من التكرار
             result = clean_repeated_text(result)
@@ -1301,10 +1262,10 @@ def run_flask_server():
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
-    print(f"⚡ AI Provider: Google Gemini API")
-    print(f"🔑 API Key: {API_KEY[:8]}...{API_KEY[-8:] if len(API_KEY) > 16 else ''}")
-    print(f"🌐 API URL: {AI_URL[:50]}...")
-    print(f"🤖 Model: {AI_MODEL}")
+    print(f"⚡ AI Provider: Obeida Trading Systems")
+    print(f"🔑 API Key: {SAMBA_KEY[:8]}...{SAMBA_KEY[-8:] if len(SAMBA_KEY) > 16 else ''}")
+    print(f"🌐 API URL: {SAMBA_URL}")
+    print(f"🤖 Model: {SAMBA_MODEL}")
     
     # تهيئة قاعدة البيانات
     init_db()
