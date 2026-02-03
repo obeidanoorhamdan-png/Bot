@@ -956,7 +956,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             ],
             "max_tokens": 2000,
             "temperature": 0.0,
-            "top_p": 0.01,
+            "top_p": 1,
             "random_seed": 42,
         }
         
