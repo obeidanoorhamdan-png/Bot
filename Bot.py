@@ -15,10 +15,10 @@ from flask import Flask
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
 
-# ⚡ إعدادات OpenRouter API الجديدة
-OPENROUTER_KEY = os.environ.get('OPENROUTER_KEY', "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")
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "google/gemma-3-27b-it:free"
+# ⚡ إعدادات Mistral AI API الجديدة
+MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "WhGHh0RvwtLLsRwlHYozaNrmZWkFK2f1")
+MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
+MISTRAL_MODEL = "pixtral-large-latest"
 
 DB_NAME = "abood-gpt.db"
 
@@ -74,14 +74,14 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>AI Provider: OpenRouter (Google Gemma 3)</p>
+        <p>AI Provider: Mistral AI (Pixtral Large)</p>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "ai_provider": "OpenRouter", "model": OPENROUTER_MODEL, "timestamp": time.time()}
+    return {"status": "active", "ai_provider": "Mistral AI", "model": MISTRAL_MODEL, "timestamp": time.time()}
 
 @app.route('/ping')
 def ping():
@@ -241,10 +241,10 @@ def split_message(text, max_length=4000):
     return parts
 
 # --- وظائف نظام التوصية الجديد ---
-def get_openrouter_analysis(symbol):
-    """الحصول على تحليل من OpenRouter API للعملة"""
+def get_mistral_analysis(symbol):
+    """الحصول على تحليل من Mistral AI API للعملة"""
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_KEY}",
+        "Authorization": f"Bearer {MISTRAL_KEY}",
         "Content-Type": "application/json"
     }
     
@@ -278,18 +278,18 @@ def get_openrouter_analysis(symbol):
     """
     
     body = {
-        "model": OPENROUTER_MODEL,
+        "model": MISTRAL_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens": 1500
     }
 
     try:
-        response = requests.post(OPENROUTER_URL, json=body, headers=headers, timeout=30)
+        response = requests.post(MISTRAL_URL, json=body, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
-        print(f"Error in get_openrouter_analysis: {e}")
+        print(f"Error in get_mistral_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -338,7 +338,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     # إذا وجدت العملة، ابدأ التحليل
     if symbol_to_analyze:
         wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
-        analysis = get_openrouter_analysis(symbol_to_analyze)
+        analysis = get_mistral_analysis(symbol_to_analyze)
         
         final_msg = (
             f"📈 **نتائج توصية {symbol_to_analyze}**\n"
@@ -551,9 +551,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     wait_msg = await update.message.reply_text("Obeida Trading 🤔...")
     
     try:
-        # استدعاء واجهة OpenRouter
+        # استدعاء واجهة Mistral AI
         payload = {
-            "model": OPENROUTER_MODEL,
+            "model": MISTRAL_MODEL,
             "messages": [
                 {"role": "system", "content": selected_prompt},
                 {"role": "user", "content": user_message}
@@ -563,13 +563,11 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         }
         
         headers = {
-            "Authorization": f"Bearer {OPENROUTER_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://telegram.org",
-            "X-Title": "Obeida Trading Bot"
+            "Authorization": f"Bearer {MISTRAL_KEY}",
+            "Content-Type": "application/json"
         }
         
-        response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
@@ -578,7 +576,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             result = clean_repeated_text(result)
             
             # إضافة تذييل مميز
-            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - Powered by OpenRouter 🤖"
+            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - Powered by Mistral AI 🤖"
             result = result + footer
             
             # أزرار الدردشة المتقدمة
@@ -938,8 +936,9 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه.
 """
         
+        # دعم Mistral AI للصور (تنسيق خاص)
         payload = {
-            "model": OPENROUTER_MODEL,
+            "model": MISTRAL_MODEL,
             "messages": [
                 {
                     "role": "user", 
@@ -948,7 +947,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                         {
                             "type": "image_url", 
                             "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_img}"
+                                "url": f"data:image/jpeg;base64,{base64_img}",
+                                "detail": "high"
                             }
                         }
                     ]
@@ -957,18 +957,14 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             "max_tokens": 2500,
             "temperature": 0.10,
             "top_p": 0.90,
-            "frequency_penalty": 0.05,
-            "presence_penalty": 0.05,
         }
         
         headers = {
-            "Authorization": f"Bearer {OPENROUTER_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://telegram.org",
-            "X-Title": "Obeida Trading Bot"
+            "Authorization": f"Bearer {MISTRAL_KEY}",
+            "Content-Type": "application/json"
         }
         
-        response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content'].strip()
@@ -999,7 +995,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 f"• سرعة الشموع: {candle}\n"
                 f"• {time_display}\n\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"🤖 **Obeida Trading - Powered by OpenRouter**"
+                f"🤖 **Obeida Trading - Powered by Mistral AI**"
             )
             
             # تنظيف النهائي من التكرارات
@@ -1032,7 +1028,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             print(f"Obeida Vision Error: {response.status_code} - {response.text}")
             keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
-            await wait_msg.edit_text(f"❌ **خطأ في إرسال الصورة:** {response.status_code}")
+            await wait_msg.edit_text(f"❌ **خطأ في إرسال الصورة:** {response.status_code}\n{response.text[:200] if response.text else ''}")
             
     except requests.exceptions.Timeout:
         await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
@@ -1266,10 +1262,10 @@ def run_flask_server():
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
-    print(f"⚡ AI Provider: OpenRouter")
-    print(f"🔑 API Key: {OPENROUTER_KEY[:8]}...{OPENROUTER_KEY[-8:] if len(OPENROUTER_KEY) > 16 else ''}")
-    print(f"🌐 API URL: {OPENROUTER_URL}")
-    print(f"🤖 Model: {OPENROUTER_MODEL}")
+    print(f"⚡ AI Provider: Mistral AI")
+    print(f"🔑 API Key: {MISTRAL_KEY[:8]}...{MISTRAL_KEY[-8:] if len(MISTRAL_KEY) > 16 else ''}")
+    print(f"🌐 API URL: {MISTRAL_URL}")
+    print(f"🤖 Model: {MISTRAL_MODEL}")
     
     # تهيئة قاعدة البيانات
     init_db()
@@ -1338,3 +1334,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
