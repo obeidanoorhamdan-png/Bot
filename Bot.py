@@ -345,7 +345,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
             f"━━━━━━━━━━━━━━━━━━\n"
             f"{analysis}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Obeida Trading - نظام التوصيات**"
+            f"🤖 **Powered by - Obeida Trading**"
         )
         
         # تنظيف النص من التكرارات
@@ -567,7 +567,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Content-Type": "application/json"
         }
         
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
@@ -576,7 +576,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             result = clean_repeated_text(result)
             
             # إضافة تذييل مميز
-            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - Powered by Mistral AI 🤖"
+            footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - Powered by Obeida Trading 🤖"
             result = result + footer
             
             # أزرار الدردشة المتقدمة
@@ -641,7 +641,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return MAIN_MENU
 
-    wait_msg = await update.message.reply_text("📊 **جاري تحليل الصورة بدقة متقدمة...**")
+    wait_msg = await update.message.reply_text("📊 جاري تحليل شارت بتقنيات متطورة ... ")
     photo = await update.message.photo[-1].get_file()
     path = f"img_{user_id}_{int(time.time())}.jpg"
     
@@ -954,9 +954,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     ]
                 }
             ],
-            "max_tokens": 2500,
-            "temperature": 0.10,
-            "top_p": 0.90,
+            "max_tokens": 2000,
+            "temperature": 0.0,
+            "top_p": 0.01,
+            "random_seed": 42,
         }
         
         headers = {
@@ -964,7 +965,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             "Content-Type": "application/json"
         }
         
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content'].strip()
@@ -995,7 +996,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 f"• سرعة الشموع: {candle}\n"
                 f"• {time_display}\n\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"🤖 **Obeida Trading - Powered by Mistral AI**"
+                f"🤖 ** Powered by - Obeida Trading **"
             )
             
             # تنظيف النهائي من التكرارات
@@ -1262,9 +1263,6 @@ def run_flask_server():
 def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
-    print(f"⚡ AI Provider: Mistral AI")
-    print(f"🔑 API Key: {MISTRAL_KEY[:8]}...{MISTRAL_KEY[-8:] if len(MISTRAL_KEY) > 16 else ''}")
-    print(f"🌐 API URL: {MISTRAL_URL}")
     print(f"🤖 Model: {MISTRAL_MODEL}")
     
     # تهيئة قاعدة البيانات
