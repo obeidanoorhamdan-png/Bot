@@ -19,6 +19,7 @@ TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U"
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "WhGHh0RvwtLLsRwlHYozaNrmZWkFK2f1")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "pixtral-large-latest"
+MISTRAL_MODEL_AUDIT = "mistral-large-pixtral-2411"  # موديل التدقيق
 
 DB_NAME = "abood-gpt.db"
 
@@ -74,14 +75,14 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>AI Provider: Mistral AI (Pixtral Large)</p>
+        <p>AI Provider: Mistral AI (Dual Model System)</p>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "ai_provider": "Mistral AI", "model": MISTRAL_MODEL, "timestamp": time.time()}
+    return {"status": "active", "ai_provider": "Mistral AI", "model": f"{MISTRAL_MODEL} + {MISTRAL_MODEL_AUDIT}", "timestamp": time.time()}
 
 @app.route('/ping')
 def ping():
@@ -625,9 +626,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-# --- كود تحليل الصور المحسن والمدمج الكامل ---
+# --- كود تحليل الصور المحسن والمدمج الكامل مع نظام الموديل المزدوج ---
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني المتقدم مع جميع التحسينات"""
+    """معالجة الصور للتحليل الفني المتقدم مع نظام الموديل المزدوج"""
     user_id = update.effective_user.id
     candle, trade_time = get_user_setting(user_id)
     
@@ -936,107 +937,169 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه.
 """
         
-        # دعم Mistral AI للصور (تنسيق خاص)
-        payload = {
+        headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
+        
+        # --- الخطوة 1: التحليل الأولي بواسطة الموديل الأساسي (Latest) ---
+        await wait_msg.edit_text("📊 جاري تحليل الشارت (المرحلة 1/2)...")
+        
+        payload_1 = {
             "model": MISTRAL_MODEL,
             "messages": [
                 {
                     "role": "user", 
                     "content": [
                         {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url", 
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_img}",
-                                "detail": "high"
-                            }
-                        }
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
                     ]
                 }
             ],
-            "max_tokens": 2000,
             "temperature": 0.15,
-            "top_p": 0.95,
-            "random_seed": 42,
+            "top_p": 0.01,
+            "max_tokens": 2500
         }
         
-        headers = {
-            "Authorization": f"Bearer {MISTRAL_KEY}",
-            "Content-Type": "application/json"
+        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
+        
+        if response_1.status_code != 200:
+            print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
+            raise Exception(f"خطأ في الموديل الأول: {response_1.status_code}")
+        
+        initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
+        
+        # --- الخطوة 2: الدمج والتدقيق بواسطة الموديل الثاني (2411) ---
+        await wait_msg.edit_text("📊 جاري تدقيق التحليل (المرحلة 2/2)...")
+        
+        prompt_audit = f"""
+أنت المدقق النهائي في مؤسسة Obeida Trading. 
+إليك التحليل المقترح: {initial_analysis}
+
+**مهمتك:** راجع هذا التحليل بناءً على الشارت المرفق، تأكد من دقة الأرقام (Entry, SL, TP)، 
+وصحح أي أخطاء بصرية، ثم أخرج التقرير النهائي الأسطوري بالتنسيق المطلوب حرفياً.
+
+**قواعد التدقيق الصارمة:**
+1. **دقة الأرقام:** تأكد من مطابقة الأسعار المذكورة مع ما هو ظاهر في الشارت
+2. **سلامة المنطق:** تحقق من عدم وجود تناقضات في التحليل
+3. **التنسيق:** الالتزام الكامل بالتنسيق المطلوب
+4. **تحسين الصياغة:** جعل اللغة أكثر احترافية ووضوحاً
+5. **إضافة الفوائد:** أضف أي رؤى إضافية مفيدة لم تذكر في التحليل الأول
+
+**التنسيق المطلوب (يجب الالتزام به حرفياً):**
+
+📊 **التحليل الفني المتقدم:**
+• **البصمة الزمنية:** {kill_zone_status}
+• **حالة الهيكل:** (صاعد/هابط) + (مرحلة وايكوف الحالية) + (توافق 4/4 إطارات: نعم/لا)
+• **خريطة السيولة:** (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
+• **الفجوات السعرية:** (المناطق التي سيعود السعر لتغطيتها)
+
+🎯 **الإشارة التنفيذية:**
+• **السعر الحالي:** [السعر الدقيق من الشارت]
+• **حالة الشمعة:** [مفتوحة / مغلقة]
+• **القرار الفني:** (شراء 🟢 / بيع 🔴 / احتفاظ 🟡)
+• **قوة الإشارة:** (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
+• **نقطة الدخول:** [السعر الدقيق بناءً على OB + شرط الإغلاق]
+• **الأهداف الربحية:**
+  🎯 **TP1:** [سحب أول سيولة داخلية], [احتمالية الوصول]
+  🎯 **TP2:** [الهدف الرئيسي - منطقة عرض/طلب قوية]
+  🎯 **TP3:** [سيولة خارجية أو سد فجوة سعرية]
+• **وقف الخسارة:** [السعر مع 3 طبقات حماية]
+• **المدة المتوقعة:** [عدد الدقائق] (بناءً على معادلة الزخم السعري)
+• **وقت الذروة المتوقع:** [مثلاً: خلال الـ 3 شموع القادمة]
+• **الحالة النفسية:** [خوف 🥺 / جشع 🤑 / تردد 🤌 / استسلام 👎]
+• **علامات التلاعب:** [موجودة ✔️ / غير موجودة ❎]
+
+⚠️ **إدارة المخاطر:**
+• **مستوى الثقة:** [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
+• **نقطة الإلغاء:** [السعر الذي يفسد التحليل]
+
+**ملاحظة:** استخدم الصورة المرفقة للتحقق من جميع الأرقام والمستويات المذكورة.
+"""
+        
+        payload_2 = {
+            "model": MISTRAL_MODEL_AUDIT,
+            "messages": [
+                {
+                    "role": "user", 
+                    "content": [
+                        {"type": "text", "text": prompt_audit},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
+                    ]
+                }
+            ],
+            "temperature": 0.0,
+            "top_p": 0.01,
+            "max_tokens": 3000
         }
         
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
+        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
         
-        if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content'].strip()
-            
-            # تنظيف النص من التكرار
-            result = clean_repeated_text(result)
-            
-            # إزالة أي تكرار محتمل
-            if "### تحليل الشارت المرفق" in result:
-                parts = result.split("### تحليل الشارت المرفق")
-                if len(parts) > 1:
-                    result = parts[1].strip()
-            
-            if "نتائج الفحص الفني:" in result:
-                result = result.replace("نتائج الفحص الفني:", "📊 **التحليل الفني:**").strip()
-            
-            keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
-            
-            # تنسيق وقت الصفقة للعرض
-            time_display = format_trade_time_for_prompt(trade_time)
-            
-            # إعداد النص النهائي بدون تكرار
-            full_result = (
-                f"✅ **تم التحليل بنجاح!**\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"{result}\n\n"
-                f"📊 **الإعدادات المستخدمة:**\n"
-                f"• سرعة الشموع: {candle}\n"
-                f"• {time_display}\n\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"🤖 ** Powered by - Obeida Trading **"
-            )
-            
-            # تنظيف النهائي من التكرارات
-            full_result = clean_repeated_text(full_result)
-            
-            # تقسيم النتيجة إذا كانت طويلة
-            if len(full_result) > 4000:
-                parts = split_message(full_result, max_length=4000)
-                
-                # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
-                await wait_msg.edit_text(
-                    parts[0],
-                    parse_mode="Markdown"
-                )
-                
-                # إرسال الأجزاء المتبقية
-                for part in parts[1:]:
-                    await update.message.reply_text(part, parse_mode="Markdown")
-            else:
-                await wait_msg.edit_text(
-                    full_result,
-                    parse_mode="Markdown"
-                )
-            
-            # إرسال الأزرار
-            await update.message.reply_text(
-                "📊 **اختر الإجراء التالي:**",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-            )
+        if response_2.status_code == 200:
+            result = response_2.json()['choices'][0]['message']['content'].strip()
         else:
-            print(f"Obeida Vision Error: {response.status_code} - {response.text}")
-            keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
-            await wait_msg.edit_text(f"❌ **خطأ في إرسال الصورة:** {response.status_code}\n{response.text[:200] if response.text else ''}")
+            print(f"Obeida Vision Warning (Model 2): {response_2.status_code} - استخدام التحليل الأول")
+            result = initial_analysis
+        
+        # تنظيف النص من التكرار
+        result = clean_repeated_text(result)
+        
+        if "### تحليل الشارت المرفق" in result:
+            parts = result.split("### تحليل الشارت المرفق")
+            if len(parts) > 1:
+                result = parts[1].strip()
+        
+        if "نتائج الفحص الفني:" in result:
+            result = result.replace("نتائج الفحص الفني:", "📊 **التحليل الفني:**").strip()
+        
+        keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+        
+        # تنسيق وقت الصفقة للعرض
+        time_display = format_trade_time_for_prompt(trade_time)
+        
+        # إعداد النص النهائي بدون تكرار
+        full_result = (
+            f"✅ **تم التحليل بنجاح!**\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"{result}\n\n"
+            f"📊 **الإعدادات المستخدمة:**\n"
+            f"• سرعة الشموع: {candle}\n"
+            f"• {time_display}\n\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"🤖 ** Powered by - Obeida Trading **"
+        )
+        
+        # تنظيف النهائي من التكرارات
+        full_result = clean_repeated_text(full_result)
+        
+        # تقسيم النتيجة إذا كانت طويلة
+        if len(full_result) > 4000:
+            parts = split_message(full_result, max_length=4000)
             
+            # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
+            await wait_msg.edit_text(
+                parts[0],
+                parse_mode="Markdown"
+            )
+            
+            # إرسال الأجزاء المتبقية
+            for part in parts[1:]:
+                await update.message.reply_text(part, parse_mode="Markdown")
+        else:
+            await wait_msg.edit_text(
+                full_result,
+                parse_mode="Markdown"
+            )
+        
+        # إرسال الأزرار
+        await update.message.reply_text(
+            "📊 **اختر الإجراء التالي:**",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        
     except requests.exceptions.Timeout:
         await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
     except Exception as e:
         print(f"خطأ في تحليل الصورة: {e}")
         keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text("❌ **حدث خطأ في إرسال الصورة.**\nيرجى التأكد من وضوح الصورة والمحاولة مرة أخرى.")
+        await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -1054,10 +1117,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🚀 **أهلاً بك في Obeida Trading **\n\n"
         "🤖 **المميزات الجديدة:**\n"
-        "• تحليل فني متقدم للشارتات\n"
+        "• تحليل فني متقدم للشارتات (نظام موديل مزدوج)\n"
         "• 🆕 دردشة \n"
         "• 📈 نظام توصيات جاهزة\n"
         "• إعدادات تخصيص كاملة\n"
+        "• تحليل دقيق بالأرقام\n\n"
+        "📡 **نظام الموديل المزدوج:**\n"
+        f"1. {MISTRAL_MODEL} - التحليل الأولي\n"
+        f"2. {MISTRAL_MODEL_AUDIT} - التدقيق النهائي\n\n"
         "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -1102,6 +1169,9 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"الإعدادات الحالية:\n"
                 f"• سرعة الشموع: {candle}\n"
                 f"• {time_display}\n\n"
+                f"📡 **نظام التحليل:** موديل مزدوج\n"
+                f"1. التحليل الأولي\n"
+                f"2. التدقيق النهائي\n\n"
                 f"أرسل صورة الرسم البياني (الشارت) الآن:",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
                 parse_mode="Markdown"
@@ -1180,6 +1250,7 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
             f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
             f"✅ سرعة الشموع: {candle}\n"
             f"✅ مدة الصفقة: {user_message}\n\n"
+            f"📡 **نظام التحليل:** موديل مزدوج\n"
             f"يمكنك الآن تحليل صورة أو الدردشة:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
@@ -1214,7 +1285,7 @@ async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEF
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر المساعدة"""
-    help_text = """
+    help_text = f"""
     🤖 **أوامر البوت:**
     
     /start - بدء البوت والعودة للقائمة الرئيسية
@@ -1237,8 +1308,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة
     • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
     
+    📡 **نظام الموديل المزدوج للتحليل:**
+    • **المرحلة 1:** {MISTRAL_MODEL} - التحليل الأولي
+    • **المرحلة 2:** {MISTRAL_MODEL_AUDIT} - التدقيق النهائي والدقة
+    
     📊 **مميزات البوت:**
-    • تحليل فني للرسوم البيانية
+    • تحليل فني للرسوم البيانية (نظام موديل مزدوج)
     • دردشة ذكية مع الذكاء الاصطناعي
     • نظام توصيات العملات
     • حفظ إعداداتك الشخصية
@@ -1264,7 +1339,7 @@ def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
     print(f"⚡ Powered by - Obeida Trading")
-    print(f"🤖 Model: {MISTRAL_MODEL}")
+    print(f"📡 Dual Model System: {MISTRAL_MODEL} + {MISTRAL_MODEL_AUDIT}")
     
     # تهيئة قاعدة البيانات
     init_db()
@@ -1333,4 +1408,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
