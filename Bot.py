@@ -75,7 +75,7 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>AI Provider: Mistral AI (Dual Model System)</p>
+        <p>Obeida Trading - (Dual Model System)</p>
     </body>
     </html>
     """
@@ -940,7 +940,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         # --- الخطوة 1: التحليل الأولي بواسطة الموديل الأساسي (Latest) ---
-        await wait_msg.edit_text("📊 جاري تحليل الشارت (المرحلة 1/2)...")
+        await wait_msg.edit_text("📊 جاري تحليل (المرحلة 1/2)...")
         
         payload_1 = {
             "model": MISTRAL_MODEL,
@@ -953,21 +953,22 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     ]
                 }
             ],
-            "temperature": 0.15,
-            "top_p": 0.01,
-            "max_tokens": 2500
+            "max_tokens": 1800,
+            "temperature": 0.0,
+            "top_p": 0.95,
+            "random_seed": 42,
         }
         
         response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
         
         if response_1.status_code != 200:
             print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
-            raise Exception(f"خطأ في الموديل الأول: {response_1.status_code}")
+            raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
         
         initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
         
         # --- الخطوة 2: الدمج والتدقيق بواسطة الموديل الثاني (2411) ---
-        await wait_msg.edit_text("📊 جاري تدقيق التحليل (المرحلة 2/2)...")
+        await wait_msg.edit_text("📊 جاري التحليل (المرحلة 2/2)...")
         
         prompt_audit = f"""
 أنت المدقق النهائي في مؤسسة Obeida Trading. 
@@ -1025,9 +1026,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     ]
                 }
             ],
+            "max_tokens": 1800,
             "temperature": 0.0,
-            "top_p": 0.01,
-            "max_tokens": 3000
+            "top_p": 0.95,
+            "random_seed": 42,
         }
         
         response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
@@ -1117,14 +1119,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🚀 **أهلاً بك في Obeida Trading **\n\n"
         "🤖 **المميزات الجديدة:**\n"
-        "• تحليل فني متقدم للشارتات (نظام موديل مزدوج)\n"
+        "• تحليل فني متقدم للشارتات \n"
         "• 🆕 دردشة \n"
         "• 📈 نظام توصيات جاهزة\n"
         "• إعدادات تخصيص كاملة\n"
         "• تحليل دقيق بالأرقام\n\n"
-        "📡 **نظام الموديل المزدوج:**\n"
-        f"1. {MISTRAL_MODEL} - التحليل الأولي\n"
-        f"2. {MISTRAL_MODEL_AUDIT} - التدقيق النهائي\n\n"
+        "📡 **نظام التحليل المزدوج:**\n"
+        f"1. التحليل الأولي\n"
+        f"2. التدقيق النهائي\n\n"
         "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -1308,13 +1310,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة
     • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
     
-    📡 **نظام الموديل المزدوج للتحليل:**
-    • **المرحلة 1:** {MISTRAL_MODEL} - التحليل الأولي
-    • **المرحلة 2:** {MISTRAL_MODEL_AUDIT} - التدقيق النهائي والدقة
+    📡 **نظام المزدوج للتحليل:**
+    • **المرحلة 1:** التحليل الأولي
+    • **المرحلة 2:** التدقيق النهائي والدقة
     
     📊 **مميزات البوت:**
-    • تحليل فني للرسوم البيانية (نظام موديل مزدوج)
-    • دردشة ذكية مع الذكاء الاصطناعي
+    • تحليل فني للرسوم البيانية 
+    • دردشة ذكية 
     • نظام توصيات العملات
     • حفظ إعداداتك الشخصية
     • واجهة سهلة بالأزرار
@@ -1339,7 +1341,6 @@ def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
     print(f"⚡ Powered by - Obeida Trading")
-    print(f"📡 Dual Model System: {MISTRAL_MODEL} + {MISTRAL_MODEL_AUDIT}")
     
     # تهيئة قاعدة البيانات
     init_db()
