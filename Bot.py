@@ -1058,7 +1058,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 return model_name, f"Exception: {str(e)}", "error"
         
         # تشغيل النماذج الثلاثة في نفس الوقت
-        await wait_msg.edit_text("📊 جاري التحليل (النظام الثلاثي 2/3)... ⚡⚡")
+        await wait_msg.edit_text("📊 جاري التحليل مرحلة  2/3 ...")
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = [executor.submit(send_request, name, payloads[name]) for name in payloads]
@@ -1076,7 +1076,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 print(f"❌ Model {model_name} failed: {content}")
         
         # --- الخطوة 2: الدمج الذكي للنتائج الثلاثة ---
-        await wait_msg.edit_text("📊 جاري الدمج والتدقيق (النظام الثلاثي 3/3)... ⚡⚡⚡")
+        await wait_msg.edit_text("📊 جاري الدمج والتدقيق 3/3 ... ")
         
         # استخراج البيانات من موديل OCR
         ocr_data = analyses.get("mistral_ocr", "")
@@ -1084,10 +1084,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         # دمج التحليلين الرئيسيين
         main_analyses = []
         if "pixtral_large" in analyses:
-            main_analyses.append(f"📈 **تحليل Pixtral Large (الهيكل):**\n{analyses['pixtral_large']}\n")
+            main_analyses.append(f"📈 **تحليل (الهيكل):**\n{analyses['pixtral_large']}\n")
         
         if "mistral_pixtral" in analyses:
-            main_analyses.append(f"📊 **تحليل Mistral Pixtral (التدقيق):**\n{analyses['mistral_pixtral']}\n")
+            main_analyses.append(f"📊 **تحليل (التدقيق):**\n{analyses['mistral_pixtral']}\n")
         
         # برومبت الدمج النهائي
         merge_prompt = f"""
@@ -1116,7 +1116,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
 🎯 **التنسيق النهائي المطلوب (الالتزام الحرفي):**
 
-📊 **التحليل الفني المتقدم (النظام الثلاثي):**
+📊 **التحليل الفني المتقدم :**
 • **البصمة الزمنية:** {kill_zone_status}
 • **حالة الهيكل:** (صاعد/هابط) + (مرحلة وايكوف الحالية) + (توافق 4/4 إطارات: نعم/لا)
 • **خريطة السيولة:** (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
@@ -1143,12 +1143,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 • **مستوى الثقة (المجمعة):** [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
 • **نقطة الإلغاء (النهائية):** [السعر الذي يفسد التحليل]
 
-🏆 **مزايا النظام الثلاثي:**
-• ✓ دقة بيانات عالية من OCR
-• ✓ تحليل هيكلي متقدم من Pixtral
-• ✓ تدقيق احترافي من Mistral Pixtral
-• ✓ قرار متوازن وآمن
-
 الآن قم بدمج التحليلات الثلاثة وإخراج التقرير النهائي بالتنسيق المطلوب أعلاه.
 """
         
@@ -1158,9 +1152,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             "messages": [
                 {"role": "user", "content": merge_prompt}
             ],
-            "max_tokens": 1500,
-            "temperature": 0.1,
+            "max_tokens": 1300,
+            "temperature": 0.10,
             "top_p": 0.95,
+            "random_seed": 42,
         }
         
         merge_response = requests.post(MISTRAL_URL, headers=headers, json=merge_payload, timeout=40)
@@ -1175,7 +1170,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 best_key = max(analyses.keys(), key=lambda k: len(analyses.get(k, '')))
                 final_result = analyses[best_key]
             else:
-                final_result = "❌ فشل جميع نماذج التحليل. يرجى المحاولة مرة أخرى."
+                final_result = "❌ فشل التحليل. يرجى المحاولة مرة أخرى."
         
         # تنظيف النص من التكرار
         final_result = clean_repeated_text(final_result)
@@ -1192,19 +1187,14 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # إعداد النص النهائي
         full_result = (
-            f"✅ **تم التحليل بنجاح بالنظام الثلاثي!** ⚡⚡⚡\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🎯 **النماذج المستخدمة:**\n"
-            f"• 📊 Pixtral Large (الهيكل المتقدم)\n"
-            f"• 🔍 Mistral Pixtral (التدقيق الاحترافي)\n"
-            f"• 📈 Mistral OCR (قراءة البيانات الدقيقة)\n\n"
-            f"📊 **النتيجة المدمجة:**\n"
+            f"✅ **تم التحليل بنجاح بالنظام الاحترافي !** ⚡⚡⚡\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{final_result}\n\n"
             f"📋 **الإعدادات المستخدمة:**\n"
             f"• سرعة الشموع: {candle}\n"
             f"• {time_display}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🤖 ** Powered by Obeida Trading - النظام الثلاثي المتقدم **"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🤖 ** -- Powered by - Obeida Trading -- **"
         )
         
         # تنظيف النهائي من التكرارات
@@ -1238,7 +1228,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     except requests.exceptions.Timeout:
         await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد. النظام الثلاثي يحتاج وقتاً أطول.\nحاول مرة أخرى بصورة أقل تعقيداً.")
     except Exception as e:
-        print(f"خطأ في تحليل الصورة بالنظام الثلاثي: {e}")
+        print(f"خطأ في تحليل الصورة بالنظام الاحترافي: {e}")
         keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
         await wait_msg.edit_text(f"❌ **حدث خطأ في النظام الثلاثي:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
     finally:
