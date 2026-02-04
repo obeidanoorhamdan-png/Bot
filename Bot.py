@@ -641,7 +641,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return MAIN_MENU
 
-    wait_msg = await update.message.reply_text("📊 جاري تحليل شارت بالنظام الثلاثي ... ⚡⚡⚡")
+    wait_msg = await update.message.reply_text("📊 جاري تحليل شارت باحدث التقنيات ...")
     photo = await update.message.photo[-1].get_file()
     path = f"img_{user_id}_{int(time.time())}.jpg"
     
@@ -1192,7 +1192,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # إعداد النص النهائي
         full_result = (
-            f"✅ **تم التحليل بنجاح بالنظام الثلاثي المتتالي!** 🏆\n"
+            f"✅ **     تم التحليل بنجاح    ** 🏆\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
             f"{final_result}\n\n"
             f"⚙️ **الإعدادات المستخدمة:**\n"
