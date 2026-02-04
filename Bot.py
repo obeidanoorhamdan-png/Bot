@@ -860,35 +860,265 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # ⚡ برومبت مختصر وفعال
         prompt = f"""
-أنت محلل فني خبير في مدرسة Smart Money Concepts (SMC) متخصص في الأسهم والصناديق والسلع والكريبتو والعملات. مهمتك تحليل الشارت المرفق.
+You are an expert technical analyst in the Smart Money Concepts (SMC) methodology, specializing in stocks, ETFs, commodities, crypto, and forex. Your task is to analyze the attached chart and provide recommendations according to the specified structure.
 
-📊 **المعطيات:**
-• الإطار الزمني: {candle} ({candle_category})
-• استراتيجية: {trading_strategy}
-• جلسة السوق: {session_name} ({session_time})
-• تأثير الأخبار: {news_impact}
-• منطقة الزمن: {kill_zone_status}
+Governing Rules  
+1. Primary framework: SMC with classical technical analysis support  
+2. Safety shield: {news_warning if news_warning else "Market is safe from news"}  
+3. Timeframe classification: {candle_category}  
+4. Trading strategy: {trading_strategy}  
+5. Position sizing: {position_sizing}  
+6. Momentum priority: Engulfing candles (>80%) closing above a previous high = continuation signal. Do not anticipate reversals solely due to unfilled FVGs.  
+7. OTC logic: Look for candle sequences (3 strong candles → the 4th continues in the same direction).  
+8. Timeframe adjustment: On lower timeframes, ignore MACD when it conflicts with clear price action. Use it only as secondary confirmation.  
+9. False momentum detection: Verify sustainability of the move.  
+10. Data extraction: Use precise coordinates from the right price axis.  
+11. Viability filter: RR ≥ 1:2 with news adjustment.  
+12. Absolute credibility: No signal unless it is 100% clear.  
+13. No neutrality: Clear decision only (Buy/Sell/Hold) with confidence level.
 
-🎯 **المطلوب (تنسيق مختصر):**
+Phase 1: Initial Screening & Warnings  
+1.1 Triple-layer safety system  
+Layer 1: Safety shield – {news_warning if news_warning else "Safe"}  
+Layer 2: False momentum detection – analyze large candles, sustainability (3 candles), follow-through  
+Layer 3: Data validation – precise price extraction, number matching, range identification  
 
-📊 **التحليل الفني:**
-• **الهيكل:** (صاعد/هابط/تجميع)
-• **السيولة:** (الفخ القريب + المستهدف)
-• **الفجوات:** (مناطق العودة المحتملة)
+1.2 OTC risk detection  
+Manipulation signs: Instant reversals, break-and-return, price moves inconsistent with volume, illogical formations  
+Protection strategy: Avoid last 10 seconds, use pending orders, widen SL by 20%  
+
+1.3 Correlation analysis  
+Forex: Dollar index, correlated currencies, bonds  
+Stocks: Market index, sector, earnings news  
+Crypto: Bitcoin, altcoin correlation, fear & greed index  
+
+Phase 2: Advanced Structural Analysis  
+2.1 Analytical framework  
+SMC with classical support, precise use of SMC terminology, identify BOS and CHoCH  
+
+2.2 Numerical coordinate extraction  
+Read prices from the axis, identify highs/lows, calculate percentages, verify accuracy  
+
+2.3 Pricing filter (PD Array)  
+Identify swing high and low, equilibrium at 50%  
+Discount zone for buys, premium zone for sells  
+Enter only on breaks with strong BOS momentum  
+Emergency zones (below 20% / above 80%)  
+
+Phase 3: Advanced Liquidity & Momentum Analysis  
+3.1 False momentum detection  
+Signs: Single news candle, price gaps, lack of follow-through, long wicks, V-reversals  
+Real test: 3 consecutive candles, body progression, structure alignment, volume increase, level breaks  
+
+3.2 Advanced liquidity mapping  
+Equal highs/lows, inducement zones, liquidity sweeps, open FVGs, stop levels  
+
+3.3 Sudden momentum reversal analysis  
+Signals: Rejection candle after impulse, failed liquidity break, volume drop, divergence  
+Strategy: Partial exit at first rejection, move SL to breakeven, do not trade against 3 strong candles  
+
+Phase 4: Smart Decision System  
+4.1 Quad confluence filter (4/4)  
+Valid POI, clear candlestick pattern, clear price action, trend alignment  
+
+4.2 Risk adjustment for news  
+Stop Loss = SL × {news_risk_multiplier}  
+Position size = size ÷ {news_risk_multiplier}  
+RR ≥ 1:{max(3, 2 * news_risk_multiplier)}  
+
+4.3 Full trade ban conditions  
+High-impact news ±30 minutes, clear false momentum, failed confluence filter, price at equilibrium  
+Recent V-reversal, sharp conflict between indicators and price action  
+
+4.4 Indicator conflict resolution  
+Priority:  
+1) Price action  
+2) Liquidity & momentum  
+3) Indicators (confirmation only)  
+4) Timeframe context  
+
+Phase 5: Candlestick Behavior Monitoring  
+5.1 Candle response at POI  
+Pattern: Rejection / Absorption / Consolidation  
+Strength: Body/Wicks  
+Volume: Low / Normal / High  
+Decisive patterns:  
+Test candle (long wick + distant close + moderate volume)  
+Rejection candle (Pin bar + opposite close + high volume)  
+
+5.2 Three-candle rule  
+Bullish: Support test → mild pullback → upside break  
+Bearish: Resistance test → mild bounce → downside break  
+
+5.3 Temporal sequence  
+Candle 1: Reaction  
+Candle 2: Confirmation/Rejection  
+Candle 3: Decision  
+Criteria: No confirmation within 3 candles → ignore  
+Break and return within one candle → strong signal  
+
+Phase 6: Enhanced MACD Analysis  
+6.1 Quad analysis  
+Crossover phase and angle  
+Zero line position and distance  
+Histogram state and momentum link  
+Divergence check at liquidity or POI  
+
+6.2 Rules by timeframe  
+1–5 min: Ignore slow crossovers, focus on medium histogram, use as confirmation only  
+15–60 min: Focus on zero line, look for divergence at POI, one confluence factor  
+
+6.3 Conflict resolution  
+1. Clear price action → ignore MACD  
+2. Conflict with 3 candles → reduce size by 50%  
+3. Conflict with BOS → delay one candle  
+4. Conflict with divergence → warning only  
+
+Phase 7: Multi-Timeframe Analysis  
+7.1 Four-frame system  
+HTF: Primary trend  
+MTF1: Supply/Demand zones  
+MTF2: Active order blocks  
+LTF: Entry timing  
+
+7.2 Trend alignment  
+Strong (4/4) → +40 confidence  
+Good (3/4) → +30 confidence  
+Partial conflict (2/4) → reduce size by 50%  
+Strong conflict (1/4) → avoid trade  
+
+7.3 Multi-timeframe strategy  
+For buys: HTF bullish → pullback to supply zone → OB in discount → buy signal  
+For sells: HTF bearish → retrace to demand zone → OB in premium → sell signal  
+
+Phase 8: Confidence Scoring System  
+8.1 Add points (+)  
+Valid POI: +25  
+Clear candlestick pattern: +20  
+Clear price action: +25  
+Timeframe alignment (3/4+): +30  
+Above-average volume: +15  
+Calm news: +20  
+Confirmed BOS: +30  
+FVG fill: +15  
+MACD alignment: +10  
+No indicator conflict: +15  
+
+8.2 Deduct points (-)  
+Indicator conflict: -20  
+Strong news: -25  
+False momentum: -15  
+Recent V-reversal: -30  
+Low OTC liquidity: -10  
+
+8.3 Confidence levels  
+95–100: Exceptional (Full size +20%)  
+85–94: Very strong (Full size)  
+70–84: Strong (80%)  
+55–69: Medium (60%)  
+40–54: Weak (30% or avoid)  
+Below 40: Rejected  
+
+Phase 9: Advanced Volume Analysis  
+9.1 Volume patterns  
+Breakout: >150% of average  
+Absorption: High volume + limited movement  
+Pullback: <70% of average  
+Indecision: Low volume + range-bound  
+Reversal: Sudden high volume after extended move  
+
+9.2 Volume control points  
+POC: Highest volume = support/resistance  
+VA: 70% of trading = equilibrium  
+EVA: Outside VA = strong signal  
+Low-volume areas: Potential breakout zones  
+
+Phase 10: Dynamic Trade Management  
+10.1 Staggered exits  
+Long trades:  
+TP1: Move SL to breakeven + exit 40%  
+TP2: Trail SL above candle + exit 30%  
+TP3: Let 30% trail or exit fully at resistance  
+
+10.2 Smart drawdown system  
+40% pullback: Exit 50%  
+Break entry: Exit full  
+Reverse divergence: Move SL  
+V-reversal: Exit 80%  
+
+10.3 OTC protection  
+Widen SL by +20%  
+Enter after 3 candle closes  
+Scaled sizing (33/33/34)  
+Early exit at 70% of TP1  
+
+Phase 11: Advanced Behavioral Analysis  
+11.1 Market psychology states  
+Fear: Long wicks + sudden high volume  
+Greed: Acceleration without pullback + consecutive large bodies  
+Indecision: Inside bars/doji + low volume  
+Capitulation: Decisive breakout with massive volume + very large candle  
+Manipulation: Illogical moves + fake breakouts  
+
+11.2 Institutional manipulation detection  
+Liquidity sweep: Break then return  
+Stop hunt: Stop grab then reversal  
+False breakout: Break with weak volume  
+Bait pattern: Attractive signal then reversal  
+Differentiation:  
+Break with wick + return = liquidity trap  
+Break with full body + close beyond level = true BOS  
+
+11.3 OTC behavior  
+Algorithmic signs:  
+Pattern repeats 3 times  
+Breakouts at fixed times  
+Moves against technical logic  
+Single candle changes context  
+Counter-strategy:  
+Do not rely on one pattern  
+Confirm with at least two patterns  
+Avoid low-liquidity times  
+Use distant pending orders  
+
+Technical Inputs  
+Timeframe: {candle} ({candle_category})  
+Trading strategy: {trading_strategy}  
+Market session: {session_name} ({session_time})  
+Liquidity condition: {session_vol}  
+News impact: {news_impact} (Multiplier ×{news_risk_multiplier})  
+Analysis time: {current_time.strftime('%Y-%m-%d %H:%M GMT')}  
+Level: Professional – Backtested on 15,000 trades
+
+🎯 **التنسيق المطلوب للإجابة (الالتزام حرفيا بلغة العربية ):**
+
+📊 **التحليل الفني المتقدم:**
+• **البصمة الزمنية:** {kill_zone_status}
+• **حالة الهيكل:** (صاعد/هابط) + (مرحلة وايكوف الحالية) + (توافق 4/4 إطارات: نعم/لا)
+• **خريطة السيولة:** (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
+• **الفجوات السعرية:** (المناطق التي سيعود السعر لتغطيتها)
 
 🎯 **الإشارة التنفيذية:**
-• **القرار:** (شراء 🟢 / بيع 🔴 / احتفاظ 🟡)
-• **القوة:** (💥/🔥/⚡/❄️)
-• **الدخول:** [السعر]
-• **TP1/TP2:** [المستويات]
-• **SL:** [الوقف]
-• **المدة:** [دقائق]
+• **السعر الحالي:** [السعر الدقيق من الشارت]
+• **حالة الشمعة:** [مفتوحة / مغلقة]
+• **القرار الفني:** (شراء 🟢 / بيع 🔴 / احتفاظ 🟡)
+• **قوة الإشارة:** (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
+• **نقطة الدخول:** [السعر الدقيق بناءً على OB + شرط الإغلاق]
+• **الأهداف الربحية:**
+  🎯 **TP1:** [سحب أول سيولة داخلية], [احتمالية الوصول]
+  🎯 **TP2:** [الهدف الرئيسي - منطقة عرض/طلب قوية]
+  🎯 **TP3:** [سيولة خارجية أو سد فجوة سعرية]
+• **وقف الخسارة:** [السعر مع 3 طبقات حماية]
+• **المدة المتوقعة:** [عدد الدقائق] (بناءً على معادلة الزخم السعري)
+• **وقت الذروة المتوقع:** [مثلاً: خلال الـ 3 شموع القادمة]
+• **الحالة النفسية:** [خوف 🥺 / جشع 🤑 / تردد 🤌 / استسلام 👎]
+• **علامات التلاعب:** [موجودة ✔️ / غير موجودة ❎]
 
-⚠️ **المخاطر:**
-• **الثقة:** [%]
-• **نقطة الإلغاء:** [السعر]
+⚠️ **إدارة المخاطر:**
+• **مستوى الثقة:** [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
+• **نقطة الإلغاء:** [السعر الذي يفسد التحليل]
 
-قدم الإجابة مباشرة بالتنسيق أعلاه بدون مقدمات طويلة.
+الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه.نقطة الإلغاء:** [السعر]
 """
         
         headers = {
@@ -971,33 +1201,51 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     await wait_msg.edit_text("📊 جاري التدقيق النهائي ...")
                     
                     audit_prompt = f"""
-                    لدينا تحليلان للشارت:
-                    
-                    التحليل 1:
-                    {analyses[0] if len(analyses) > 0 else 'غير متوفر'}
-                    
-                    التحليل 2:
-                    {analyses[1] if len(analyses) > 1 else 'غير متوفر'}
-                    
-                    بيانات OCR:
-                    {analyses[2] if len(analyses) > 2 else 'غير متوفر'}
-                    
-                    قدم تحليلاً نهائياً مختصراً بالتنسيق:
-                    
-                    📊 **التحليل الفني:**
-                    • الهيكل: [ ]
-                    • السيولة: [ ]
-                    • الفجوات: [ ]
-                    
-                    🎯 **الإشارة:**
-                    • القرار: [شراء/بيع/احتفاظ]
-                    • القوة: [💥/🔥/⚡/❄️]
-                    • الدخول: [السعر]
-                    • الأهداف: [TP1/TP2]
-                    • الوقف: [SL]
-                    
-                    ⚠️ **المخاطر:**
-                    • الثقة: [%]
+                    You are an advanced technical analyst at Obeida Trading. Your task is to merge and enhance two different analyses of the attached chart:
+
+First Analysis (Pixtral Large):
+{analyses.get('pixtral_large', 'Not available')}
+
+Second Analysis (Mistral Pixtral):
+{analyses.get('mistral_pixtral', 'Not available')}
+
+Your Mission:
+
+1. Merge insights: Combine the best ideas from both analyses.
+
+
+2. Resolve conflicts: If contradictions exist, choose the most conservative and most accurate perspective.
+
+
+3. Improve wording: Make the text more professional, clear, and precise.
+
+
+4. Focus on: Numerical accuracy, clarity in recommendations, and comprehensive analysis.
+
+
+
+🎯 الإشارة التنفيذية (المدققة):
+• السعر الحالي: [السعر الدقيق المدقق من الشارت]
+• حالة الشمعة: [مفتوحة / مغلقة]
+• القرار الفني: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡)
+• قوة الإشارة: (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
+• نقطة الدخول: [السعر الدقيق بناءً على OB + شرط الإغلاق]
+• الأهداف الربحية:
+🎯 TP1: [سحب أول سيولة داخلية], [احتمالية الوصول]
+🎯 TP2: [الهدف الرئيسي - منطقة عرض/طلب قوية]
+🎯 TP3: [سيولة خارجية أو سد فجوة سعرية]
+• وقف الخسارة: [السعر مع 3 طبقات حماية]
+• المدة المتوقعة: [عدد الدقائق] (بناءً على معادلة الزخم السعري)
+• وقت الذروة المتوقع: [مثلاً: خلال الـ 3 شموع القادمة]
+• الحالة النفسية: [خوف 🥺 / جشع 🤑 / تردد 🤌 / استسلام 👎]
+• علامات التلاعب: [موجودة ✔️ / غير موجودة ❎]
+
+⚠️ إدارة المخاطر (المحسنة):
+• مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
+• نقطة الإلغاء: [السعر الذي يفسد التحليل]
+• النقاط المختلف عليها: [النقاط التي اختلف عليها الموديلان وكيف تم حلها]
+
+الرجاء تقديم النتيجة المدمجة بشكل منظم وجاهز للتدقيق النهائي.
                     """
                     
                     audit_payload = {
