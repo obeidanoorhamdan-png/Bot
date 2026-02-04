@@ -132,19 +132,19 @@ def get_user_setting(user_id):
     return ("M1", "قصير (1m-15m)")
 
 def get_market_session():
-    """الحصول على معلومات جلسة السوق الحالية"""
-    current_hour = datetime.utcnow().hour
-    
-    if 0 <= current_hour < 6:
-        return "الجلسة الآسيوية", "00:00-06:00 GMT", "منخفضة"
-    elif 6 <= current_hour < 12:
-        return "جلسة لندن/أوروبا", "06:00-12:00 GMT", "مرتفعة"
-    elif 12 <= current_hour < 18:
-        return "جلسة نيويورك", "12:00-18:00 GMT", "عالية جداً"
-    elif 18 <= current_hour < 24:
-        return "جلسة المحيط الهادئ", "18:00-24:00 GMT", "منخفضة"
+    current_hour = (datetime.utcnow() + timedelta(hours=2)).hour  # توقيت غزة
+
+    if 2 <= current_hour < 8:
+        return "الجلسة الآسيوية", "02:00-08:00 بتوقيت غزة", "منخفضة"
+    elif 8 <= current_hour < 14:
+        return "جلسة لندن/أوروبا", "08:00-14:00 بتوقيت غزة", "مرتفعة"
+    elif 14 <= current_hour < 20:
+        return "جلسة نيويورك", "14:00-20:00 بتوقيت غزة", "عالية جداً"
+    elif 20 <= current_hour < 24 or 0 <= current_hour < 2:
+        return "جلسة المحيط الهادئ", "20:00-02:00 بتوقيت غزة", "منخفضة"
     else:
         return "جلسة عالمية", "متداخلة", "متوسطة"
+        
 
 def format_trade_time_for_prompt(trade_time):
     """تنسيق وقت الصفقة للبرومبت"""
@@ -969,7 +969,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     ]
                 }
             ],
-            "max_tokens": 1800,
+            "max_tokens": 1500,
             "temperature": 0.10,
             "top_p": 0.95,
             "random_seed": 42,
@@ -1045,7 +1045,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     ]
                 }
             ],
-            "max_tokens": 1800,
+            "max_tokens": 1500,
             "temperature": 0.0,
             "top_p": 0.95,
             "random_seed": 42,
