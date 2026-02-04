@@ -20,6 +20,7 @@ MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "WhGHh0RvwtLLsRwlHYozaNrmZWkFK2f1")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "pixtral-large-latest"
 MISTRAL_MODEL_AUDIT = "mistral-large-pixtral-2411"  # موديل التدقيق
+MISTRAL_OCR = "mistral-ocr-latest"  # موديل OCR
 
 DB_NAME = "abood-gpt.db"
 
@@ -51,8 +52,13 @@ CATEGORIES = {
         "Coca-Cola (OTC)", "Disney (OTC)", "Alibaba (OTC)", "Walmart (OTC)"
     ]
 }
+
 # حالات المحادثة
-MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
+(
+    MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, 
+    ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION,
+    SELECT_ANALYSIS_TYPE
+) = range(8)
 
 # --- Flask Server ---
 app = Flask(__name__)
@@ -75,7 +81,7 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>Obeida Trading - (Dual Model System)</p>
+        <p>Obeida Trading - (Advanced Analysis System)</p>
     </body>
     </html>
     """
@@ -97,7 +103,8 @@ def init_db():
             user_id INTEGER PRIMARY KEY, 
             candle TEXT DEFAULT 'M1', 
             trade_time TEXT DEFAULT 'قصير (1m-15m)',
-            chat_context TEXT DEFAULT ''
+            chat_context TEXT DEFAULT '',
+            analysis_type TEXT DEFAULT 'ثلاثي'
         )
     ''')
     cursor.execute('''
@@ -124,12 +131,12 @@ def save_user_setting(user_id, col, val):
 def get_user_setting(user_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT candle, trade_time FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT candle, trade_time, analysis_type FROM users WHERE user_id = ?", (user_id,))
     res = cursor.fetchone()
     conn.close()
     if res:
         return res
-    return ("M1", "قصير (1m-15m)")
+    return ("M1", "قصير (1m-15m)", "ثلاثي")
 
 def get_market_session():
     current_hour = (datetime.utcnow() + timedelta(hours=2)).hour  # توقيت غزة
@@ -145,7 +152,6 @@ def get_market_session():
     else:
         return "جلسة عالمية", "متداخلة", "متوسطة"
         
-
 def format_trade_time_for_prompt(trade_time):
     """تنسيق وقت الصفقة للبرومبت"""
     if trade_time == "قصير (1m-15m)":
@@ -435,7 +441,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # برومبتات متخصصة حسب الاختيار
     system_prompts = {
-        "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عميقة في:
+        "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عمق في:
 🎯 **التحليل الفني والمالي:** خبرة في أسواق المال، تحليل الشارتات، واستراتيجيات التداول
 💻 **البرمجة والتقنية:** إتقان Python، JavaScript، تطوير الويب، الذكاء الاصطناعي
 📊 **البيانات والتحليل:** تحليل البيانات، الإحصاء، وتقديم رؤى استراتيجية
@@ -625,11 +631,103 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await wait_msg.edit_text("❌ حدث خطأ غير متوقع. النظام يعمل على الإصلاح تلقائياً...")
     
     return CHAT_MODE
-# --- كود تحليل الصور المحسن والمدمج الكامل مع نظام الموديل الثلاثي المتتالي ---
-async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني المتقدم مع نظام الموديل الثلاثي المتتالي"""
+
+async def start_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء عملية تحليل الصور مع اختيار نوع التحليل"""
     user_id = update.effective_user.id
-    candle, trade_time = get_user_setting(user_id)
+    candle, trade_time, analysis_type = get_user_setting(user_id)
+    
+    if not candle or not trade_time:
+        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
+        await update.message.reply_text(
+            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
+            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
+    
+    # عرض خيارات نوع التحليل
+    keyboard = [["🔄 تحليل ثلاثي النماذج", "⚡ تحليل بنموذج واحد"]]
+    keyboard.append(["🔙 العودة للقائمة الرئيسية"])
+    
+    await update.message.reply_text(
+        f"📊 **تحليل الشارت المرفق**\n\n"
+        f"⚙️ **الإعدادات الحالية:**\n"
+        f"• سرعة الشموع: {candle}\n"
+        f"• مدة الصفقة: {trade_time}\n"
+        f"• نوع التحليل: {analysis_type}\n\n"
+        f"🎯 **اختر نوع التحليل المطلوب:**\n"
+        f"🔄 **تحليل ثلاثي النماذج:** نظام متقدم باستخدام 3 نماذج مختلفة للتدقيق المزدوج\n"
+        f"⚡ **تحليل بنموذج واحد:** تحليل سريع باستخدام نموذج Pixtral Large فقط\n\n"
+        f"اختر الخيار المناسب:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+        parse_mode="Markdown"
+    )
+    
+    return SELECT_ANALYSIS_TYPE
+
+async def handle_analysis_type_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار نوع التحليل"""
+    user_message = update.message.text.strip()
+    user_id = update.effective_user.id
+    
+    if user_message == "🔙 العودة للقائمة الرئيسية":
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    # حفظ اختيار نوع التحليل
+    if user_message == "🔄 تحليل ثلاثي النماذج":
+        save_user_setting(user_id, "analysis_type", "ثلاثي")
+        analysis_type = "ثلاثي"
+    elif user_message == "⚡ تحليل بنموذج واحد":
+        save_user_setting(user_id, "analysis_type", "واحد")
+        analysis_type = "واحد"
+    else:
+        await update.message.reply_text("❌ الرجاء اختيار نوع تحليل صحيح.")
+        return SELECT_ANALYSIS_TYPE
+    
+    candle, trade_time, _ = get_user_setting(user_id)
+    
+    keyboard = [["الرجوع للقائمة الرئيسية"]]
+    
+    time_display = format_trade_time_for_prompt(trade_time)
+    
+    analysis_desc = ""
+    if analysis_type == "ثلاثي":
+        analysis_desc = "🔄 **نظام التحليل الثلاثي:**\n1. التحليل الأولي (Pixtral Large)\n2. التحليل الثانوي (Mistral Pixtral)\n3. التدقيق النهائي (OCR المتقدم)"
+    else:
+        analysis_desc = "⚡ **نظام التحليل الواحد:**\nتحليل سريع ودقيق باستخدام نموذج Pixtral Large المتقدم"
+    
+    await update.message.reply_text(
+        f"✅ **تم اختيار: {user_message}**\n\n"
+        f"📊 **جاهز للتحليل**\n\n"
+        f"{analysis_desc}\n\n"
+        f"⚙️ **الإعدادات الحالية:**\n"
+        f"• سرعة الشموع: {candle}\n"
+        f"• {time_display}\n\n"
+        f"📤 **أرسل صورة الشارت الآن:**",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+        parse_mode="Markdown"
+    )
+    
+    # حفظ نوع التحليل في context للاستخدام لاحقاً
+    context.user_data['analysis_type'] = analysis_type
+    
+    return ANALYZE_MODE
+
+# --- كود تحليل الصور المحسن مع اختيار النوع ---
+async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور للتحليل الفني المتقدم حسب نوع التحليل المختار"""
+    user_id = update.effective_user.id
+    candle, trade_time, saved_analysis_type = get_user_setting(user_id)
+    
+    # الحصول على نوع التحليل من context أو من الإعدادات المحفوظة
+    analysis_type = context.user_data.get('analysis_type', saved_analysis_type)
     
     if not candle or not trade_time:
         keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
@@ -641,7 +739,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return MAIN_MENU
 
-    wait_msg = await update.message.reply_text("📊 جاري تحليل شارت باحدث التقنيات ...")
+    wait_msg = await update.message.reply_text("📊 جاري تحليل الشارت ...")
     photo = await update.message.photo[-1].get_file()
     path = f"img_{user_id}_{int(time.time())}.jpg"
     
@@ -738,7 +836,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             trading_strategy = "تداول موقف (Position) - طويل الأجل"
             position_sizing = "حجم صغير مع وقف خسارة واسع"
         
-        # البرومبت الجديد الكامل مع ربط المعطيات
+        # البرومبت الكامل الذي طلبته
         prompt = f"""
 أنت محلل فني خبير في مدرسة Smart Money Concepts (SMC) متخصص في الأسهم والصناديق والسلع والكريبتو والعملات. مهمتك هي تحليل الشارت المرفق وتقديم التوصيات وفقاً للتنسيق المحدد.
 
@@ -953,101 +1051,100 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
-        # --- المرحلة 1: التحليل المتوازي بالموديلين الأولين ---
-        await wait_msg.edit_text("📊 جاري التحليل مرحلة 1/3 ...")
-        
-        # تعريف النماذج
-        models = {
-            "pixtral_large": MISTRAL_MODEL,  # pixtral-large-latest
-            "mistral_pixtral": MISTRAL_MODEL_AUDIT,  # mistral-large-pixtral-2411
-        }
-        
-        # إنشاء الطلبات للموديلين
-        payloads = {
-            "pixtral_large": {
-                "model": models["pixtral_large"],
-                "messages": [
-                    {
-                        "role": "user", 
-                        "content": [
-                            {"type": "text", "text": f"{prompt}\n\n🎯 **مهمتك:** تحليل شامل للشارت مع التركيز على الهيكل والأنماط."},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
-                        ]
-                    }
-                ],
-                "max_tokens": 1200,
-                "temperature": 0.10,
-                "top_p": 0.95,
-                "random_seed": 42,
-            },
-            "mistral_pixtral": {
-                "model": models["mistral_pixtral"],
-                "messages": [
-                    {
-                        "role": "user", 
-                        "content": [
-                            {"type": "text", "text": f"{prompt}\n\n🎯 **مهمتك:** تحليل دقيق مع التركيز على التوصيات التنفيذية والمخاطر."},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
-                        ]
-                    }
-                ],
-                "max_tokens": 1200,
-                "temperature": 0.10,
-                "top_p": 0.95,
+        # ========== اختيار نوع التحليل ==========
+        if analysis_type == "ثلاثي":
+            await wait_msg.edit_text("📊 جاري التحليل بنظام الثلاثي النماذج (1/3) ...")
+            
+            # --- المرحلة 1: التحليل المتوازي بالموديلين الأولين ---
+            models = {
+                "pixtral_large": MISTRAL_MODEL,
+                "mistral_pixtral": MISTRAL_MODEL_AUDIT,
             }
-        }
-        
-        # إرسال الطلبات للموديلين في نفس الوقت
-        import concurrent.futures
-        
-        def send_request(model_name, payload):
-            """إرسال طلب API"""
-            try:
-                response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=35)
-                if response.status_code == 200:
-                    return model_name, response.json()['choices'][0]['message']['content'].strip(), "success"
+            
+            payloads = {
+                "pixtral_large": {
+                    "model": models["pixtral_large"],
+                    "messages": [
+                        {
+                            "role": "user", 
+                            "content": [
+                                {"type": "text", "text": f"{prompt}\n\n🎯 **مهمتك:** تحليل شامل للشارت مع التركيز على الهيكل والأنماط."},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                            ]
+                        }
+                    ],
+                    "max_tokens": 1200,
+                    "temperature": 0.10,
+                    "top_p": 0.95,
+                    "random_seed": 42,
+                },
+                "mistral_pixtral": {
+                    "model": models["mistral_pixtral"],
+                    "messages": [
+                        {
+                            "role": "user", 
+                            "content": [
+                                {"type": "text", "text": f"{prompt}\n\n🎯 **مهمتك:** تحليل دقيق مع التركيز على التوصيات التنفيذية والمخاطر."},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                            ]
+                        }
+                    ],
+                    "max_tokens": 1200,
+                    "temperature": 0.10,
+                    "top_p": 0.95,
+                }
+            }
+            
+            import concurrent.futures
+            
+            def send_request(model_name, payload):
+                """إرسال طلب API"""
+                try:
+                    response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=35)
+                    if response.status_code == 200:
+                        return model_name, response.json()['choices'][0]['message']['content'].strip(), "success"
+                    else:
+                        return model_name, f"Error {response.status_code}", "error"
+                except Exception as e:
+                    return model_name, f"Exception: {str(e)}", "error"
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [executor.submit(send_request, name, payloads[name]) for name in payloads]
+                results = []
+                for future in concurrent.futures.as_completed(futures):
+                    results.append(future.result())
+            
+            # تجميع النتائج من الموديلين
+            analyses = {}
+            for model_name, content, status in results:
+                if status == "success":
+                    analyses[model_name] = content
+                    print(f"✅ Model {model_name} completed successfully")
                 else:
-                    return model_name, f"Error {response.status_code}", "error"
-            except Exception as e:
-                return model_name, f"Exception: {str(e)}", "error"
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(send_request, name, payloads[name]) for name in payloads]
-            results = []
-            for future in concurrent.futures.as_completed(futures):
-                results.append(future.result())
-        
-        # تجميع النتائج من الموديلين
-        analyses = {}
-        for model_name, content, status in results:
-            if status == "success":
-                analyses[model_name] = content
-                print(f"✅ Model {model_name} completed successfully")
-            else:
-                print(f"❌ Model {model_name} failed: {content}")
-        
-        # إذا فشل كلا الموديلين
-        if not analyses:
-            await wait_msg.edit_text("❌ فشل التحليل بالموديلين الرئيسيين. يرجى المحاولة مرة أخرى.")
-            if os.path.exists(path):
-                os.remove(path)
-            return MAIN_MENU
-        
-        # --- المرحلة 2: دمج نتائج الموديلين الأولين ---
-        await wait_msg.edit_text("📊 جاري تحليل مرحلة 2/3 ...")
-        
-        # تجهيز النتائج للدمج
-        analysis_texts = []
-        if "pixtral_large" in analyses:
-            analysis_texts.append(f"📈 **تحليل Pixtral Large:**\n{analyses['pixtral_large']}")
-        
-        if "mistral_pixtral" in analyses:
-            analysis_texts.append(f"📊 **تحليل Mistral Pixtral:**\n{analyses['mistral_pixtral']}")
-        
-        merged_analyses = "\n\n━━━━━━━━━━━━━━━━━━\n\n".join(analysis_texts)
-        
-        # برومبت الدمج الأولي
-        merge_prompt = f"""
+                    print(f"❌ Model {model_name} failed: {content}")
+            
+            # إذا فشل كلا الموديلين
+            if not analyses:
+                await wait_msg.edit_text("❌ فشل التحليل بالموديلين الرئيسيين. يرجى المحاولة مرة أخرى.")
+                if os.path.exists(path):
+                    os.remove(path)
+                return MAIN_MENU
+            
+            # --- المرحلة 2: دمج نتائج الموديلين الأولين ---
+            await wait_msg.edit_text("📊 جاري تحليل مرحلة 2/3 ...")
+            
+            # تجهيز النتائج للدمج
+            analysis_texts = []
+            if "pixtral_large" in analyses:
+                analysis_texts.append(f"📈 **تحليل Pixtral Large:**\n{analyses['pixtral_large']}")
+            
+            if "mistral_pixtral" in analyses:
+                analysis_texts.append(f"📊 **تحليل Mistral Pixtral:**\n{analyses['mistral_pixtral']}")
+            
+            merged_analyses = "\n\n━━━━━━━━━━━━━━━━━━\n\n".join(analysis_texts)
+            
+            # برومبت الدمج الأولي
+            merge_prompt = f"""
 أنت محلل فني متقدم في Obeida Trading، مهمتك هي دمج وتحسين تحليلين مختلفين للشارت المرفق:
 
 **التحليل الأول (Pixtral Large):**
@@ -1061,7 +1158,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 2. **حل التعارضات:** إذا وجدت تضارباً، اختر الرأي الأكثر تحفظاً والأكثر دقة
 3. **تحسين الصياغة:** اجعل النص أكثر احترافية ووضوحاً
 4. **التركيز على:** الدقة في الأرقام، الوضوح في التوصيات، الشمولية في التحليل
-
 
 **التنسيق النهائي المطلوب (الالتزام الحرفي):**
 
@@ -1094,30 +1190,30 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
 الرجاء تقديم النتيجة المدمجة بشكل منظم وجاهز للتدقيق النهائي.
 """
-        
-        # دمج النتائج
-        merge_payload = {
-            "model": MISTRAL_MODEL,
-            "messages": [
-                {"role": "user", "content": merge_prompt}
-            ],
-            "max_tokens": 1000,
-            "temperature": 0.1,
-        }
-        
-        merge_response = requests.post(MISTRAL_URL, headers=headers, json=merge_payload, timeout=30)
-        
-        if merge_response.status_code == 200:
-            merged_result = merge_response.json()['choices'][0]['message']['content'].strip()
-        else:
-            # إذا فشل الدمج، استخدم التحليل الأفضل
-            merged_result = analyses[max(analyses.keys(), key=lambda k: len(analyses.get(k, '')))]
-        
-        # --- المرحلة 3: التدقيق النهائي بموديل OCR المتقدم ---
-        await wait_msg.edit_text("📊 جاري تحليل اللمسات الأخيرة ✔️...")
-        
-        # برومبت التدقيق النهائي مع الصورة والنتائج المدمجة
-        audit_prompt = f"""
+            
+            # دمج النتائج
+            merge_payload = {
+                "model": MISTRAL_MODEL,
+                "messages": [
+                    {"role": "user", "content": merge_prompt}
+                ],
+                "max_tokens": 1000,
+                "temperature": 0.1,
+            }
+            
+            merge_response = requests.post(MISTRAL_URL, headers=headers, json=merge_payload, timeout=30)
+            
+            if merge_response.status_code == 200:
+                merged_result = merge_response.json()['choices'][0]['message']['content'].strip()
+            else:
+                # إذا فشل الدمج، استخدم التحليل الأفضل
+                merged_result = analyses[max(analyses.keys(), key=lambda k: len(analyses.get(k, '')))]
+            
+            # --- المرحلة 3: التدقيق النهائي بموديل OCR المتقدم ---
+            await wait_msg.edit_text("📊 جاري تحليل اللمسات الأخيرة ✔️...")
+            
+            # برومبت التدقيق النهائي مع الصورة والنتائج المدمجة
+            audit_prompt = f"""
 أنت المدقق النهائي والمتخصص في قراءة الشارتات في Obeida Trading، مهمتك هي التدقيق النهائي لتحليل الشارت.
 
 **البيانات المتوفرة:**
@@ -1169,32 +1265,64 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
 **ملاحظة مهمة:** استخدم الصورة المرفقة للتحقق من كل رقم وكل مستوى مذكور في التقرير.
 """
-        
-        # إرسال طلب التدقيق النهائي مع الصورة والتحليل المدمج
-        audit_payload = {
-            "model": "mistral-ocr-latest",
-            "messages": [
-                {
-                    "role": "user", 
-                    "content": [
-                        {"type": "text", "text": audit_prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
-                    ]
-                }
-            ],
-            "max_tokens": 1500,
-            "temperature": 0.0,
-            "top_p": 0.95,
-            "random_seed": 42,
-        }
-        
-        audit_response = requests.post(MISTRAL_URL, headers=headers, json=audit_payload, timeout=40)
-        
-        if audit_response.status_code == 200:
-            final_result = audit_response.json()['choices'][0]['message']['content'].strip()
-        else:
-            print(f"❌ OCR audit failed: {audit_response.status_code} - using merged result")
-            final_result = merged_result
+            
+            # إرسال طلب التدقيق النهائي مع الصورة والتحليل المدمج
+            audit_payload = {
+                "model": MISTRAL_OCR,
+                "messages": [
+                    {
+                        "role": "user", 
+                        "content": [
+                            {"type": "text", "text": audit_prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                        ]
+                    }
+                ],
+                "max_tokens": 1500,
+                "temperature": 0.0,
+                "top_p": 0.95,
+                "random_seed": 42,
+            }
+            
+            audit_response = requests.post(MISTRAL_URL, headers=headers, json=audit_payload, timeout=40)
+            
+            if audit_response.status_code == 200:
+                final_result = audit_response.json()['choices'][0]['message']['content'].strip()
+            else:
+                print(f"❌ OCR audit failed: {audit_response.status_code} - using merged result")
+                final_result = merged_result
+                
+            analysis_type_name = "🔄 تحليل ثلاثي النماذج"
+            
+        else:  # تحليل بنموذج واحد
+            await wait_msg.edit_text("📊 جاري التحليل بنظام النموذج الواحد ...")
+            
+            # إرسال طلب واحد باستخدام البرومبت الكامل
+            payload = {
+                "model": MISTRAL_MODEL,
+                "messages": [
+                    {
+                        "role": "user", 
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                        ]
+                    }
+                ],
+                "max_tokens": 1500,
+                "temperature": 0.1,
+                "top_p": 0.95,
+            }
+            
+            response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=40)
+            
+            if response.status_code == 200:
+                final_result = response.json()['choices'][0]['message']['content'].strip()
+            else:
+                print(f"❌ Single model analysis failed: {response.status_code}")
+                final_result = f"❌ حدث خطأ في التحليل. الرمز: {response.status_code}"
+            
+            analysis_type_name = "⚡ تحليل بنموذج واحد"
         
         # تنظيف النص النهائي
         final_result = clean_repeated_text(final_result)
@@ -1205,7 +1333,12 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             if len(parts) > 1:
                 final_result = parts[1].strip()
         
-        keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+        keyboard = [
+            ["📊 تحليل صورة"],
+            ["⚙️ إعدادات التحليل"],
+            ["📈 توصية"],
+            ["الرجوع للقائمة الرئيسية"]
+        ]
         
         # تنسيق وقت الصفقة للعرض
         time_display = format_trade_time_for_prompt(trade_time)
@@ -1214,6 +1347,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         full_result = (
             f"✅ **     تم التحليل بنجاح    ** 🏆\n"
             f"━━━━━━━━━━━━━━━\n"
+            f"🎯 **نوع التحليل:** {analysis_type_name}\n\n"
             f"{final_result}\n\n"
             f"⚙️ **الإعدادات المستخدمة:**\n"
             f"• سرعة الشموع: {candle}\n"
@@ -1252,11 +1386,11 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         
     except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد في النظام الثلاثي. النظام معقد ويحتاج وقتاً أطول.\nحاول مرة أخرى بصورة أقل تعقيداً.")
+        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد في النظام. النظام معقد ويحتاج وقتاً أطول.\nحاول مرة أخرى بصورة أقل تعقيداً.")
     except Exception as e:
-        print(f"خطأ في تحليل الصورة بالنظام الثلاثي: {e}")
+        print(f"خطأ في تحليل الصورة: {e}")
         keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text(f"❌ **حدث خطأ في النظام الثلاثي:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
+        await wait_msg.edit_text(f"❌ **حدث خطأ في التحليل:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -1279,9 +1413,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 📈 نظام توصيات جاهزة\n"
         "• إعدادات تخصيص كاملة\n"
         "• تحليل دقيق بالأرقام\n\n"
-        "📡 **نظام التحليل المزدوج:**\n"
-        f"1. التحليل الأولي\n"
-        f"2. التدقيق النهائي\n\n"
+        "📡 **أنظمة التحليل المتاحة:**\n"
+        f"1. نظام ثلاثي النماذج (توصية للدقة العالية)\n"
+        f"2. نظام نموذج واحد (للسرعة)\n\n"
         "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -1305,35 +1439,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SETTINGS_CANDLE
     
     elif user_message == "📊 تحليل صورة":
-        candle, trade_time = get_user_setting(user_id)
-        
-        if not candle or not trade_time:
-            keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-            await update.message.reply_text(
-                "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-                "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return MAIN_MENU
-        else:
-            keyboard = [["الرجوع للقائمة الرئيسية"]]
-            
-            time_display = format_trade_time_for_prompt(trade_time)
-            
-            await update.message.reply_text(
-                f"📊 **جاهز للتحليل**\n\n"
-                f"الإعدادات الحالية:\n"
-                f"• سرعة الشموع: {candle}\n"
-                f"• {time_display}\n\n"
-                f"📡 **نظام التحليل:** نظام مزدوج\n"
-                f"1. التحليل الأولي\n"
-                f"2. التدقيق النهائي\n\n"
-                f"أرسل صورة الرسم البياني (الشارت) الآن:",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return ANALYZE_MODE
+        return await start_photo_analysis(update, context)
     
     elif user_message == "💬 دردشة":
         return await start_chat_mode(update, context)
@@ -1401,13 +1507,15 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
         
         keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
-        candle, _ = get_user_setting(user_id)
+        candle, _, _ = get_user_setting(user_id)
         
         await update.message.reply_text(
             f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
             f"✅ سرعة الشموع: {candle}\n"
             f"✅ مدة الصفقة: {user_message}\n\n"
-            f"📡 **نظام التحليل:** موديل مزدوج\n"
+            f"📡 **أنظمة التحليل المتاحة:**\n"
+            f"• 🔄 نظام ثلاثي النماذج (توصية للدقة العالية)\n"
+            f"• ⚡ نظام نموذج واحد (للسرعة)\n\n"
             f"يمكنك الآن تحليل صورة أو الدردشة:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
@@ -1465,9 +1573,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة
     • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
     
-    📡 **نظام المزدوج للتحليل:**
-    • **المرحلة 1:** التحليل الأولي
-    • **المرحلة 2:** التدقيق النهائي والدقة
+    📡 **أنظمة التحليل المتاحة:**
+    • **🔄 نظام ثلاثي النماذج:** نظام متقدم باستخدام 3 نماذج مختلفة للتدقيق المزدوج (توصية للدقة العالية)
+    • **⚡ نظام نموذج واحد:** تحليل سريع باستخدام نموذج Pixtral Large فقط (للسرعة)
     
     📊 **مميزات البوت:**
     • تحليل فني للرسوم البيانية 
@@ -1518,6 +1626,9 @@ def run_telegram_bot():
             ],
             CHAT_MODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat_message)
+            ],
+            SELECT_ANALYSIS_TYPE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analysis_type_selection)
             ],
             ANALYZE_MODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode),
