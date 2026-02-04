@@ -648,7 +648,7 @@ async def start_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
         return MAIN_MENU
     
     # عرض خيارات نوع التحليل
-    keyboard = [["🔄 تحليل ثلاثي النماذج", "⚡ تحليل بنموذج واحد"]]
+    keyboard = [["🔄 تحليل عميق", "⚡ تحليل سريع"]]
     keyboard.append(["🔙 العودة للقائمة الرئيسية"])
     
     await update.message.reply_text(
@@ -658,8 +658,8 @@ async def start_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
         f"• مدة الصفقة: {trade_time}\n"
         f"• نوع التحليل: {analysis_type}\n\n"
         f"🎯 **اختر نوع التحليل المطلوب:**\n"
-        f"🔄 **تحليل ثلاثي النماذج:** نظام متقدم باستخدام 3 نماذج مختلفة للتدقيق المزدوج\n"
-        f"⚡ **تحليل بنموذج واحد:** تحليل سريع باستخدام نموذج Pixtral Large فقط\n\n"
+        f"🔄 **تحليل تحليل عميق:** نظام متقدم باستخدام تقنيات للتدقيق المزدوج\n"
+        f"⚡ **تحليل سريع :** تحليل سريع باستخدام تقنية سريعة\n\n"
         f"اختر الخيار المناسب:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -681,10 +681,10 @@ async def handle_analysis_type_selection(update: Update, context: ContextTypes.D
         return MAIN_MENU
     
     # حفظ اختيار نوع التحليل
-    if user_message == "🔄 تحليل ثلاثي النماذج":
+    if user_message == "🔄 تحليل عميق":
         save_user_setting(user_id, "analysis_type", "ثلاثي")
         analysis_type = "ثلاثي"
-    elif user_message == "⚡ تحليل بنموذج واحد":
+    elif user_message == "⚡ تحليل سريع":
         save_user_setting(user_id, "analysis_type", "واحد")
         analysis_type = "واحد"
     else:
@@ -699,9 +699,9 @@ async def handle_analysis_type_selection(update: Update, context: ContextTypes.D
     
     analysis_desc = ""
     if analysis_type == "ثلاثي":
-        analysis_desc = "🔄 **نظام التحليل الثلاثي:**\n1. التحليل الأولي (Pixtral Large)\n2. التحليل الثانوي (Mistral Pixtral)\n3. التدقيق النهائي (OCR المتقدم)"
+        analysis_desc = "🔄 **نظام التحليل العميق:**\n1. التحليل الأولي \n2. التحليل الثانوي \n3. التدقيق النهائي "
     else:
-        analysis_desc = "⚡ **نظام التحليل الواحد:**\nتحليل سريع ودقيق باستخدام نموذج Pixtral Large المتقدم"
+        analysis_desc = "⚡ **نظام التحليل الواحد:**\nتحليل سريع ودقيق باستخدام تقنية متقدمة"
     
     await update.message.reply_text(
         f"✅ **تم اختيار: {user_message}**\n\n"
@@ -1053,7 +1053,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # ========== اختيار نوع التحليل ==========
         if analysis_type == "ثلاثي":
-            await wait_msg.edit_text("📊 جاري التحليل بنظام الثلاثي النماذج (1/3) ...")
+            await wait_msg.edit_text("📊 جاري التحليل (1/3) ...")
             
             # --- المرحلة 1: التحليل المتوازي بالموديلين الأولين ---
             models = {
@@ -1131,7 +1131,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 return MAIN_MENU
             
             # --- المرحلة 2: دمج نتائج الموديلين الأولين ---
-            await wait_msg.edit_text("📊 جاري تحليل مرحلة 2/3 ...")
+            await wait_msg.edit_text("📊 جاري تحليل 2/3 ...")
             
             # تجهيز النتائج للدمج
             analysis_texts = []
@@ -1292,7 +1292,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 print(f"❌ OCR audit failed: {audit_response.status_code} - using merged result")
                 final_result = merged_result
                 
-            analysis_type_name = "🔄 تحليل ثلاثي النماذج"
+            analysis_type_name = "🔄 تحليل عميق"
             
         else:  # تحليل بنموذج واحد
             await wait_msg.edit_text("📊 جاري التحليل بنظام النموذج الواحد ...")
@@ -1322,7 +1322,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 print(f"❌ Single model analysis failed: {response.status_code}")
                 final_result = f"❌ حدث خطأ في التحليل. الرمز: {response.status_code}"
             
-            analysis_type_name = "⚡ تحليل بنموذج واحد"
+            analysis_type_name = "⚡ تحليل سريع"
         
         # تنظيف النص النهائي
         final_result = clean_repeated_text(final_result)
@@ -1414,8 +1414,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• إعدادات تخصيص كاملة\n"
         "• تحليل دقيق بالأرقام\n\n"
         "📡 **أنظمة التحليل المتاحة:**\n"
-        f"1. نظام ثلاثي النماذج (توصية للدقة العالية)\n"
-        f"2. نظام نموذج واحد (للسرعة)\n\n"
+        f"1. نظام عميق (توصية للدقة العالية)\n"
+        f"2. نظام سريع (للسرعة)\n\n"
         "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -1514,8 +1514,8 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
             f"✅ سرعة الشموع: {candle}\n"
             f"✅ مدة الصفقة: {user_message}\n\n"
             f"📡 **أنظمة التحليل المتاحة:**\n"
-            f"• 🔄 نظام ثلاثي النماذج (توصية للدقة العالية)\n"
-            f"• ⚡ نظام نموذج واحد (للسرعة)\n\n"
+            f"• 🔄 نظام عميق (توصية للدقة العالية)\n"
+            f"• ⚡ نظام سريع (للسرعة)\n\n"
             f"يمكنك الآن تحليل صورة أو الدردشة:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
@@ -1574,8 +1574,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
     
     📡 **أنظمة التحليل المتاحة:**
-    • **🔄 نظام ثلاثي النماذج:** نظام متقدم باستخدام 3 نماذج مختلفة للتدقيق المزدوج (توصية للدقة العالية)
-    • **⚡ نظام نموذج واحد:** تحليل سريع باستخدام نموذج Pixtral Large فقط (للسرعة)
+    • **🔄 نظام تحليل العميق :** نظام متقدم باستخدام تقنيات للتدقيق المزدوج (توصية للدقة العالية)
+    • **⚡ نظام تحليل سريع:** تحليل سريع باستخدام تقنية قوية و سريعة (للسرعة)
     
     📊 **مميزات البوت:**
     • تحليل فني للرسوم البيانية 
@@ -1675,3 +1675,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
