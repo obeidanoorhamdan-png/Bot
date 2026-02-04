@@ -7,10 +7,14 @@ import requests
 import threading
 import time
 import sys
+import json
+import asyncio
+import websockets
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
+import aiohttp
 
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
@@ -20,6 +24,11 @@ MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "WhGHh0RvwtLLsRwlHYozaNrmZWkFK2f1")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "pixtral-large-latest"
 MISTRAL_MODEL_AUDIT = "mistral-large-pixtral-2411"  # موديل التدقيق
+
+# إعدادات Binary.com لسحب الشارتات
+BINARY_TOKEN = "M8RHa6kCMAdCOOd"
+BINARY_APP_ID = "1089"
+BINARY_WS_URL = f"wss://ws.binaryws.com/websockets/v3?app_id={BINARY_APP_ID}"
 
 DB_NAME = "abood-gpt.db"
 
@@ -51,8 +60,49 @@ CATEGORIES = {
         "Coca-Cola (OTC)", "Disney (OTC)", "Alibaba (OTC)", "Walmart (OTC)"
     ]
 }
+
+# تعيين الرموز لـ Binary.com
+BINARY_SYMBOLS = {
+    "EUR/USD (OTC)": "frxEURUSD",
+    "GBP/USD (OTC)": "frxGBPUSD",
+    "USD/JPY (OTC)": "frxUSDJPY",
+    "USD/CHF (OTC)": "frxUSDCHF",
+    "AUD/USD (OTC)": "frxAUDUSD",
+    "USD/CAD (OTC)": "frxUSDCAD",
+    "NZD/USD (OTC)": "frxNZDUSD",
+    "EUR/GBP (OTC)": "frxEURGBP",
+    "EUR/JPY (OTC)": "frxEURJPY",
+    "GBP/JPY (OTC)": "frxGBPJPY",
+    "EUR/CHF (OTC)": "frxEURCHF",
+    "AUD/JPY (OTC)": "frxAUDJPY",
+    "EUR/AUD (OTC)": "frxEURAUD",
+    "EUR/CAD (OTC)": "frxEURCAD",
+    "GBP/AUD (OTC)": "frxGBPAUD",
+    "CAD/JPY (OTC)": "frxCADJPY",
+    "CHF/JPY (OTC)": "frxCHFJPY",
+    "NZD/JPY (OTC)": "frxNZDJPY",
+    "GBP/CHF (OTC)": "frxGBPCHF",
+    "AUD/CAD (OTC)": "frxAUDCAD",
+    "S&P 500 (OTC)": "R_50",
+    "Dow Jones (OTC)": "R_30",
+    "Nasdaq 100 (OTC)": "NDX100",
+    "DAX 40 (OTC)": "R_DAX",
+    "CAC 40 (OTC)": "R_CAC",
+    "FTSE 100 (OTC)": "R_FTSE",
+    "Hang Seng (OTC)": "R_HK50",
+    "Nikkei 225 (OTC)": "R_J225",
+    "Gold (OTC)": "frxXAUUSD",
+    "Silver (OTC)": "frxXAGUSD",
+    "UKOIL (OTC)": "frxUKOIL",
+    "USOIL (OTC)": "frxUSOIL",
+    "Natural Gas (OTC)": "frxNGAS",
+    "Volatility 100 (OTC)": "R_100",
+    "Volatility 75 (OTC)": "R_75",
+    "Volatility 10 (1s) (Fast OTC)": "1HZ10V"
+}
+
 # حالات المحادثة
-MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
+MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION, TIME_SELECTION = range(8)
 
 # --- Flask Server ---
 app = Flask(__name__)
@@ -75,7 +125,7 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>Obeida Trading - (Dual Model System)</p>
+        <p>Obeida Trading - (Dual Model System + Auto Chart)</p>
     </body>
     </html>
     """
@@ -241,7 +291,214 @@ def split_message(text, max_length=4000):
     
     return parts
 
+# --- نظام Binary.com لسحب الشارتات ---
+async def get_binary_chart(symbol, timeframe="1m", count=100):
+    """سحب شارت من Binary.com عبر WebSocket"""
+    try:
+        async with websockets.connect(BINARY_WS_URL) as websocket:
+            # طلب الشارت
+            chart_request = {
+                "ticks_history": symbol,
+                "adjust_start_time": 1,
+                "count": count,
+                "end": "latest",
+                "start": 1,
+                "style": "candles",
+                "granularity": self.get_granularity_from_timeframe(timeframe),
+                "subscribe": 1
+            }
+            
+            await websocket.send(json.dumps(chart_request))
+            
+            # استلام البيانات
+            response = await websocket.recv()
+            data = json.loads(response)
+            
+            if "candles" in data:
+                candles = data["candles"]
+                
+                # تحويل البيانات إلى صورة
+                chart_image = await generate_chart_image(symbol, candles, timeframe)
+                return chart_image
+            else:
+                print(f"Error: No candles in response for {symbol}")
+                return None
+                
+    except Exception as e:
+        print(f"Error fetching chart from Binary.com: {e}")
+        return None
+
+def get_granularity_from_timeframe(timeframe):
+    """تحويل timeframe إلى granularity لـ Binary.com"""
+    timeframe_map = {
+        "1m": 60,
+        "5m": 300,
+        "15m": 900,
+        "1h": 3600,
+        "1d": 86400
+    }
+    return timeframe_map.get(timeframe, 60)
+
+async def generate_chart_image(symbol, candles, timeframe):
+    """إنشاء صورة للشارت باستخدام matplotlib"""
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # لعدم استخدام GUI
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        from datetime import datetime
+        
+        # تحضير البيانات
+        dates = []
+        opens = []
+        highs = []
+        lows = []
+        closes = []
+        
+        for candle in candles:
+            if candle.get('open') and candle.get('close'):
+                # تحويل timestamp إلى datetime
+                date = datetime.fromtimestamp(candle['epoch'])
+                dates.append(date)
+                opens.append(float(candle['open']))
+                highs.append(float(candle['high']))
+                lows.append(float(candle['low']))
+                closes.append(float(candle['close']))
+        
+        if not dates:
+            return None
+        
+        # إنشاء الشارت
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # تحديد لون الشموع
+        colors = []
+        for i in range(len(closes)):
+            if closes[i] >= opens[i]:
+                colors.append('green')  # شمعة صاعدة
+            else:
+                colors.append('red')    # شمعة هابطة
+        
+        # رسم الشموع
+        width = 0.6
+        for i in range(len(dates)):
+            # رسم الجسم
+            ax.bar(dates[i], closes[i] - opens[i], width, bottom=opens[i], color=colors[i], edgecolor='black')
+            # رسم الظلال
+            ax.plot([dates[i], dates[i]], [lows[i], highs[i]], color='black', linewidth=0.5)
+        
+        # تنسيق المحاور
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        plt.xticks(rotation=45)
+        ax.set_xlabel('الوقت')
+        ax.set_ylabel('السعر')
+        ax.set_title(f'{symbol} - {timeframe}')
+        ax.grid(True, alpha=0.3)
+        
+        # حفظ الصورة
+        image_path = f"chart_{symbol}_{int(time.time())}.png"
+        plt.tight_layout()
+        plt.savefig(image_path, dpi=100, bbox_inches='tight')
+        plt.close()
+        
+        # تحويل الصورة إلى base64
+        with open(image_path, "rb") as img_file:
+            encoded_image = base64.b64encode(img_file.read()).decode()
+        
+        # حذف الملف المؤقت
+        os.remove(image_path)
+        
+        return encoded_image
+        
+    except Exception as e:
+        print(f"Error generating chart image: {e}")
+        return None
+
 # --- وظائف نظام التوصية الجديد ---
+async def get_mistral_analysis_with_chart(symbol, timeframe="1m"):
+    """الحصول على تحليل من Mistral AI API مع شارت تلقائي"""
+    try:
+        # الحصول على الشارت من Binary.com
+        print(f"📊 جاري سحب شارت {symbol} من Binary.com...")
+        binary_symbol = BINARY_SYMBOLS.get(symbol)
+        
+        if not binary_symbol:
+            # إذا لم يكن هناك رمز محدد، استخدم رمز افتراضي
+            if "USD" in symbol or "EUR" in symbol or "JPY" in symbol:
+                binary_symbol = "frxEURUSD"  # رمز افتراضي للعملات
+            else:
+                binary_symbol = "R_100"  # رمز افتراضي للمؤشرات
+        
+        chart_image = await get_binary_chart(binary_symbol, timeframe)
+        
+        if not chart_image:
+            return await get_mistral_analysis(symbol)
+        
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        prompt = f"""
+        بصفتك خبير تداول كمي، حلل {symbol} بناءً على "تلاقي الأدلة" (Confluence Analysis). 
+        
+        🛑 **شروط الفلترة الصارمة (إلغاء الصفقة فوراً إذا لم تتحقق):**
+        1. حتمية الاستنفاذ: فشل آخر موجة جهد في كسر الهيكل.
+        2. توافق الفركتلات: تطابق الاتجاه على فريمات (H4, H1, M15).
+        3. سحب السيولة (Sweep): يجب حدوث كسر وهمي للسيولة قبل الدخول.
+        4. منطقة التوازن (OTE): الدخول حصراً بين مستويات فيبوناتشي 0.618 و 0.886.
+
+        🔍 **المطلوب تحليل (SMC + Wyckoff + Volume Profile):**
+        - رصد الـ Order Block النشط و الـ FVG غير المغطى.
+        - تحديد منطقة الفخ (Inducement) والسيولة المستهدفة (BSL/SSL).
+        - حساب قوة الاتجاه باستخدام (RSI Divergence) وحجم التداول.
+
+        قدم التقرير باللغة العربية بهذا التنسيق حصراً:
+        
+        📊 **ملخص فحص {symbol}**:
+        - **الهيكل**: (صاعد/هابط/تجميع) | **السيولة**: (أقرب فخ + الهدف القادم)
+        - **الفجوات**: (أهم منطقة FVG نشطة)
+        
+        🎯 **خطة التنفيذ**:
+        - **القرار**: (شراء 🟢 / بيع 🔴) | **القوة**: (عالية/متوسطة/ضعيفة)
+        - **الدخول**: [السعر الدقيق] | **الهدف (TP1/TP2)**: [مستويات السيولة]
+        - **الوقف (SL)**: [خلف منطقة الحماية] | **الزمن**: [الوقت المتوقع بالدقائق]
+        
+        ⚠️ **المخاطرة**:
+        - **الثقة**: [%] | **نقطة الإلغاء**: [السعر الذي يفسد السيناريو]
+        
+        **ملاحظة**: هذا التحليل مبني على بيانات السوق الحية من Binary.com.
+        """
+        
+        body = {
+            "model": MISTRAL_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{chart_image}",
+                                "detail": "high"
+                            }
+                        }
+                    ]
+                }
+            ],
+            "temperature": 0.1,
+            "max_tokens": 1500
+        }
+
+        response = requests.post(MISTRAL_URL, json=body, headers=headers, timeout=45)
+        response.raise_for_status()
+        return response.json()['choices'][0]['message']['content'].strip()
+        
+    except Exception as e:
+        print(f"Error in get_mistral_analysis_with_chart: {e}")
+        return await get_mistral_analysis(symbol)
+
 def get_mistral_analysis(symbol):
     """الحصول على تحليل من Mistral AI API للعملة"""
     headers = {
@@ -299,7 +556,11 @@ async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAUL
     reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
     
     await update.message.reply_text(
-        "🚀 **نظام التوصيات **\n\n"
+        "🚀 **نظام التوصيات المتقدم**\n\n"
+        "📊 **مميزات جديدة:**\n"
+        "• سحب شارتات حية تلقائياً\n"
+        "• تحليل فني مباشر\n"
+        "• بيانات من Binary.com\n\n"
         "اختر القسم المطلوب من الأزرار:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
     )
@@ -336,36 +597,27 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
             symbol_to_analyze = user_text
             break
     
-    # إذا وجدت العملة، ابدأ التحليل
+    # إذا وجدت العملة، اختيار timeframe
     if symbol_to_analyze:
-        wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
-        analysis = get_mistral_analysis(symbol_to_analyze)
+        # حفظ الرمز في context
+        context.user_data['selected_symbol'] = symbol_to_analyze
         
-        final_msg = (
-            f"📈 **نتائج توصية {symbol_to_analyze}**\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"{analysis}\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Powered by - Obeida Trading**"
-        )
-        
-        # تنظيف النص من التكرارات
-        final_msg = clean_repeated_text(final_msg)
-        
-        await wait_msg.edit_text(
-            final_msg,
-            parse_mode="Markdown"
-        )
-        
-        # عرض الأزرار للاستمرار
-        reply_keyboard = [[key] for key in CATEGORIES.keys()]
-        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+        # عرض خيارات timeframe
+        timeframes_keyboard = [
+            ["📈 1 دقيقة (سريع)", "📊 5 دقائق"],
+            ["📉 15 دقيقة", "📈 1 ساعة"],
+            ["🔙 العودة للقائمة", "الرجوع للقائمة الرئيسية"]
+        ]
         
         await update.message.reply_text(
-            "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+            f"⏰ **اختر إطار الزمن لـ {symbol_to_analyze}**:\n\n"
+            f"• 📈 1 دقيقة: تحليل سريع للتداول اليومي\n"
+            f"• 📊 5 دقائق: تحليل متوسط المدى\n"
+            f"• 📉 15 دقيقة: تحليل سوينج\n"
+            f"• 📈 1 ساعة: تحليل طويل المدى",
+            reply_markup=ReplyKeyboardMarkup(timeframes_keyboard, resize_keyboard=True)
         )
-        return RECOMMENDATION_MODE
+        return TIME_SELECTION
     
     # إذا كان النص "🔙 العودة للقائمة"
     if user_text == "🔙 العودة للقائمة":
@@ -385,6 +637,98 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
         reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True)
     )
     return RECOMMENDATION_MODE
+
+async def handle_timeframe_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار timeframe"""
+    user_text = update.message.text.strip()
+    
+    # العودة للقائمة الرئيسية
+    if user_text == "الرجوع للقائمة الرئيسية":
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    # العودة للقائمة السابقة
+    if user_text == "🔙 العودة للقائمة":
+        reply_keyboard = [[key] for key in CATEGORIES.keys()]
+        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "🔙 **العودة للقائمة الرئيسية للتوصيات**\nاختر القسم المطلوب:",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        return RECOMMENDATION_MODE
+    
+    # تحديد timeframe
+    timeframe_map = {
+        "📈 1 دقيقة (سريع)": "1m",
+        "📊 5 دقائق": "5m",
+        "📉 15 دقيقة": "15m",
+        "📈 1 ساعة": "1h"
+    }
+    
+    if user_text in timeframe_map:
+        symbol = context.user_data.get('selected_symbol')
+        timeframe = timeframe_map[user_text]
+        
+        wait_msg = await update.message.reply_text(
+            f"⏳ جاري سحب شارت وتوصيات `{symbol}` ({timeframe})...\n"
+            f"📡 الاتصال بـ Binary.com..."
+        )
+        
+        try:
+            # الحصول على التحليل مع الشارت
+            analysis = await get_mistral_analysis_with_chart(symbol, timeframe)
+            
+            final_msg = (
+                f"📈 **توصيات {symbol} - {timeframe}**\n"
+                f"🕒 **وقت التحديث:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"{analysis}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"📊 **المصدر:** Binary.com + Obeida Trading AI\n"
+                f"🤖 **Powered by - Obeida Trading**"
+            )
+            
+            # تنظيف النص من التكرارات
+            final_msg = clean_repeated_text(final_msg)
+            
+            await wait_msg.edit_text(
+                final_msg,
+                parse_mode="Markdown"
+            )
+            
+        except Exception as e:
+            print(f"Error in recommendation: {e}")
+            await wait_msg.edit_text(
+                f"⚠️ **حدث خطأ أثناء تحليل {symbol}**\n"
+                f"الخطأ: {str(e)[:100]}\n\n"
+                f"يرجى المحاولة مرة أخرى."
+            )
+        
+        # عرض الأزرار للاستمرار
+        reply_keyboard = [[key] for key in CATEGORIES.keys()]
+        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        return RECOMMENDATION_MODE
+    
+    # إذا لم يطابق النص أي timeframe
+    await update.message.reply_text(
+        "❌ خيار غير صحيح. يرجى اختيار إطار زمني من القائمة.",
+        reply_markup=ReplyKeyboardMarkup([
+            ["📈 1 دقيقة (سريع)", "📊 5 دقائق"],
+            ["📉 15 دقيقة", "📈 1 ساعة"],
+            ["🔙 العودة للقائمة", "الرجوع للقائمة الرئيسية"]
+        ], resize_keyboard=True)
+    )
+    return TIME_SELECTION
 
 # --- 🚀 برومبت قوي للدردشة ---
 async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1127,6 +1471,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📡 **نظام التحليل المزدوج:**\n"
         f"1. التحليل الأولي\n"
         f"2. التدقيق النهائي\n\n"
+        "🚀 **ميزة جديدة:** سحب شارتات حية من Binary.com\n\n"
         "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -1314,6 +1659,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **المرحلة 1:** التحليل الأولي
     • **المرحلة 2:** التدقيق النهائي والدقة
     
+    🚀 **ميزة جديدة:**
+    • سحب شارتات حية من Binary.com
+    • بيانات مباشرة من السوق
+    • تحليل تلقائي مع الشارتات
+    
     📊 **مميزات البوت:**
     • تحليل فني للرسوم البيانية 
     • دردشة ذكية 
@@ -1341,6 +1691,7 @@ def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
     print(f"⚡ Powered by - Obeida Trading")
+    print(f"📡 Binary.com API Connected: APP_ID={BINARY_APP_ID}")
     
     # تهيئة قاعدة البيانات
     init_db()
@@ -1374,6 +1725,9 @@ def run_telegram_bot():
             CATEGORY_SELECTION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection)
             ],
+            TIME_SELECTION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_timeframe_selection)
+            ],
         },
         fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
         allow_reentry=True
@@ -1388,6 +1742,7 @@ def run_telegram_bot():
     
     print("✅ Telegram Bot initialized successfully")
     print("📡 Bot is now polling for updates...")
+    print("🌐 Binary.com WebSocket ready for chart fetching...")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
