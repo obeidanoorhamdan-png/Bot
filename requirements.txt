@@ -9,4 +9,3 @@ cachetools
 emoji
 pytz
 pytz-deprecation-shim
-websockets
