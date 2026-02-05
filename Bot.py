@@ -952,7 +952,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     ]
                 }
             ],
-            "max_tokens": 1800,
+            "max_tokens": 800,
             "temperature": 0.10,
             "top_p": 0.95,
             "random_seed": 42,
@@ -1163,7 +1163,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     ]
                 }
             ],
-            "max_tokens": 1800,
+            "max_tokens": 800,
             "temperature": 0.0,
             "top_p": 0.95,
             "random_seed": 42,
