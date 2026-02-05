@@ -7,7 +7,7 @@ import requests
 import threading
 import time
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
@@ -18,7 +18,8 @@ TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U"
 # ⚡ إعدادات Mistral AI API الجديدة
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "WhGHh0RvwtLLsRwlHYozaNrmZWkFK2f1")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
-MISTRAL_MODEL = "pixtral-large-latest"  # استخدام موديل واحد فقط
+MISTRAL_MODEL = "pixtral-large-latest"
+MISTRAL_MODEL_AUDIT = "mistral-large-pixtral-2411"  # موديل التدقيق
 
 DB_NAME = "abood-gpt.db"
 
@@ -50,12 +51,8 @@ CATEGORIES = {
         "Coca-Cola (OTC)", "Disney (OTC)", "Alibaba (OTC)", "Walmart (OTC)"
     ]
 }
-
 # حالات المحادثة
-(
-    MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, 
-    ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION
-) = range(7)
+MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
 
 # --- Flask Server ---
 app = Flask(__name__)
@@ -78,14 +75,14 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>Obeida Trading - (Advanced Analysis System)</p>
+        <p>Obeida Trading - (Dual Model System)</p>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "ai_provider": "Mistral AI", "model": f"{MISTRAL_MODEL}", "timestamp": time.time()}
+    return {"status": "active", "ai_provider": "Mistral AI", "model": f"{MISTRAL_MODEL} + {MISTRAL_MODEL_AUDIT}", "timestamp": time.time()}
 
 @app.route('/ping')
 def ping():
@@ -135,19 +132,20 @@ def get_user_setting(user_id):
     return ("M1", "قصير (1m-15m)")
 
 def get_market_session():
-    current_hour = (datetime.utcnow() + timedelta(hours=2)).hour  # توقيت غزة
-
-    if 2 <= current_hour < 8:
-        return "الجلسة الآسيوية", "02:00-08:00 بتوقيت غزة", "منخفضة"
-    elif 8 <= current_hour < 14:
-        return "جلسة لندن/أوروبا", "08:00-14:00 بتوقيت غزة", "مرتفعة"
-    elif 14 <= current_hour < 20:
-        return "جلسة نيويورك", "14:00-20:00 بتوقيت غزة", "عالية جداً"
-    elif 20 <= current_hour < 24 or 0 <= current_hour < 2:
-        return "جلسة المحيط الهادئ", "20:00-02:00 بتوقيت غزة", "منخفضة"
+    """الحصول على معلومات جلسة السوق الحالية"""
+    current_hour = datetime.utcnow().hour
+    
+    if 0 <= current_hour < 6:
+        return "الجلسة الآسيوية", "00:00-06:00 GMT", "منخفضة"
+    elif 6 <= current_hour < 12:
+        return "جلسة لندن/أوروبا", "06:00-12:00 GMT", "مرتفعة"
+    elif 12 <= current_hour < 18:
+        return "جلسة نيويورك", "12:00-18:00 GMT", "عالية جداً"
+    elif 18 <= current_hour < 24:
+        return "جلسة المحيط الهادئ", "18:00-24:00 GMT", "منخفضة"
     else:
         return "جلسة عالمية", "متداخلة", "متوسطة"
-        
+
 def format_trade_time_for_prompt(trade_time):
     """تنسيق وقت الصفقة للبرومبت"""
     if trade_time == "قصير (1m-15m)":
@@ -281,7 +279,7 @@ def get_mistral_analysis(symbol):
     """
     
     body = {
-        "model": MISTRAL_MODEL,  # استخدام موديل واحد فقط
+        "model": MISTRAL_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens": 1500
@@ -437,7 +435,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # برومبتات متخصصة حسب الاختيار
     system_prompts = {
-        "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عمق في:
+        "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عميقة في:
 🎯 **التحليل الفني والمالي:** خبرة في أسواق المال، تحليل الشارتات، واستراتيجيات التداول
 💻 **البرمجة والتقنية:** إتقان Python، JavaScript، تطوير الويب، الذكاء الاصطناعي
 📊 **البيانات والتحليل:** تحليل البيانات، الإحصاء، وتقديم رؤى استراتيجية
@@ -628,44 +626,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-async def start_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء عملية تحليل الصور"""
-    user_id = update.effective_user.id
-    candle, trade_time = get_user_setting(user_id)
-    
-    if not candle or not trade_time:
-        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-        await update.message.reply_text(
-            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    
-    keyboard = [["الرجوع للقائمة الرئيسية"]]
-    
-    time_display = format_trade_time_for_prompt(trade_time)
-    
-    await update.message.reply_text(
-        f"✅ **جاهز للتحليل**\n\n"
-        f"📊 **نظام التحليل:**\n"
-        f"• نظام تحليل واحد باستخدام موديل pixtral-large-latest\n"
-        f"• تحليل متكامل مع قراءة الصورة\n"
-        f"• نتائج دقيقة ومفصلة\n\n"
-        f"⚙️ **الإعدادات الحالية:**\n"
-        f"• سرعة الشموع: {candle}\n"
-        f"• {time_display}\n\n"
-        f"📤 **أرسل صورة الشارت الآن:**",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    
-    return ANALYZE_MODE
-
-# --- كود تحليل الصور المحسن مع موديل واحد فقط ---
+# --- كود تحليل الصور المحسن والمدمج الكامل مع نظام الموديل المزدوج ---
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني المتقدم باستخدام موديل واحد فقط"""
+    """معالجة الصور للتحليل الفني المتقدم مع نظام الموديل المزدوج"""
     user_id = update.effective_user.id
     candle, trade_time = get_user_setting(user_id)
     
@@ -679,7 +642,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return MAIN_MENU
 
-    wait_msg = await update.message.reply_text("📊 جاري تحليل الشارت ...")
+    wait_msg = await update.message.reply_text("📊 جاري تحليل شارت بتقنيات متطورة ... ")
     photo = await update.message.photo[-1].get_file()
     path = f"img_{user_id}_{int(time.time())}.jpg"
     
@@ -706,23 +669,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # تحديد أوقات الأخبار الخطيرة
         high_impact_hours = [
-              # أخبار أمريكية رئيسية
-              (14, 30),  # CPI / NFP
-              (16, 0),   # بيانات ISM / PMI
-              (20, 0),   # FOMC / تصريحات الفيدرالي
-              # أخبار أوروبية
-              (8, 0),    # بيانات ألمانيا / فرنسا
-              (9, 0),    # منطقة اليورو PMI / CPI
-              (10, 0),   # قرارات ECB / تصريحات
-              
-              # أخبار بريطانية
-              (9, 0),    # بيانات المملكة المتحدة
-              (11, 0),   # قرارات بنك إنجلترا
-              # أخبار يابانية وآسيوية
-              (2, 30),   # بيانات اليابان
-              (4, 0),    # الصين / آسيا
-              # السلع والنفط
-              (17, 30),  # مخزونات النفط الأمريكية (EIA)
+            (13, 30), (15, 0), (19, 0),  # أخبار أمريكية رئيسية
+            (8, 0), (9, 0), (10, 0)      # أخبار أوروبية
         ]
         
         # تحقق إذا كنا في نطاق ساعة من خبر عالي التأثير
@@ -741,11 +689,11 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # ========== الفلتر الزمني (Kill Zones) ==========
         kill_zone_status = ""
-        if 10 <= current_hour < 13:  # London Kill Zone
-            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
-        elif 15 <= current_hour < 18:  # New York Kill Zone
-            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
-        elif 0 <= current_hour < 9 or current_hour >= 22:  # Asian Session
+        if 8 <= current_hour < 11:  # London Kill Zone
+            kill_zone_status = "داخل منطقة القتل السعري (لندن 8-11 GMT)"
+        elif 13 <= current_hour < 16:  # New York Kill Zone
+            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 13-16 GMT)"
+        elif 22 <= current_hour or current_hour < 7:  # Asian Session
             kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
         else:
             kill_zone_status = "خارج مناطق القتل الرئيسية"
@@ -776,239 +724,189 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             trading_strategy = "تداول موقف (Position) - طويل الأجل"
             position_sizing = "حجم صغير مع وقف خسارة واسع"
         
-        # البرومبت الكامل الذي طلبته
+        # البرومبت الجديد الكامل مع ربط المعطيات
         prompt = f"""
-You are an expert technical analyst in the Smart Money Concepts (SMC) methodology, specializing in stocks, ETFs, commodities, crypto, and forex. Your task is to analyze the attached chart and provide recommendations according to the specified structure.
+أنت محلل فني خبير في مدرسة Smart Money Concepts (SMC) متخصص في الأسهم والصناديق والسلع والكريبتو والعملات. مهمتك هي تحليل الشارت المرفق وتقديم التوصيات وفقاً للتنسيق المحدد.
 
-Governing Rules  
-1. Primary framework: SMC with classical technical analysis support  
-2. Safety shield: {news_warning if news_warning else "Market is safe from news"}  
-3. Timeframe classification: {candle_category}  
-4. Trading strategy: {trading_strategy}  
-5. Position sizing: {position_sizing}  
-6. Momentum priority: Engulfing candles (>80%) closing above a previous high = continuation signal. Do not anticipate reversals solely due to unfilled FVGs.  
-7. OTC logic: Look for candle sequences (3 strong candles → the 4th continues in the same direction).  
-8. Timeframe adjustment: On lower timeframes, ignore MACD when it conflicts with clear price action. Use it only as secondary confirmation.  
-9. False momentum detection: Verify sustainability of the move.  
-10. Data extraction: Use precise coordinates from the right price axis.  
-11. Viability filter: RR ≥ 1:2 with news adjustment.  
-12. Absolute credibility: No signal unless it is 100% clear.  
-13. No neutrality: Clear decision only (Buy/Sell/Hold) with confidence level.
+🔰 **القواعد الأساسية الحاكمة**
+1. **المدرسة المعتمدة:** SMC كإطار عمل رئيسي مع دعم بالتحليل الكلاسيكي
+2. **الدرع الأساسي:** {news_warning if news_warning else "✅ الوضع آمن من الأخبار"}
+3. **التصنيف الزمني:** {candle_category}
+4. **استراتيجية التداول:** {trading_strategy}
+5. **إدارة الحجم:** {position_sizing}
+6. **أولوية الزخم:** الشموع الابتلاعية (>80%) مع إغلاق فوق قمة سابقة = إشارة استمرار. ممنوع توقع الانعكاس لمجرد وجود FVG غير مغطاة.
+7. **منطق OTC:** ابحث عن 'تتابع الشموع' (3 شموع قوية → الشمعة الرابعة في نفس الاتجاه).
+8. **التصحيح الزمني:** في الفريمات الصغيرة، تجاهل MACD عند تعارضه مع السلوك السعري الواضح. استخدمه كتأكيد ثانوي فقط.
+9. **كشف وهم الزخم:** تحقق من استدامة الحركة.
+10. **استخراج البيانات:** إحداثيات دقيقة من المحور اليميني.
+11. **فلتر الجدوى:** نسبة RR ≥ 1:2 مع تعديل الأخبار.
+12. **المصداقية المطلقة:** لا إشارة إلا إذا كانت 100% واضحة.
+13. **تقييد الوسطية:** قرار واضح فقط (شراء/بيع/احتفاظ) مع مستوى الثقة.
 
-Phase 1: Initial Screening & Warnings  
-1.1 Triple-layer safety system  
-Layer 1: Safety shield – {news_warning if news_warning else "Safe"}  
-Layer 2: False momentum detection – analyze large candles, sustainability (3 candles), follow-through  
-Layer 3: Data validation – precise price extraction, number matching, range identification  
+📊 **المرحلة 1: الفحص الأولي والتحذيرات**
+#1.1 نظام الأمان ثلاثي الطبقات
+• الطبقة 1: الدرع الأساسي - {news_warning if news_warning else "✅ الوضع آمن"}
+• الطبقة 2: كشف وهم الزخم - فحص الشموع الكبيرة، اختبار الاستدامة (3 شموع)، تحليل المتابعة
+• الطبقة 3: التحقق من البيانات - استخراج السعر بدقة، مطابقة الأرقام، تحديد النطاق
 
-1.2 OTC risk detection  
-Manipulation signs: Instant reversals, break-and-return, price moves inconsistent with volume, illogical formations  
-Protection strategy: Avoid last 10 seconds, use pending orders, widen SL by 20%  
+#1.2 كشف مخاطر OTC
+• إشارات التلاعب: انعكاس لحظي، اختراق ثم عودة، حركة غير متوافقة مع الحجم، تشكيلات غير منطقية
+• إستراتيجية الحماية: تجنب آخر 10 ثوانٍ، استخدام أوامر معلقة، زيادة SL بنسبة 20%
 
-1.3 Correlation analysis  
-Forex: Dollar index, correlated currencies, bonds  
-Stocks: Market index, sector, earnings news  
-Crypto: Bitcoin, altcoin correlation, fear & greed index  
+#1.3 تحليل الارتباط السعري
+• Forex: مؤشر الدولار، العملات المرتبطة، السندات
+• Stocks: المؤشر العام، القطاع، أخبار الأرباح
+• Crypto: البيتكوين، علاقة الألتكوين، مؤشر الخوف والجشع
 
-Phase 2: Advanced Structural Analysis  
-2.1 Analytical framework  
-SMC with classical support, precise use of SMC terminology, identify BOS and CHoCH  
+📈 **المرحلة 2: التحليل الهيكلي المتقدم**
+#2.1 تحديد مدرسة التحليل
+• SMC مع دعم كلاسيكي، استخدام مصطلحات SMC بدقة، تحديد BOS و CHoCh
 
-2.2 Numerical coordinate extraction  
-Read prices from the axis, identify highs/lows, calculate percentages, verify accuracy  
+#2.2 استخراج الإحداثيات الرقمية
+• قراءة الأسعار من المحور، تحديد الأعلى والأدنى، حساب النسب المئوية، التحقق من الدقة
 
-2.3 Pricing filter (PD Array)  
-Identify swing high and low, equilibrium at 50%  
-Discount zone for buys, premium zone for sells  
-Enter only on breaks with strong BOS momentum  
-Emergency zones (below 20% / above 80%)  
+#2.3 مصفاة التسعير (PD Array)
+• تحديد القمة والقاع، خط التوازن 50%
+• منطقة الخصم للشراء، منطقة الغلاء للبيع
+• الدخول مع الكسر فقط عند BOS بزخم قوي
+• مناطق الطوارئ (أقل 20% / أعلى 80%)
 
-Phase 3: Advanced Liquidity & Momentum Analysis  
-3.1 False momentum detection  
-Signs: Single news candle, price gaps, lack of follow-through, long wicks, V-reversals  
-Real test: 3 consecutive candles, body progression, structure alignment, volume increase, level breaks  
+💰 **المرحلة 3: تحليل السيولة والزخم المتقدم**
+#3.1 كشف وهم الزخم
+• العلامات: شمعة خبر منفردة، فجوات سعرية، غياب المتابعة، ذيول طويلة، V-Reversal
+• الاختبار الحقيقي: 3 شموع متتالية، تدرج في الأجسام، توافق مع الهيكل، زيادة الحجم، اختراق مستويات
 
-3.2 Advanced liquidity mapping  
-Equal highs/lows, inducement zones, liquidity sweeps, open FVGs, stop levels  
+#3.2 خرائط السيولة المتقدمة
+• Equal Highs/Lows، مناطق Inducement، Liquidity Sweeps، FVG مفتوحة، Stop Levels
 
-3.3 Sudden momentum reversal analysis  
-Signals: Rejection candle after impulse, failed liquidity break, volume drop, divergence  
-Strategy: Partial exit at first rejection, move SL to breakeven, do not trade against 3 strong candles  
+#3.3 تحليل انعكاس الزخم المفاجئ
+• الإشارات: شمعة رفض بعد اندفاع، فشل اختراق سيولة، انخفاض الحجم، ديفرجنس
+• الإستراتيجية: خروج جزئي عند أول رفض، تحريك SL للتعادل، عدم الدخول ضد 3 شموع قوية
 
-Phase 4: Smart Decision System  
-4.1 Quad confluence filter (4/4)  
-Valid POI, clear candlestick pattern, clear price action, trend alignment  
+🎯 **المرحلة 4: نظام القرار الذكي**
+#4.1 فلتر التلاقي الرباعي (4/4)
+• POI صالح، نموذج شموعي، سلوك سعري واضح، توافق مع الاتجاه
 
-4.2 Risk adjustment for news  
-Stop Loss = SL × {news_risk_multiplier}  
-Position size = size ÷ {news_risk_multiplier}  
-RR ≥ 1:{max(3, 2 * news_risk_multiplier)}  
+#4.2 تعديل المخاطر حسب الأخبار
+• Stop Loss = SL × {news_risk_multiplier}
+• الحجم = الحجم ÷ {news_risk_multiplier}
+• RR ≥ 1:{max(3, 2 * news_risk_multiplier)}
 
-4.3 Full trade ban conditions  
-High-impact news ±30 minutes, clear false momentum, failed confluence filter, price at equilibrium  
-Recent V-reversal, sharp conflict between indicators and price action  
+#4.3 شروط الحظر الكامل
+• خبر عالي التأثير ±30 دقيقة، زخم وهمي واضح، فشل فلتر التلاقي، السعر في Equilibrium
+• V-Reversal حديث، تضارب حاد بين المؤشرات والسلوك
 
-4.4 Indicator conflict resolution  
-Priority:  
-1) Price action  
-2) Liquidity & momentum  
-3) Indicators (confirmation only)  
-4) Timeframe context  
+#4.4 حل تضارب المؤشرات
+• الأولوية: 1) السلوك السعري، 2) السيولة والزخم، 3) المؤشرات (تأكيد فقط)، 4) السياق الزمني
 
-Phase 5: Candlestick Behavior Monitoring  
-5.1 Candle response at POI  
-Pattern: Rejection / Absorption / Consolidation  
-Strength: Body/Wicks  
-Volume: Low / Normal / High  
-Decisive patterns:  
-Test candle (long wick + distant close + moderate volume)  
-Rejection candle (Pin bar + opposite close + high volume)  
+📊 **المرحلة 5: مراقبة سلوك الشموع**
+#5.1 استجابة الشموع عند POI
+• النمط: رفض / امتصاص / جانبي
+• القوة: جسم/ذيول، الحجم: منخفض / طبيعي / مرتفع
+• الأنماط الحاسمة: شمعة اختبار (ظل طويل + إغلاق بعيد + حجم معتدل)، شمعة رفض (Pin Bar + إغلاق معاكس + حجم مرتفع)
 
-5.2 Three-candle rule  
-Bullish: Support test → mild pullback → upside break  
-Bearish: Resistance test → mild bounce → downside break  
+#5.2 قانون 3 شموع
+• صعود: اختبار دعم → تصحيح خفيف → اختراق أعلى
+• هبوط: اختبار مقاومة → ارتداد خفيف → اختراق أسفل
 
-5.3 Temporal sequence  
-Candle 1: Reaction  
-Candle 2: Confirmation/Rejection  
-Candle 3: Decision  
-Criteria: No confirmation within 3 candles → ignore  
-Break and return within one candle → strong signal  
+#5.3 التتابع الزمني
+• الشمعة 1: رد فعل، الشمعة 2: تأكيد/تكذيب، الشمعة 3: قرار
+• معايير: عدم التأكيد خلال 3 شموع → تجاهل، اختراق ثم عودة خلال شمعة → إشارة قوية
 
-Phase 6: Enhanced MACD Analysis  
-6.1 Quad analysis  
-Crossover phase and angle  
-Zero line position and distance  
-Histogram state and momentum link  
-Divergence check at liquidity or POI  
+📉 **المرحلة 6: تحليل MACD المحسن**
+#6.1 التحليل الرباعي
+• مرحلة التقاطع وزاويته، موقع خط الصفر والمسافة، حالة الهيستوجرام وربطها بالزخم، فحص الدايفرجنس عند السيولة أو POI
 
-6.2 Rules by timeframe  
-1–5 min: Ignore slow crossovers, focus on medium histogram, use as confirmation only  
-15–60 min: Focus on zero line, look for divergence at POI, one confluence factor  
+#6.2 قواعد حسب الفريم
+• 1–5 دقائق: تجاهل التقاطعات البطيئة، التركيز على الهيستوجرام المتوسط، استخدام كتأكيد فقط
+• 15–60 دقيقة: التركيز على خط الصفر، البحث عن الدايفرجنس عند POI، أحد معايير التلاقي
 
-6.3 Conflict resolution  
-1. Clear price action → ignore MACD  
-2. Conflict with 3 candles → reduce size by 50%  
-3. Conflict with BOS → delay one candle  
-4. Conflict with divergence → warning only  
+#6.3 حل التعارض
+1. سلوك سعري واضح → تجاهل MACD
+2. تعارض مع 3 شموع → تقليل الحجم 50%
+3. تعارض مع BOS → تأجيل شمعة
+4. تعارض مع دايفرجنس → تحذير فقط
 
-Phase 7: Multi-Timeframe Analysis  
-7.1 Four-frame system  
-HTF: Primary trend  
-MTF1: Supply/Demand zones  
-MTF2: Active order blocks  
-LTF: Entry timing  
+⏰ **المرحلة 7: تحليل تعدد الإطارات**
+#7.1 نظام الإطارات الأربعة
+• HTF: الاتجاه العام، MTF1: مناطق العرض/الطلب، MTF2: Order Blocks نشطة، LTF: توقيت الدخول
 
-7.2 Trend alignment  
-Strong (4/4) → +40 confidence  
-Good (3/4) → +30 confidence  
-Partial conflict (2/4) → reduce size by 50%  
-Strong conflict (1/4) → avoid trade  
+#7.2 توافق الاتجاهات
+• قوي (4/4) → +40 ثقة، جيد (3/4) → +30 ثقة
+• متعارض جزئي (2/4) → تقليل الحجم 50%، متعارض قوي (1/4) → تجنب الدخول
 
-7.3 Multi-timeframe strategy  
-For buys: HTF bullish → pullback to supply zone → OB in discount → buy signal  
-For sells: HTF bearish → retrace to demand zone → OB in premium → sell signal  
+#7.3 إستراتيجية التعدد الزمني
+• للشراء: HTF صاعد → تصحيح لمنطقة عرض → OB في Discount → إشارة شراء
+• للبيع: HTF هابط → ارتداد لمنطقة طلب → OB في Premium → إشارة بيع
 
-Phase 8: Confidence Scoring System  
-8.1 Add points (+)  
-Valid POI: +25  
-Clear candlestick pattern: +20  
-Clear price action: +25  
-Timeframe alignment (3/4+): +30  
-Above-average volume: +15  
-Calm news: +20  
-Confirmed BOS: +30  
-FVG fill: +15  
-MACD alignment: +10  
-No indicator conflict: +15  
+🎯 **المرحلة 8: نظام درجات الثقة**
+#8.1 إضافة النقاط (+)
+• POI صالح: +25، نموذج شموعي واضح: +20، سلوك سعري واضح: +25
+• توافق الإطارات (3/4+): +30، حجم أعلى من المتوسط: +15، أخبار هادئة: +20
+• BOS مؤكد: +30، تغطية فجوة سعرية: +15، توافق MACD: +10، لا تعارض مؤشرات: +15
 
-8.2 Deduct points (-)  
-Indicator conflict: -20  
-Strong news: -25  
-False momentum: -15  
-Recent V-reversal: -30  
-Low OTC liquidity: -10  
+#8.2 خصم النقاط (-)
+• تعارض مؤشرات: -20، أخبار قوية: -25، زخم وهمي: -15
+• V-Reversal قريب: -30، سيولة OTC منخفضة: -10
 
-8.3 Confidence levels  
-95–100: Exceptional (Full size +20%)  
-85–94: Very strong (Full size)  
-70–84: Strong (80%)  
-55–69: Medium (60%)  
-40–54: Weak (30% or avoid)  
-Below 40: Rejected  
+#8.3 مستويات الثقة
+• 95–100: 💥💥 استثنائي (حجم كامل +20%)
+• 85–94: 💥 قوي جداً (حجم كامل)
+• 70–84: 🔥 قوي (80%)
+• 55–69: ⚡ متوسط (60%)
+• 40–54: ❄️ ضعيف (30% أو تجنب)
+• <40: 🚫 مرفوض
 
-Phase 9: Advanced Volume Analysis  
-9.1 Volume patterns  
-Breakout: >150% of average  
-Absorption: High volume + limited movement  
-Pullback: <70% of average  
-Indecision: Low volume + range-bound  
-Reversal: Sudden high volume after extended move  
+📊 **المرحلة 9: تحليل الحجم المتقدم**
+#9.1 أنماط الحجم
+• اختراق: >150% من المتوسط، امتصاص: حجم عالي + حركة محدودة
+• تصحيح: <70% من المتوسط، تردد: حجم منخفض + تذبذب
+• انعكاس: حجم مرتفع مفاجئ بعد حركة طويلة
 
-9.2 Volume control points  
-POC: Highest volume = support/resistance  
-VA: 70% of trading = equilibrium  
-EVA: Outside VA = strong signal  
-Low-volume areas: Potential breakout zones  
+#9.2 نقاط التحكم الحجمي
+• POC: أعلى حجم = دعم/مقاومة، VA: 70% تداول = توازن
+• EVA: خارج VA = إشارة قوية، مناطق حجم منخفض: اختراق محتمل
 
-Phase 10: Dynamic Trade Management  
-10.1 Staggered exits  
-Long trades:  
-TP1: Move SL to breakeven + exit 40%  
-TP2: Trail SL above candle + exit 30%  
-TP3: Let 30% trail or exit fully at resistance  
+🔄 **المرحلة 10: إدارة الصفقات الديناميكية**
+#10.1 الخروج المتدرج
+• Long: TP1: SL للتعادل + خروج 40%، TP2: SL أعلى شمعة + خروج 30%
+• TP3: ترك 30% بترايل أو خروج كامل عند مقاومة
 
-10.2 Smart drawdown system  
-40% pullback: Exit 50%  
-Break entry: Exit full  
-Reverse divergence: Move SL  
-V-reversal: Exit 80%  
+#10.2 نظام التراجع الذكي
+• تراجع 40%: خروج 50%، كسر الدخول: خروج كامل
+• ديفرجنس عكسي: تحريك SL، V-Reversal: خروج 80%
 
-10.3 OTC protection  
-Widen SL by +20%  
-Enter after 3 candle closes  
-Scaled sizing (33/33/34)  
-Early exit at 70% of TP1  
+#10.3 حماية OTC
+• SL موسع +20%، دخول بعد إغلاق 3 شموع
+• حجم متدرج (33/33/34)، خروج مبكر عند 70% من TP1
 
-Phase 11: Advanced Behavioral Analysis  
-11.1 Market psychology states  
-Fear: Long wicks + sudden high volume  
-Greed: Acceleration without pullback + consecutive large bodies  
-Indecision: Inside bars/doji + low volume  
-Capitulation: Decisive breakout with massive volume + very large candle  
-Manipulation: Illogical moves + fake breakouts  
+🧠 **المرحلة 11: التحليل السلوكي المتقدم**
+#11.1 حالات السوق النفسية
+• الخوف: ظلال طويلة + أحجام مرتفعة مفاجئة
+• الجشع: تسارع بدون تصحيح + أجسام كبيرة متتالية
+• التردد: شموع داخلية/دوجي + أحجام منخفضة
+• الاستسلام: اختراق حاسم بحجم ضخم + شمعة كبيرة جداً
+• التلاعب: حركات غير منطقية + اختراقات زائفة
 
-11.2 Institutional manipulation detection  
-Liquidity sweep: Break then return  
-Stop hunt: Stop grab then reversal  
-False breakout: Break with weak volume  
-Bait pattern: Attractive signal then reversal  
-Differentiation:  
-Break with wick + return = liquidity trap  
-Break with full body + close beyond level = true BOS  
+#11.2 كشف التلاعب المؤسسي
+• Liquidity Sweep: اختراق ثم عودة، Stop Hunt: سحب وقف ثم انعكاس
+• False Breakout: اختراق بحجم ضعيف، Bait Pattern: إشارة جذابة ثم انعكاس
+• التمييز: اختراق بذيل + عودة = فخ سيولة، اختراق بجسم كامل + إغلاق خلف المستوى = BOS حقيقي
 
-11.3 OTC behavior  
-Algorithmic signs:  
-Pattern repeats 3 times  
-Breakouts at fixed times  
-Moves against technical logic  
-Single candle changes context  
-Counter-strategy:  
-Do not rely on one pattern  
-Confirm with at least two patterns  
-Avoid low-liquidity times  
-Use distant pending orders  
+#11.3 سلوك OTC
+• إشارات الخوارزمية: تكرار نمط 3 مرات، اختراقات في أوقات ثابتة، حركة ضد المنطق الفني، شمعة واحدة تغير السياق
+• إستراتيجية المواجهة: لا تعتمد على نمط واحد، تأكيد من نمطين على الأقل، تجنب أوقات السيولة الضعيفة، استخدم أوامر معلقة بعيدة
 
-Technical Inputs  
-Timeframe: {candle} ({candle_category})  
-Trading strategy: {trading_strategy}  
-Market session: {session_name} ({session_time})  
-Liquidity condition: {session_vol}  
-News impact: {news_impact} (Multiplier ×{news_risk_multiplier})  
-Analysis time: {current_time.strftime('%Y-%m-%d %H:%M GMT')}  
-Level: Professional – Backtested on 15,000 trades
+📊 **المعطيات الفنية:**
+• **إطار الزمن:** {candle} ({candle_category})
+• **استراتيجية التداول:** {trading_strategy}
+• **جلسة السوق:** {session_name} ({session_time})
+• **حالة السيولة:** {session_vol}
+• **تأثير الأخبار:** {news_impact} (معامل ×{news_risk_multiplier})
+• **توقيت التحليل:** {current_time.strftime('%Y-%m-%d %H:%M GMT')}
+• **المستوى:** Professional باك تيست 15000 صفقة
 
-🎯 **التنسيق المطلوب للإجابة (الالتزام حرفيا بلغة العربية):**
+🎯 **التنسيق المطلوب للإجابة (الالتزام حرفياً):**
 
 📊 **التحليل الفني المتقدم:**
 • **البصمة الزمنية:** {kill_zone_status}
@@ -1041,10 +939,10 @@ Level: Professional – Backtested on 15,000 trades
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
-        await wait_msg.edit_text("📊 جاري تحليل الشارت بنظام Pixtral Large ...")
+        # --- الخطوة 1: التحليل الأولي بواسطة الموديل الأساسي (Latest) ---
+        await wait_msg.edit_text("📊 جاري تحليل (المرحلة 1/2)...")
         
-        # إرسال طلب واحد باستخدام الموديل الوحيد
-        payload = {
+        payload_1 = {
             "model": MISTRAL_MODEL,
             "messages": [
                 {
@@ -1055,50 +953,255 @@ Level: Professional – Backtested on 15,000 trades
                     ]
                 }
             ],
-            "max_tokens": 1500,
-            "temperature": 0.1,
+            "max_tokens": 1800,
+            "temperature": 0.10,
             "top_p": 0.95,
+            "random_seed": 42,
         }
         
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=40)
+        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
         
-        if response.status_code == 200:
-            final_result = response.json()['choices'][0]['message']['content'].strip()
+        if response_1.status_code != 200:
+            print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
+            raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
+        
+        initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
+        
+        # --- الخطوة 2: الدمج والتدقيق بواسطة الموديل الثاني (2411) ---
+        await wait_msg.edit_text("📊 جاري التحليل (المرحلة 2/2)...")
+        
+        prompt_audit = f"""🛡️ **التقرير النهائي المعتمد – Obeida Trading (SMC Pro Audit Report)**
+
+🔰 **القواعد الأساسية**
+• المدرسة: Smart Money Concepts (SMC) + دعم كلاسيكي  
+• الدرع الأساسي: {news_warning if news_warning else "✅ الوضع آمن من الأخبار"}  
+• التصنيف الزمني: {candle_category}  
+• إليك التحليل المقترح: {initial_analysis}
+• استراتيجية التداول: {trading_strategy}  
+• إدارة الحجم: {position_sizing}  
+• أولوية الزخم: شموع ابتلاعية (>80%) + إغلاق فوق قمة/تحت قاع = استمرار  
+• منطق OTC: 3 شموع قوية → الشمعة الرابعة بنفس الاتجاه  
+• فلتر الجدوى: RR ≥ 1:2 (معدل الأخبار مطبق)  
+• القرار النهائي: شراء / بيع / احتفاظ + مستوى الثقة  
+
+**قواعد التدقيق الصارمة:**
+1. **دقة الأرقام:** تأكد من مطابقة الأسعار المذكورة مع ما هو ظاهر في الشارت
+2. **سلامة المنطق:** تحقق من عدم وجود تناقضات في التحليل
+3. **التنسيق:** الالتزام الكامل بالتنسيق المطلوب
+4. **تحسين الصياغة:** جعل اللغة أكثر احترافية ووضوحاً
+5. **إضافة الفوائد:** أضف أي رؤى إضافية مفيدة لم تذكر في التحليل الأول
+
+📊 **المرحلة 1: الفحص الأولي والتحذيرات (Final Audit Layer)**
+#1.1 نظام الأمان ثلاثي الطبقات
+• الدرع الأساسي: {news_warning if news_warning else "✅ الوضع آمن"}  
+• كشف وهم الزخم: 3 شموع متتالية + فحص المتابعة  
+• التحقق الرقمي: استخراج الأسعار بدقة من المحور ومطابقتها مع الأرقام المذكورة  
+
+#1.2 كشف مخاطر OTC
+• إشارات التلاعب: اختراق ثم عودة، انعكاس لحظي، حركة بدون حجم  
+• إستراتيجية الحماية: تجنب آخر 10 ثوانٍ، استخدام أوامر معلقة، SL موسع +20%  
+
+#1.3 تحليل الارتباط السعري
+• Forex: مؤشر الدولار، العملات المرتبطة، السندات  
+• Stocks: المؤشر العام، القطاع، أخبار الأرباح  
+• Crypto: البيتكوين، هيمنة السوق، مؤشر الخوف والجشع  
+
+📈 **المرحلة 2: التحليل الهيكلي المتقدم (SMC Core)**
+#2.1 تحديد الهيكل
+• الاتجاه: صاعد / هابط / جانبي  
+• الهيكل: BOS / CHoCh محدد بوضوح  
+• السياق: كسر حقيقي بجسم شمعة + إغلاق خلف المستوى  
+
+#2.2 استخراج الإحداثيات الرقمية (من الشارت)
+• High: {high_price}  
+• Low: {low_price}  
+• Midpoint (50%): {midpoint_price}  
+• نسبة الحركة: {range_percentage}%  
+
+#2.3 مصفاة التسعير (PD Array)
+• منطقة الخصم (Discount): للشراء فقط  
+• منطقة الغلاء (Premium): للبيع فقط  
+• مناطق الطوارئ: أسفل 20% / أعلى 80% — يُمنع الدخول داخلها  
+
+💰 **المرحلة 3: تحليل السيولة والزخم**
+#3.1 خرائط السيولة
+• Equal Highs / Equal Lows  
+• Inducement Zones  
+• Liquidity Sweeps  
+• Fair Value Gaps (FVG) المفتوحة  
+
+#3.2 كشف وهم الزخم
+• شمعة خبر منفردة بدون متابعة  
+• فجوات سعرية  
+• ذيول طويلة  
+• V-Reversal  
+
+#3.3 انعكاس الزخم المفاجئ
+• رفض بعد اندفاع  
+• فشل اختراق سيولة  
+• انخفاض حجم  
+• دايفرجنس عند POI  
+
+🎯 **المرحلة 4: نظام القرار الذكي (4/4 Confluence Gate)**
+✔️ POI صالح  
+✔️ نموذج شموعي واضح  
+✔️ سلوك سعري متوافق  
+✔️ توافق مع الاتجاه العام  
+
+❌ في حال فشل أي بند → لا دخول  
+
+📉 **المرحلة 5: تحليل MACD المحسن**
+• الفريمات الصغيرة: تأكيد فقط  
+• الفريمات المتوسطة: خط الصفر + دايفرجنس عند POI  
+• التعارض: السعر > السيولة > الهيكل > المؤشرات  
+
+⏰ **المرحلة 6: تحليل تعدد الإطارات**
+• HTF: الاتجاه العام  
+• MTF1: مناطق العرض/الطلب  
+• MTF2: Order Blocks النشطة  
+• LTF: توقيت الدخول  
+
+**توافق الإطارات:**
+• 4/4 → +40 ثقة  
+• 3/4 → +30  
+• 2/4 → تقليل الحجم 50%  
+• 1/4 → منع الدخول  
+
+🎯 **المرحلة 7: درجات الثقة (Confidence Scoring System)**
+**الإضافات (+):**
+• POI صالح: +25  
+• نموذج شموعي واضح: +20  
+• سلوك سعري واضح: +25  
+• توافق الإطارات (3/4+): +30  
+• BOS مؤكد: +30  
+• حجم أعلى من المتوسط: +15  
+• أخبار هادئة: +20  
+• توافق MACD: +10  
+
+**الخصومات (-):**
+• تعارض مؤشرات: -20  
+• أخبار قوية: -25  
+• زخم وهمي: -15  
+• V-Reversal قريب: -30  
+• سيولة OTC منخفضة: -10  
+
+**مستوى الثقة النهائي: {confidence_score}/100 → {confidence_grade}**
+
+📊 **المرحلة 8: تحليل الحجم المتقدم**
+• اختراق: >150% من المتوسط  
+• امتصاص: حجم مرتفع + حركة محدودة  
+• تصحيح: <70% من المتوسط  
+• POC = دعم/مقاومة رئيسي  
+• EVA (خارج VA) = إشارة قوة  
+
+🔄 **المرحلة 9: إدارة الصفقة الديناميكية**
+**Long:**
+• TP1: SL للتعادل + خروج 40%  
+• TP2: SL أعلى آخر شمعة + خروج 30%  
+• TP3: ترك 30% بترايل  
+
+**Short:**
+• TP1: SL للتعادل + خروج 40%  
+• TP2: SL أسفل آخر شمعة + خروج 30%  
+• TP3: ترك 30% بترايل  
+
+**OTC حماية:**
+• SL موسع +20%  
+• دخول بعد إغلاق 3 شموع  
+• حجم متدرج 33/33/34  
+
+🧠 **المرحلة 10: التحليل السلوكي والتلاعب المؤسسي**
+• Liquidity Sweep  
+• Stop Hunt  
+• False Breakout  
+• Bait Pattern  
+
+**التمييز الذكي:**
+• اختراق بذيل + عودة = فخ سيولة  
+• اختراق بجسم كامل + إغلاق خلف المستوى = BOS حقيقي
+
+**التنسيق المطلوب (يجب الالتزام به حرفياً):**
+
+📊 **التحليل الفني المتقدم:**
+• **البصمة الزمنية:** {kill_zone_status}
+• **حالة الهيكل:** (صاعد/هابط) + (مرحلة وايكوف الحالية) + (توافق 4/4 إطارات: نعم/لا)
+• **خريطة السيولة:** (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
+• **الفجوات السعرية:** (المناطق التي سيعود السعر لتغطيتها)
+
+🎯 **الإشارة التنفيذية:**
+• **السعر الحالي:** [السعر الدقيق من الشارت]
+• **حالة الشمعة:** [مفتوحة / مغلقة]
+• **القرار الفني:** (شراء 🟢 / بيع 🔴 / احتفاظ 🟡)
+• **قوة الإشارة:** (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
+• **نقطة الدخول:** [السعر الدقيق بناءً على OB + شرط الإغلاق]
+• **الأهداف الربحية:**
+  🎯 **TP1:** [سحب أول سيولة داخلية], [احتمالية الوصول]
+  🎯 **TP2:** [الهدف الرئيسي - منطقة عرض/طلب قوية]
+  🎯 **TP3:** [سيولة خارجية أو سد فجوة سعرية]
+• **وقف الخسارة:** [السعر مع 3 طبقات حماية]
+• **المدة المتوقعة:** [عدد الدقائق] (بناءً على معادلة الزخم السعري)
+• **وقت الذروة المتوقع:** [مثلاً: خلال الـ 3 شموع القادمة]
+• **الحالة النفسية:** [خوف 🥺 / جشع 🤑 / تردد 🤌 / استسلام 👎]
+• **علامات التلاعب:** [موجودة ✔️ / غير موجودة ❎]
+
+⚠️ **إدارة المخاطر:**
+• **مستوى الثقة:** [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
+• **نقطة الإلغاء:** [السعر الذي يفسد التحليل]
+
+**ملاحظة:** استخدم الصورة المرفقة للتحقق من جميع الأرقام والمستويات المذكورة.
+"""
+        
+        payload_2 = {
+            "model": MISTRAL_MODEL_AUDIT,
+            "messages": [
+                {
+                    "role": "user", 
+                    "content": [
+                        {"type": "text", "text": prompt_audit},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
+                    ]
+                }
+            ],
+            "max_tokens": 1800,
+            "temperature": 0.0,
+            "top_p": 0.95,
+            "random_seed": 42,
+        }
+        
+        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
+        
+        if response_2.status_code == 200:
+            result = response_2.json()['choices'][0]['message']['content'].strip()
         else:
-            print(f"❌ Analysis failed: {response.status_code}")
-            final_result = f"❌ حدث خطأ في التحليل. الرمز: {response.status_code}"
+            print(f"Obeida Vision Warning (Model 2): {response_2.status_code} - استخدام التحليل الأول")
+            result = initial_analysis
         
-        # تنظيف النص النهائي
-        final_result = clean_repeated_text(final_result)
+        # تنظيف النص من التكرار
+        result = clean_repeated_text(result)
         
-        # إزالة أي أقسام مكررة
-        if "### تحليل الشارت المرفق" in final_result:
-            parts = final_result.split("### تحليل الشارت المرفق")
+        if "### تحليل الشارت المرفق" in result:
+            parts = result.split("### تحليل الشارت المرفق")
             if len(parts) > 1:
-                final_result = parts[1].strip()
+                result = parts[1].strip()
         
-        keyboard = [
-            ["📊 تحليل صورة"],
-            ["⚙️ إعدادات التحليل"],
-            ["📈 توصية"],
-            ["الرجوع للقائمة الرئيسية"]
-        ]
+        if "نتائج الفحص الفني:" in result:
+            result = result.replace("نتائج الفحص الفني:", "📊 **التحليل الفني:**").strip()
+        
+        keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
         # تنسيق وقت الصفقة للعرض
         time_display = format_trade_time_for_prompt(trade_time)
         
-        # إعداد النص النهائي
+        # إعداد النص النهائي بدون تكرار
         full_result = (
-            f"✅ **     تم التحليل بنجاح    ** 🏆\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"🎯 **نوع التحليل:** تحليل واحد باستخدام Pixtral-Large-Latest\n\n"
-            f"{final_result}\n\n"
-            f"⚙️ **الإعدادات المستخدمة:**\n"
+            f"✅ **تم التحليل بنجاح!**\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"{result}\n\n"
+            f"📊 **الإعدادات المستخدمة:**\n"
             f"• سرعة الشموع: {candle}\n"
-            f"• {time_display}\n"
-            f"• جلسة السوق: {session_name}\n\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"🤖 ** Powered by - Obeida Trading  **"
+            f"• {time_display}\n\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"🤖 ** Powered by - Obeida Trading **"
         )
         
         # تنظيف النهائي من التكرارات
@@ -1108,7 +1211,7 @@ Level: Professional – Backtested on 15,000 trades
         if len(full_result) > 4000:
             parts = split_message(full_result, max_length=4000)
             
-            # إرسال الجزء الأول
+            # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
             await wait_msg.edit_text(
                 parts[0],
                 parse_mode="Markdown"
@@ -1130,11 +1233,11 @@ Level: Professional – Backtested on 15,000 trades
         )
         
     except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد في النظام. النظام معقد ويحتاج وقتاً أطول.\nحاول مرة أخرى بصورة أقل تعقيداً.")
+        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
     except Exception as e:
         print(f"خطأ في تحليل الصورة: {e}")
         keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text(f"❌ **حدث خطأ في التحليل:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
+        await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -1152,15 +1255,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🚀 **أهلاً بك في Obeida Trading **\n\n"
         "🤖 **المميزات الجديدة:**\n"
-        "• تحليل فني متقدم للشارتات باستخدام Pixtral-Large-Latest\n"
-        "• 🆕 دردشة ذكية\n"
+        "• تحليل فني متقدم للشارتات \n"
+        "• 🆕 دردشة \n"
         "• 📈 نظام توصيات جاهزة\n"
         "• إعدادات تخصيص كاملة\n"
         "• تحليل دقيق بالأرقام\n\n"
-        "📡 **نظام التحليل:**\n"
-        f"• نظام تحليل واحد باستخدام موديل pixtral-large-latest\n"
-        f"• تحليل متكامل مع قراءة الصورة\n"
-        f"• نتائج دقيقة ومفصلة\n\n"
+        "📡 **نظام التحليل المزدوج:**\n"
+        f"1. التحليل الأولي\n"
+        f"2. التدقيق النهائي\n\n"
         "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -1184,7 +1286,35 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SETTINGS_CANDLE
     
     elif user_message == "📊 تحليل صورة":
-        return await start_photo_analysis(update, context)
+        candle, trade_time = get_user_setting(user_id)
+        
+        if not candle or not trade_time:
+            keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
+            await update.message.reply_text(
+                "❌ **يجب ضبط الإعدادات أولاً**\n\n"
+                "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return MAIN_MENU
+        else:
+            keyboard = [["الرجوع للقائمة الرئيسية"]]
+            
+            time_display = format_trade_time_for_prompt(trade_time)
+            
+            await update.message.reply_text(
+                f"📊 **جاهز للتحليل**\n\n"
+                f"الإعدادات الحالية:\n"
+                f"• سرعة الشموع: {candle}\n"
+                f"• {time_display}\n\n"
+                f"📡 **نظام التحليل:** موديل مزدوج\n"
+                f"1. التحليل الأولي\n"
+                f"2. التدقيق النهائي\n\n"
+                f"أرسل صورة الرسم البياني (الشارت) الآن:",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return ANALYZE_MODE
     
     elif user_message == "💬 دردشة":
         return await start_chat_mode(update, context)
@@ -1258,10 +1388,7 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
             f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
             f"✅ سرعة الشموع: {candle}\n"
             f"✅ مدة الصفقة: {user_message}\n\n"
-            f"📡 **نظام التحليل:**\n"
-            f"• نظام تحليل واحد باستخدام موديل pixtral-large-latest\n"
-            f"• تحليل متكامل مع قراءة الصورة\n"
-            f"• نتائج دقيقة ومفصلة\n\n"
+            f"📡 **نظام التحليل:** موديل مزدوج\n"
             f"يمكنك الآن تحليل صورة أو الدردشة:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
@@ -1319,13 +1446,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة
     • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
     
-    📡 **نظام التحليل:**
-    • **نظام تحليل واحد:** باستخدام موديل pixtral-large-latest
-    • **ميزات النظام:** تحليل متكامل، قراءة الصورة، نتائج دقيقة
+    📡 **نظام المزدوج للتحليل:**
+    • **المرحلة 1:** التحليل الأولي
+    • **المرحلة 2:** التدقيق النهائي والدقة
     
     📊 **مميزات البوت:**
-    • تحليل فني للرسوم البيانية باستخدام Pixtral-Large-Latest
-    • دردشة ذكية
+    • تحليل فني للرسوم البيانية 
+    • دردشة ذكية 
     • نظام توصيات العملات
     • حفظ إعداداتك الشخصية
     • واجهة سهلة بالأزرار
@@ -1350,7 +1477,6 @@ def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
     print(f"⚡ Powered by - Obeida Trading")
-    print(f"🤖 AI Model: {MISTRAL_MODEL}")
     
     # تهيئة قاعدة البيانات
     init_db()
@@ -1405,8 +1531,6 @@ def run_telegram_bot():
 def main():
     """الدالة الرئيسية"""
     print("🤖 Starting Powered by - Obeida Trading ...")
-    print("=" * 60)
-    print(f"🤖 AI Model: {MISTRAL_MODEL} - Single Model System")
     print("=" * 60)
     
     # تشغيل Flask في thread منفصل
