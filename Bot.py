@@ -240,42 +240,13 @@ def split_message(text, max_length=4000):
     
     return parts
 
-# --- إنشاء جلسة طلبات دائمة لتسريع الاتصال ---
-class MistralSession:
-    """فئة لإدارة جلسة HTTP دائمة مع Mistral API"""
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": f"Bearer {MISTRAL_KEY}",
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        })
-        self.timeout = 35  # تقليل الوقت من 45 إلى 35 ثانية
-        print("🚀 Mistral session initialized with persistent connection")
-    
-    def post(self, url, json_data):
-        """إرسال طلب POST باستخدام الجلسة الدائمة"""
-        try:
-            response = self.session.post(url, json=json_data, timeout=self.timeout)
-            response.raise_for_status()
-            return response
-        except requests.exceptions.Timeout:
-            print(f"⏱️ Request timeout after {self.timeout} seconds")
-            raise
-        except requests.exceptions.RequestException as e:
-            print(f"🌐 Network error: {e}")
-            raise
-    
-    def close(self):
-        """إغلاق الجلسة"""
-        self.session.close()
-
-# إنشاء جلسة دائمة
-mistral_session = MistralSession()
-
 # --- وظائف نظام التوصية الجديد ---
 def get_mistral_analysis(symbol):
     """الحصول على تحليل من Mistral AI API للعملة"""
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_KEY}",
+        "Content-Type": "application/json"
+    }
     
     prompt = f"""
     بصفتك خبير تداول كمي، حلل {symbol} بناءً على "تلاقي الأدلة" (Confluence Analysis). 
@@ -314,7 +285,8 @@ def get_mistral_analysis(symbol):
     }
 
     try:
-        response = mistral_session.post(MISTRAL_URL, json_data=body)
+        response = requests.post(MISTRAL_URL, json=body, headers=headers, timeout=30)
+        response.raise_for_status()
         return response.json()['choices'][0]['message']['content'].strip()
     except Exception as e:
         print(f"Error in get_mistral_analysis: {e}")
@@ -590,7 +562,12 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "temperature": 0.7
         }
         
-        response = mistral_session.post(MISTRAL_URL, json_data=payload)
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
@@ -648,9 +625,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-# --- كود تحليل الصور المحسن والمدمج الكامل مع نظام الموديل المزدوج (تم تسريعه) ---
+# --- كود تحليل الصور المحسن والمدمج الكامل مع نظام الموديل المزدوج ---
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني المتقدم مع نظام الموديل المزدوج - النسخة المسرعة"""
+    """معالجة الصور للتحليل الفني المتقدم مع نظام الموديل المزدوج"""
     user_id = update.effective_user.id
     candle, trade_time = get_user_setting(user_id)
     
@@ -959,7 +936,9 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه.
 """
         
-        # --- الخطوة 1: التحليل الأولي بواسطة الموديل الأساسي (Latest) مع التعديلات المسرعة ---
+        headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
+        
+        # --- الخطوة 1: التحليل الأولي بواسطة الموديل الأساسي (Latest) ---
         await wait_msg.edit_text("📊 جاري تحليل (المرحلة 1/2)...")
         
         payload_1 = {
@@ -969,18 +948,17 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     "role": "user", 
                     "content": [
                         {"type": "text", "text": prompt},
-                        # ⚡ التعديل 1: تغيير من "high" إلى "auto" لتسريع المعالجة
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "auto"}}
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
                     ]
                 }
             ],
-            "max_tokens": 1500,  # تقليل من 1800 إلى 1500
-            "temperature": 0.05,  # تقليل من 0.10 إلى 0.05 لدقة أعلى وأسرع
-            "top_p": 0.9,  # تقليل من 0.95 إلى 0.9 لتسريع
+            "max_tokens": 1800,
+            "temperature": 0.10,
+            "top_p": 0.95,
             "random_seed": 42,
         }
         
-        response_1 = mistral_session.post(MISTRAL_URL, json_data=payload_1)
+        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
         
         if response_1.status_code != 200:
             print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
@@ -988,7 +966,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
         
-        # --- الخطوة 2: الدمج والتدقيق بواسطة الموديل الثاني (2411) مع التعديلات المسرعة ---
+        # --- الخطوة 2: الدمج والتدقيق بواسطة الموديل الثاني (2411) ---
         await wait_msg.edit_text("📊 جاري التحليل (المرحلة 2/2)...")
         
         prompt_audit = f"""🛡️ **التقرير النهائي المعتمد – Obeida Trading (SMC Pro Audit Report)**
@@ -1014,7 +992,137 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 4. **تحسين الصياغة:** جعل اللغة أكثر احترافية ووضوحاً
 5. **إضافة الفوائد:** أضف أي رؤى إضافية مفيدة لم تذكر في التحليل الأول
 
-التنسيق المطلوب (يجب الالتزام به حرفياً):
+📊 **المرحلة 1: الفحص الأولي والتحذيرات (Final Audit Layer)**
+#1.1 نظام الأمان ثلاثي الطبقات
+• الدرع الأساسي: {news_warning if news_warning else "✅ الوضع آمن"}  
+• كشف وهم الزخم: 3 شموع متتالية + فحص المتابعة  
+• التحقق الرقمي: استخراج الأسعار بدقة من المحور ومطابقتها مع الأرقام المذكورة  
+
+#1.2 كشف مخاطر OTC
+• إشارات التلاعب: اختراق ثم عودة، انعكاس لحظي، حركة بدون حجم  
+• إستراتيجية الحماية: تجنب آخر 10 ثوانٍ، استخدام أوامر معلقة، SL موسع +20%  
+
+#1.3 تحليل الارتباط السعري
+• Forex: مؤشر الدولار، العملات المرتبطة، السندات  
+• Stocks: المؤشر العام، القطاع، أخبار الأرباح  
+• Crypto: البيتكوين، هيمنة السوق، مؤشر الخوف والجشع  
+
+📈 **المرحلة 2: التحليل الهيكلي المتقدم (SMC Core)**
+#2.1 تحديد الهيكل
+• الاتجاه: صاعد / هابط / جانبي  
+• الهيكل: BOS / CHoCh محدد بوضوح  
+• السياق: كسر حقيقي بجسم شمعة + إغلاق خلف المستوى  
+
+#2.2 استخراج الإحداثيات الرقمية (من الشارت)
+• **الرجاء استخراج الأسعار بدقة من الشارت المرفق:**
+  - أعلى سعر (High)
+  - أدنى سعر (Low) 
+  - نقطة المنتصف (50%)
+  - نسبة الحركة
+
+#2.3 مصفاة التسعير (PD Array)
+• منطقة الخصم (Discount): للشراء فقط  
+• منطقة الغلاء (Premium): للبيع فقط  
+• مناطق الطوارئ: أسفل 20% / أعلى 80% — يُمنع الدخول داخلها  
+
+💰 **المرحلة 3: تحليل السيولة والزخم**
+#3.1 خرائط السيولة
+• Equal Highs / Equal Lows  
+• Inducement Zones  
+• Liquidity Sweeps  
+• Fair Value Gaps (FVG) المفتوحة  
+
+#3.2 كشف وهم الزخم
+• شمعة خبر منفردة بدون متابعة  
+• فجوات سعرية  
+• ذيول طويلة  
+• V-Reversal  
+
+#3.3 انعكاس الزخم المفاجئ
+• رفض بعد اندفاع  
+• فشل اختراق سيولة  
+• انخفاض حجم  
+• دايفرجنس عند POI  
+
+🎯 **المرحلة 4: نظام القرار الذكي (4/4 Confluence Gate)**
+✔️ POI صالح  
+✔️ نموذج شموعي واضح  
+✔️ سلوك سعري متوافق  
+✔️ توافق مع الاتجاه العام  
+
+❌ في حال فشل أي بند → لا دخول  
+
+📉 **المرحلة 5: تحليل MACD المحسن**
+• الفريمات الصغيرة: تأكيد فقط  
+• الفريمات المتوسطة: خط الصفر + دايفرجنس عند POI  
+• التعارض: السعر > السيولة > الهيكل > المؤشرات  
+
+⏰ **المرحلة 6: تحليل تعدد الإطارات**
+• HTF: الاتجاه العام  
+• MTF1: مناطق العرض/الطلب  
+• MTF2: Order Blocks النشطة  
+• LTF: توقيت الدخول  
+
+**توافق الإطارات:**
+• 4/4 → +40 ثقة  
+• 3/4 → +30  
+• 2/4 → تقليل الحجم 50%  
+• 1/4 → منع الدخول  
+
+🎯 **المرحلة 7: درجات الثقة (Confidence Scoring System)**
+**الإضافات (+):**
+• POI صالح: +25  
+• نموذج شموعي واضح: +20  
+• سلوك سعري واضح: +25  
+• توافق الإطارات (3/4+): +30  
+• BOS مؤكد: +30  
+• حجم أعلى من المتوسط: +15  
+• أخبار هادئة: +20  
+• توافق MACD: +10  
+
+**الخصومات (-):**
+• تعارض مؤشرات: -20  
+• أخبار قوية: -25  
+• زخم وهمي: -15  
+• V-Reversal قريب: -30  
+• سيولة OTC منخفضة: -10  
+
+**مستوى الثقة النهائي:** [حساب من 0-100] → [💥/🔥/⚡/❄️/🚫]
+
+📊 **المرحلة 8: تحليل الحجم المتقدم**
+• اختراق: >150% من المتوسط  
+• امتصاص: حجم مرتفع + حركة محدودة  
+• تصحيح: <70% من المتوسط  
+• POC = دعم/مقاومة رئيسي  
+• EVA (خارج VA) = إشارة قوة  
+
+🔄 **المرحلة 9: إدارة الصفقة الديناميكية**
+**Long:**
+• TP1: SL للتعادل + خروج 40%  
+• TP2: SL أعلى آخر شمعة + خروج 30%  
+• TP3: ترك 30% بترايل  
+
+**Short:**
+• TP1: SL للتعادل + خروج 40%  
+• TP2: SL أسفل آخر شمعة + خروج 30%  
+• TP3: ترك 30% بترايل  
+
+**OTC حماية:**
+• SL موسع +20%  
+• دخول بعد إغلاق 3 شموع  
+• حجم متدرج 33/33/34  
+
+🧠 **المرحلة 10: التحليل السلوكي والتلاعب المؤسسي**
+• Liquidity Sweep  
+• Stop Hunt  
+• False Breakout  
+• Bait Pattern  
+
+**التمييز الذكي:**
+• اختراق بذيل + عودة = فخ سيولة  
+• اختراق بجسم كامل + إغلاق خلف المستوى = BOS حقيقي
+
+**التنسيق المطلوب (يجب الالتزام به حرفياً):**
 
 📊 **التحليل الفني المتقدم:**
 • **البصمة الزمنية:** {kill_zone_status}
@@ -1051,18 +1159,17 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     "role": "user", 
                     "content": [
                         {"type": "text", "text": prompt_audit},
-                        # ⚡ التعديل 2: استخدام "low" للتدقيق لتسريع المعالجة
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "low"}}
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
                     ]
                 }
             ],
-            "max_tokens": 1200,  # ⚡ التعديل 3: تقليل من 1800 إلى 1200 لتسريع الرد
-            "temperature": 0.0,  # إبقاء منخفضة للدقة
-            "top_p": 0.9,  # تقليل من 0.95
+            "max_tokens": 1800,
+            "temperature": 0.0,
+            "top_p": 0.95,
             "random_seed": 42,
         }
         
-        response_2 = mistral_session.post(MISTRAL_URL, json_data=payload_2)
+        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
         
         if response_2.status_code == 200:
             result = response_2.json()['choices'][0]['message']['content'].strip()
@@ -1435,15 +1542,8 @@ def main():
     print("=" * 60)
     
     # تشغيل Telegram bot في thread الرئيسي
-    try:
-        run_telegram_bot()
-    except KeyboardInterrupt:
-        print("\n🛑 Bot stopped by user")
-        mistral_session.close()
-    except Exception as e:
-        print(f"\n❌ Error: {e}")
-        mistral_session.close()
-        sys.exit(1)
+    run_telegram_bot()
 
 if __name__ == "__main__":
     main()
+
