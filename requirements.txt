@@ -1,6 +1,11 @@
 python-telegram-bot
 flask
-httpx
+requests
 pillow
 python-dotenv
-httpx[h2]
+aiohttp
+apscheduler
+cachetools
+emoji
+pytz
+pytz-deprecation-shim
