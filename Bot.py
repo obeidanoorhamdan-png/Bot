@@ -668,23 +668,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # تحديد أوقات الأخبار الخطيرة
         high_impact_hours = [
-              # أخبار أمريكية رئيسية
-              (14, 30),  # CPI / NFP
-              (16, 0),   # بيانات ISM / PMI
-              (20, 0),   # FOMC / تصريحات الفيدرالي
-              # أخبار أوروبية
-              (8, 0),    # بيانات ألمانيا / فرنسا
-              (9, 0),    # منطقة اليورو PMI / CPI
-              (10, 0),   # قرارات ECB / تصريحات
-              
-              # أخبار بريطانية
-              (9, 0),    # بيانات المملكة المتحدة
-              (11, 0),   # قرارات بنك إنجلترا
-              # أخبار يابانية وآسيوية
-              (2, 30),   # بيانات اليابان
-              (4, 0),    # الصين / آسيا
-              # السلع والنفط
-              (17, 30),  # مخزونات النفط الأمريكية (EIA)
+            (13, 30), (15, 0), (19, 0),  # أخبار أمريكية رئيسية
+            (8, 0), (9, 0), (10, 0)      # أخبار أوروبية
         ]
         
         # تحقق إذا كنا في نطاق ساعة من خبر عالي التأثير
@@ -703,11 +688,11 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # ========== الفلتر الزمني (Kill Zones) ==========
         kill_zone_status = ""
-        if 10 <= current_hour < 13:  # London Kill Zone
-            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
-        elif 15 <= current_hour < 18:  # New York Kill Zone
-            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
-        elif 0 <= current_hour < 9 or current_hour >= 22:  # Asian Session
+        if 8 <= current_hour < 11:  # London Kill Zone
+            kill_zone_status = "داخل منطقة القتل السعري (لندن 8-11 GMT)"
+        elif 13 <= current_hour < 16:  # New York Kill Zone
+            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 13-16 GMT)"
+        elif 22 <= current_hour or current_hour < 7:  # Asian Session
             kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
         else:
             kill_zone_status = "خارج مناطق القتل الرئيسية"
@@ -740,7 +725,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # البرومبت الجديد الكامل مع ربط المعطيات
         prompt = f"""
-أنت محلل فني خبير في مدرسة Smart Money Concepts (SMC) متخصص في الأسهم والصناديق والسلع والكريبتو والعملات. مهمتك هي تحليل الشارت المرفق وتقديم التوصيات وفقاً للتنسيق المحدد.
+أنت محلل فني خبير في مدرسة Smart Money Concepts (SMC) و ICT متخصص في الأسهم والصناديق والسلع والكريبتو والعملات. مهمتك هي تحليل الشارت المرفق وتقديم التوصيات وفقاً للتنسيق المحدد.
 
 🔰 **القواعد الأساسية الحاكمة**
 1. **المدرسة المعتمدة:** SMC كإطار عمل رئيسي مع دعم بالتحليل الكلاسيكي
@@ -973,7 +958,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             "random_seed": 42,
         }
         
-        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=30)
+        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
         
         if response_1.status_code != 200:
             print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
@@ -987,7 +972,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         prompt_audit = f"""🛡️ **التقرير النهائي المعتمد – Obeida Trading (SMC Pro Audit Report)**
 
 🔰 **القواعد الأساسية**
-• المدرسة: Smart Money Concepts (SMC) + دعم كلاسيكي  
+• المدرسة: Smart Money Concepts (SMC) + ICT + دعم كلاسيكي  
 • الدرع الأساسي: {news_warning if news_warning else "✅ الوضع آمن من الأخبار"}  
 • التصنيف الزمني: {candle_category}  
 • إليك التحليل المقترح: {initial_analysis}
@@ -1183,7 +1168,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             "random_seed": 42,
         }
         
-        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=30)
+        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
         
         if response_2.status_code == 200:
             result = response_2.json()['choices'][0]['message']['content'].strip()
