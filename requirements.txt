@@ -3,3 +3,4 @@ flask
 httpx
 pillow
 python-dotenv
+httpx[h2]
