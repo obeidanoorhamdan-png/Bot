@@ -249,7 +249,7 @@ class APIClient:
         self.client = httpx.AsyncClient(
             timeout=30.0,
             limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
-            http2=True
+            http2=False
         )
         self.headers = {
             "Authorization": f"Bearer {MISTRAL_KEY}",
