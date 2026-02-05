@@ -7,7 +7,7 @@ import requests
 import threading
 import time
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from flask import Flask
@@ -132,20 +132,19 @@ def get_user_setting(user_id):
     return ("M1", "قصير (1m-15m)")
 
 def get_market_session():
-    """الحصول على معلومات جلسة السوق الحالية"""
-    current_hour = datetime.utcnow().hour
-    
-    if 0 <= current_hour < 6:
-        return "الجلسة الآسيوية", "00:00-06:00 GMT", "منخفضة"
-    elif 6 <= current_hour < 12:
-        return "جلسة لندن/أوروبا", "06:00-12:00 GMT", "مرتفعة"
-    elif 12 <= current_hour < 18:
-        return "جلسة نيويورك", "12:00-18:00 GMT", "عالية جداً"
-    elif 18 <= current_hour < 24:
-        return "جلسة المحيط الهادئ", "18:00-24:00 GMT", "منخفضة"
+    current_hour = (datetime.utcnow() + timedelta(hours=2)).hour  # توقيت غزة
+
+    if 2 <= current_hour < 8:
+        return "الجلسة الآسيوية", "02:00-08:00 بتوقيت غزة", "منخفضة"
+    elif 8 <= current_hour < 14:
+        return "جلسة لندن/أوروبا", "08:00-14:00 بتوقيت غزة", "مرتفعة"
+    elif 14 <= current_hour < 20:
+        return "جلسة نيويورك", "14:00-20:00 بتوقيت غزة", "عالية جداً"
+    elif 20 <= current_hour < 24 or 0 <= current_hour < 2:
+        return "جلسة المحيط الهادئ", "20:00-02:00 بتوقيت غزة", "منخفضة"
     else:
         return "جلسة عالمية", "متداخلة", "متوسطة"
-
+        
 def format_trade_time_for_prompt(trade_time):
     """تنسيق وقت الصفقة للبرومبت"""
     if trade_time == "قصير (1m-15m)":
@@ -669,8 +668,23 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # تحديد أوقات الأخبار الخطيرة
         high_impact_hours = [
-            (13, 30), (15, 0), (19, 0),  # أخبار أمريكية رئيسية
-            (8, 0), (9, 0), (10, 0)      # أخبار أوروبية
+              # أخبار أمريكية رئيسية
+              (14, 30),  # CPI / NFP
+              (16, 0),   # بيانات ISM / PMI
+              (20, 0),   # FOMC / تصريحات الفيدرالي
+              # أخبار أوروبية
+              (8, 0),    # بيانات ألمانيا / فرنسا
+              (9, 0),    # منطقة اليورو PMI / CPI
+              (10, 0),   # قرارات ECB / تصريحات
+              
+              # أخبار بريطانية
+              (9, 0),    # بيانات المملكة المتحدة
+              (11, 0),   # قرارات بنك إنجلترا
+              # أخبار يابانية وآسيوية
+              (2, 30),   # بيانات اليابان
+              (4, 0),    # الصين / آسيا
+              # السلع والنفط
+              (17, 30),  # مخزونات النفط الأمريكية (EIA)
         ]
         
         # تحقق إذا كنا في نطاق ساعة من خبر عالي التأثير
@@ -689,11 +703,11 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # ========== الفلتر الزمني (Kill Zones) ==========
         kill_zone_status = ""
-        if 8 <= current_hour < 11:  # London Kill Zone
-            kill_zone_status = "داخل منطقة القتل السعري (لندن 8-11 GMT)"
-        elif 13 <= current_hour < 16:  # New York Kill Zone
-            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 13-16 GMT)"
-        elif 22 <= current_hour or current_hour < 7:  # Asian Session
+        if 10 <= current_hour < 13:  # London Kill Zone
+            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
+        elif 15 <= current_hour < 18:  # New York Kill Zone
+            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
+        elif 0 <= current_hour < 9 or current_hour >= 22:  # Asian Session
             kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
         else:
             kill_zone_status = "خارج مناطق القتل الرئيسية"
@@ -959,7 +973,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             "random_seed": 42,
         }
         
-        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
+        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=30)
         
         if response_1.status_code != 200:
             print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
@@ -1169,7 +1183,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             "random_seed": 42,
         }
         
-        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
+        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=30)
         
         if response_2.status_code == 200:
             result = response_2.json()['choices'][0]['message']['content'].strip()
