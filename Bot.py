@@ -3,7 +3,8 @@ import base64
 import os
 import sqlite3
 import re
-import requests
+import httpx  # تم التغيير من requests إلى httpx
+import asyncio  # إضافة asyncio للتعامل مع المهام غير المتزامنة
 import threading
 import time
 import sys
@@ -240,13 +241,47 @@ def split_message(text, max_length=4000):
     
     return parts
 
+# --- تحسينات الأداء: استخدام client واحد لجميع الطلبات ---
+class APIClient:
+    """فئة موحدة لإدارة طلبات API مع httpx"""
+    
+    def __init__(self):
+        self.client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+            http2=True
+        )
+        self.headers = {
+            "Authorization": f"Bearer {MISTRAL_KEY}",
+            "Content-Type": "application/json"
+        }
+    
+    async def post(self, url, json_data):
+        """إرسال طلب POST"""
+        try:
+            response = await self.client.post(url, json=json_data, headers=self.headers)
+            response.raise_for_status()
+            return response.json()
+        except httpx.TimeoutException:
+            print(f"Timeout while calling {url}")
+            return None
+        except httpx.RequestError as e:
+            print(f"Request error: {e}")
+            return None
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            return None
+    
+    async def close(self):
+        """إغلاق العميل"""
+        await self.client.aclose()
+
+# إنشاء عميل API عالمي
+api_client = APIClient()
+
 # --- وظائف نظام التوصية الجديد ---
-def get_mistral_analysis(symbol):
+async def get_mistral_analysis(symbol):
     """الحصول على تحليل من Mistral AI API للعملة"""
-    headers = {
-        "Authorization": f"Bearer {MISTRAL_KEY}",
-        "Content-Type": "application/json"
-    }
     
     prompt = f"""
     بصفتك خبير تداول كمي، حلل {symbol} بناءً على "تلاقي الأدلة" (Confluence Analysis). 
@@ -285,9 +320,10 @@ def get_mistral_analysis(symbol):
     }
 
     try:
-        response = requests.post(MISTRAL_URL, json=body, headers=headers, timeout=30)
-        response.raise_for_status()
-        return response.json()['choices'][0]['message']['content'].strip()
+        result = await api_client.post(MISTRAL_URL, body)
+        if result:
+            return result['choices'][0]['message']['content'].strip()
+        return "⚠️ حدث خطأ في الاتصال بالمحلل."
     except Exception as e:
         print(f"Error in get_mistral_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
@@ -338,7 +374,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     # إذا وجدت العملة، ابدأ التحليل
     if symbol_to_analyze:
         wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
-        analysis = get_mistral_analysis(symbol_to_analyze)
+        analysis = await get_mistral_analysis(symbol_to_analyze)
         
         final_msg = (
             f"📈 **نتائج توصية {symbol_to_analyze}**\n"
@@ -562,22 +598,17 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "temperature": 0.7
         }
         
-        headers = {
-            "Authorization": f"Bearer {MISTRAL_KEY}",
-            "Content-Type": "application/json"
-        }
+        result = await api_client.post(MISTRAL_URL, payload)
         
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
-        
-        if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content']
+        if result:
+            result_text = result['choices'][0]['message']['content']
             
             # تنظيف النص من التكرارات
-            result = clean_repeated_text(result)
+            result_text = clean_repeated_text(result_text)
             
             # إضافة تذييل مميز
             footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - Powered by Obeida Trading 🤖"
-            result = result + footer
+            result_text = result_text + footer
             
             # أزرار الدردشة المتقدمة
             chat_keyboard = [
@@ -588,8 +619,8 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             ]
             
             # تقسيم الرسالة الطويلة
-            if len(result) > 4000:
-                parts = split_message(result, max_length=4000)
+            if len(result_text) > 4000:
+                parts = split_message(result_text, max_length=4000)
                 for i, part in enumerate(parts):
                     if i == 0:
                         await wait_msg.edit_text(
@@ -600,7 +631,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                         await update.message.reply_text(part, parse_mode="Markdown")
             else:
                 await wait_msg.edit_text(
-                    f"Obeida Trading 💬\n\n{result}",
+                    f"Obeida Trading 💬\n\n{result_text}",
                     parse_mode="Markdown"
                 )
             
@@ -611,14 +642,10 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             
         else:
-            print(f"Obeida Trading Error: {response.status_code} - {response.text}")
-            await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
+            await wait_msg.edit_text("❌ حدث خطأ تقني. يرجى المحاولة مرة أخرى.")
     
-    except requests.exceptions.Timeout:
+    except httpx.TimeoutException:
         await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد. السؤال يحتاج تفكيراً أعمق!\nيمكنك إعادة صياغة السؤال بشكل أوضح.")
-    except requests.exceptions.RequestException as e:
-        print(f"Network error in chat: {e}")
-        await wait_msg.edit_text("🌐 خطأ في الاتصال. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.")
     except Exception as e:
         print(f"خطأ في الدردشة: {e}")
         await wait_msg.edit_text("❌ حدث خطأ غير متوقع. النظام يعمل على الإصلاح تلقائياً...")
@@ -936,8 +963,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه.
 """
         
-        headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
-        
         # --- الخطوة 1: التحليل الأولي بواسطة الموديل الأساسي (Latest) ---
         await wait_msg.edit_text("📊 جاري تحليل (المرحلة 1/2)...")
         
@@ -958,13 +983,18 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             "random_seed": 42,
         }
         
-        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
+        # تنفيذ الطلبات المتوازية باستخدام asyncio.gather
+        task1 = api_client.post(MISTRAL_URL, payload_1)
         
-        if response_1.status_code != 200:
-            print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
-            raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
+        initial_response = await task1
         
-        initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
+        if not initial_response:
+            await wait_msg.edit_text("❌ خطأ في التحليل الأولي. يرجى المحاولة مرة أخرى.")
+            if os.path.exists(path):
+                os.remove(path)
+            return MAIN_MENU
+        
+        initial_analysis = initial_response['choices'][0]['message']['content'].strip()
         
         # --- الخطوة 2: الدمج والتدقيق بواسطة الموديل الثاني (2411) ---
         await wait_msg.edit_text("📊 جاري التحليل (المرحلة 2/2)...")
@@ -1169,12 +1199,12 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             "random_seed": 42,
         }
         
-        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
+        audit_response = await api_client.post(MISTRAL_URL, payload_2)
         
-        if response_2.status_code == 200:
-            result = response_2.json()['choices'][0]['message']['content'].strip()
+        if audit_response:
+            result = audit_response['choices'][0]['message']['content'].strip()
         else:
-            print(f"Obeida Vision Warning (Model 2): {response_2.status_code} - استخدام التحليل الأول")
+            print("Obeida Vision Warning: استخدام التحليل الأول")
             result = initial_analysis
         
         # تنظيف النص من التكرار
@@ -1233,7 +1263,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         
-    except requests.exceptions.Timeout:
+    except httpx.TimeoutException:
         await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
     except Exception as e:
         print(f"خطأ في تحليل الصورة: {e}")
@@ -1474,7 +1504,7 @@ def run_flask_server():
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-def run_telegram_bot():
+async def run_telegram_bot():
     """تشغيل Telegram bot"""
     print("🤖 Starting Telegram Bot...")
     print(f"⚡ Powered by - Obeida Trading")
@@ -1527,9 +1557,9 @@ def run_telegram_bot():
     print("📡 Bot is now polling for updates...")
     
     # تشغيل البوت
-    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    await application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
-def main():
+async def main():
     """الدالة الرئيسية"""
     print("🤖 Starting Powered by - Obeida Trading ...")
     print("=" * 60)
@@ -1542,7 +1572,12 @@ def main():
     print("=" * 60)
     
     # تشغيل Telegram bot في thread الرئيسي
-    run_telegram_bot()
+    try:
+        await run_telegram_bot()
+    except KeyboardInterrupt:
+        print("Bot stopped by user")
+    finally:
+        await api_client.close()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
