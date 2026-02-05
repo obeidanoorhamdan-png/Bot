@@ -668,9 +668,24 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # تحديد أوقات الأخبار الخطيرة
         high_impact_hours = [
-            (13, 30), (15, 0), (19, 0),  # أخبار أمريكية رئيسية
-            (8, 0), (9, 0), (10, 0)      # أخبار أوروبية
-        ]
+              # أخبار أمريكية رئيسية
+              (14, 30),  # CPI / NFP
+              (16, 0),   # بيانات ISM / PMI
+              (20, 0),   # FOMC / تصريحات الفيدرالي
+              # أخبار أوروبية
+              (8, 0),    # بيانات ألمانيا / فرنسا
+              (9, 0),    # منطقة اليورو PMI / CPI
+              (10, 0),   # قرارات ECB / تصريحات
+              
+              # أخبار بريطانية
+              (9, 0),    # بيانات المملكة المتحدة
+              (11, 0),   # قرارات بنك إنجلترا
+              # أخبار يابانية وآسيوية
+              (2, 30),   # بيانات اليابان
+              (4, 0),    # الصين / آسيا
+              # السلع والنفط
+              (17, 30),  # مخزونات النفط الأمريكية (EIA)
+]
         
         # تحقق إذا كنا في نطاق ساعة من خبر عالي التأثير
         for news_hour, news_minute in high_impact_hours:
@@ -688,11 +703,11 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # ========== الفلتر الزمني (Kill Zones) ==========
         kill_zone_status = ""
-        if 8 <= current_hour < 11:  # London Kill Zone
-            kill_zone_status = "داخل منطقة القتل السعري (لندن 8-11 GMT)"
-        elif 13 <= current_hour < 16:  # New York Kill Zone
-            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 13-16 GMT)"
-        elif 22 <= current_hour or current_hour < 7:  # Asian Session
+        if 10 <= current_hour < 13:  # London Kill Zone
+            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
+        elif 15 <= current_hour < 18:  # New York Kill Zone
+            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
+        elif 0 <= current_hour < 9 or current_hour >= 22:  # Asian Session
             kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
         else:
             kill_zone_status = "خارج مناطق القتل الرئيسية"
