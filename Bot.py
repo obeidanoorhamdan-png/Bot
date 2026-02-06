@@ -240,39 +240,6 @@ def split_message(text, max_length=4000):
     
     return parts
 
-def clean_telegram_text(text):
-    """تنظيف النص من الرموز التي تسبب مشاكل في تحليل Markdown في تلغرام"""
-    if not text:
-        return text
-    
-    # 1. إزالة التنسيقات المتداخلة
-    text = re.sub(r'(\*{1,3})([^*]+?)\1', r'\2', text)  # إزالة *bold* و **bold** و ***bold***
-    text = re.sub(r'(__)([^_]+?)\1', r'\2', text)      # إزالة __underline__
-    text = re.sub(r'(~~)([^~]+?)\1', r'\2', text)      # إزالة ~~strikethrough~~
-    
-    # 2. الهروب من الرموز الخاصة
-    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
-    for char in special_chars:
-        text = text.replace(char, f'\\{char}')
-    
-    # 3. ضمان أن العناوين لا تحتوي على رموز خاصة
-    lines = text.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        if line.startswith('#') or line.startswith('*') or line.startswith('-'):
-            line = re.sub(r'[#*\-_`]', '', line)
-        cleaned_lines.append(line)
-    
-    text = '\n'.join(cleaned_lines)
-    
-    # 4. إزالة التكرارات الزائدة للرموز
-    text = re.sub(r'([_*~`]){4,}', '', text)
-    
-    # 5. تأكد من عدم وجود كيانات Markdown غير مكتملة
-    text = re.sub(r'(?<!\\)[*_]{1,2}(?![\s\S]*[*_]{1,2})', '', text)
-    
-    return text
-
 # --- وظائف نظام التوصية الجديد ---
 def get_mistral_analysis(symbol):
     """الحصول على تحليل من Mistral AI API للعملة"""
@@ -383,8 +350,6 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
         
         # تنظيف النص من التكرارات
         final_msg = clean_repeated_text(final_msg)
-        # تنظيف النص لمشاكل Markdown
-        final_msg = clean_telegram_text(final_msg)
         
         await wait_msg.edit_text(
             final_msg,
@@ -609,8 +574,6 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             
             # تنظيف النص من التكرارات
             result = clean_repeated_text(result)
-            # تنظيف النص من مشاكل Markdown
-            result = clean_telegram_text(result)
             
             # إضافة تذييل مميز
             footer = "\n\n━━━━━━━━━━━━━━━━━━\n🤖 **Obeida Trading** - Powered by Obeida Trading 🤖"
@@ -662,7 +625,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-# --- كود تحليل الصور المحسن والمدمج الكامل مع نظام الموديل المزدوج ---
+    # --- كود تحليل الصور المحسن والمدمج الكامل مع نظام الموديل المزدوج ---
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور للتحليل الفني المتقدم مع نظام الموديل المزدوج - الإصدار المحسّن"""
     user_id = update.effective_user.id
@@ -1105,35 +1068,31 @@ OTC حماية: SL +20%, دخول بعد 3 شموع، حجم 33/33/34
             audit_result = response_2.json()['choices'][0]['message']['content'].strip()
         else:
             print(f"Obeida Vision Warning (Model 2): {response_2.status_code} - استخدام التحليل الأول")
-            audit_result = "📋 **ملاحظة:** تعذر التدقيق - استخدام التحليل الأولي مباشرة"
+            audit_result = "ملاحظة: تعذر التدقيق - استخدام التحليل الأولي مباشرة"
         
         # تنظيف النصوص من التكرار
-        initial_analysis = clean_repeated_text(initial_analysis)
         audit_result = clean_repeated_text(audit_result)
-        
-        # 🔴 الحل الرئيسي: تنظيف النص من مشاكل Markdown قبل الإرسال
-        initial_analysis = clean_telegram_text(initial_analysis)
-        audit_result = clean_telegram_text(audit_result)
         
         keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
         # تنسيق وقت الصفقة للعرض
         time_display = format_trade_time_for_prompt(trade_time)
         
-        # إعداد النص النهائي بدون تكرار
+        # إعداد النص النهائي بدون رموز قد تسبب مشاكل في Markdown
+        # بدلاً من استخدام parse_mode="Markdown"، سنستخدم HTML أو نص عادي
         full_result = (
-            f"✅ **تم التحليل والتدقيق بنجاح!**\n"
+            f"✅ تم التحليل والتدقيق بنجاح!\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"{audit_result}\n\n"
-            f"📋 **الإعدادات المستخدمة:**\n"
+            f"📋 الإعدادات المستخدمة:\n"
             f"• سرعة الشموع: {candle}\n"
             f"• استراتيجية التداول: {time_display}\n"
             f"━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Powered by - Obeida Trading**"
+            f"🤖 Powered by - Obeida Trading"
         )
         
-        # 🔴 تنظيف النهائي من مشاكل Markdown
-        full_result = clean_telegram_text(full_result)
+        # تنظيف النهائي من التكرارات
+        full_result = clean_repeated_text(full_result)
         
         # تقسيم النتيجة إذا كانت طويلة
         if len(full_result) > 4000:
@@ -1141,28 +1100,20 @@ OTC حماية: SL +20%, دخول بعد 3 شموع، حجم 33/33/34
             
             # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
             await wait_msg.edit_text(
-                parts[0],
-                parse_mode="Markdown",
-                disable_web_page_preview=True
+                parts[0]
             )
             
             # إرسال الأجزاء المتبقية
             for part in parts[1:]:
-                await update.message.reply_text(
-                    part, 
-                    parse_mode="Markdown",
-                    disable_web_page_preview=True
-                )
+                await update.message.reply_text(part)
         else:
             await wait_msg.edit_text(
-                full_result,
-                parse_mode="Markdown",
-                disable_web_page_preview=True
+                full_result
             )
         
         # إرسال الأزرار
         await update.message.reply_text(
-            "📊 **اختر الإجراء التالي:**",
+            "📊 اختر الإجراء التالي:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         
@@ -1171,7 +1122,10 @@ OTC حماية: SL +20%, دخول بعد 3 شموع، حجم 33/33/34
     except Exception as e:
         print(f"خطأ في تحليل الصورة: {e}")
         keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
+        
+        # استخدام نص عادي بدون Markdown للرسائل الخطأ
+        error_msg = f"❌ حدث خطأ في تحليل الصورة:\n{str(e)[:200]}\nيرجى المحاولة مرة أخرى."
+        await wait_msg.edit_text(error_msg)
     finally:
         if os.path.exists(path):
             os.remove(path)
@@ -1479,3 +1433,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
