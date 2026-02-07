@@ -363,7 +363,7 @@ def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None):
             # البحث عن جميع ملفات هذا المستخدم
             try:
                 for filename in os.listdir(IMAGE_CACHE_DIR):
-                    if f"_{user_id}_" in filename or f"dual1_{user_id}_" in filename or f"dual2_{user_id}_" in filename:
+                    if f"_{user_id}_" in filename:
                         filepath = os.path.join(IMAGE_CACHE_DIR, filename)
                         if os.path.exists(filepath):
                             os.remove(filepath)
@@ -1473,448 +1473,6 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
     
     return MAIN_MENU
 
-# --- دوال نظام الفريم المزدوج المحسّن ---
-async def start_dual_timeframe_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء وضع التحليل بالفريم المزدوج"""
-    user_id = update.effective_user.id
-    candle, trade_time, _, _ = get_user_setting(user_id)
-    
-    if not candle or not trade_time:
-        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-        await update.message.reply_text(
-            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    
-    # تنظيف أي بيانات قديمة
-    cleanup_user_data(context, user_id)
-    
-    context.user_data['dual_analysis_mode'] = True
-    context.user_data['dual_images'] = []
-    context.user_data['dual_image_paths'] = []
-    context.user_data['original_paths'] = []
-    context.user_data['dual_analysis_start'] = time.time()
-    
-    keyboard = [["الرجوع للقائمة الرئيسية"]]
-    
-    await update.message.reply_text(
-        f"📊 **وضع التحليل بالفريم المزدوج**\n\n"
-        f"الإعدادات الحالية:\n"
-        f"• سرعة الشموع: {candle}\n"
-        f"• مدة الصفقة: {trade_time}\n\n"
-        f"🎯 **الخطوات المطلوبة:**\n"
-        f"1. أرسل صورة الفريم الأعلى (H1/H4) للاتجاه العام\n"
-        f"2. أرسل صورة الفريم الأدنى ({candle}) للدخول\n\n"
-        f"📤 **الخطوة 1/2:** أرسل صورة الفريم الأعلى الآن:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    
-    return WAITING_FIRST_IMAGE
-
-async def handle_first_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصورة الأولى في وضع الفريم المزدوج - الإصدار المعدل"""
-    user_id = update.effective_user.id
-    wait_msg = await update.message.reply_text("📊 جاري حفظ صورة الفريم الأعلى...")
-    
-    try:
-        # الحصول على أفضل جودة للصورة
-        photo = await update.message.photo[-1].get_file()
-        
-        timestamp = int(time.time())
-        # استخدام اسم فريد للملف
-        original_path = os.path.join(IMAGE_CACHE_DIR, f"dual1_{user_id}_{timestamp}_original.jpg")
-        
-        # التأكد من وجود المجلد
-        if not os.path.exists(IMAGE_CACHE_DIR):
-            os.makedirs(IMAGE_CACHE_DIR)
-        
-        # تحميل الصورة
-        await photo.download_to_drive(original_path)
-        
-        # التحقق من أن الصورة تم تحميلها بنجاح
-        if not os.path.exists(original_path) or os.path.getsize(original_path) == 0:
-            raise Exception("فشل تحميل الصورة - الملف فارغ أو غير موجود")
-        
-        print(f"✅ تم تحميل الصورة: {original_path} ({os.path.getsize(original_path)/1024:.1f} KB)")
-        
-        # ضغط الصورة
-        try:
-            compressed_path = compress_image(original_path)
-            print(f"✅ تم ضغط الصورة: {compressed_path}")
-        except Exception as compress_error:
-            print(f"⚠️ خطأ في ضغط الصورة، استخدام الصورة الأصلية: {compress_error}")
-            compressed_path = original_path
-        
-        # قراءة الصورة المضغوطة وتحويلها إلى base64
-        try:
-            with open(compressed_path, "rb") as img_file:
-                base64_image = base64.b64encode(img_file.read()).decode('utf-8')
-            
-            if not base64_image:
-                raise Exception("فشل تحويل الصورة إلى base64")
-        except Exception as read_error:
-            print(f"❌ خطأ في قراءة الصورة: {read_error}")
-            # محاولة استخدام الصورة الأصلية
-            with open(original_path, "rb") as img_file:
-                base64_image = base64.b64encode(img_file.read()).decode('utf-8')
-        
-        # تهيئة البيانات إذا لم تكن موجودة
-        if 'dual_images' not in context.user_data:
-            context.user_data['dual_images'] = []
-        if 'dual_image_paths' not in context.user_data:
-            context.user_data['dual_image_paths'] = []
-        if 'original_paths' not in context.user_data:
-            context.user_data['original_paths'] = []
-        
-        # حفظ الصورة في الذاكرة
-        context.user_data['dual_images'] = [base64_image]
-        context.user_data['dual_image_paths'] = [compressed_path]
-        context.user_data['original_paths'] = [original_path]
-        
-        keyboard = [["الرجوع للقائمة الرئيسية"]]
-        
-        await wait_msg.edit_text(
-            "✅ **تم حفظ صورة الفريم الأعلى بنجاح**\n\n"
-            "📤 **الخطوة 2/2:** أرسل صورة الفريم الأدنى الآن للدخول:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        
-        return WAITING_SECOND_IMAGE
-        
-    except Exception as e:
-        print(f"❌ خطأ في handle_first_image: {traceback.format_exc()}")
-        error_message = f"❌ حدث خطأ في حفظ الصورة: {str(e)}"
-        
-        # محاولة تنظيف أي ملفات مؤقتة تم إنشاؤها
-        try:
-            # البحث عن أي ملفات تم إنشاؤها لهذا المستخدم
-            if os.path.exists(IMAGE_CACHE_DIR):
-                for filename in os.listdir(IMAGE_CACHE_DIR):
-                    if f"dual1_{user_id}_" in filename:
-                        filepath = os.path.join(IMAGE_CACHE_DIR, filename)
-                        if os.path.exists(filepath):
-                            os.remove(filepath)
-        except Exception as cleanup_error:
-            print(f"⚠️ خطأ في تنظيف الملفات: {cleanup_error}")
-        
-        await wait_msg.edit_text(error_message)
-        
-        # تنظيف الذاكرة المؤقتة
-        cleanup_user_data(context, user_id)
-        
-        keyboard = [
-            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["📊 تحليل فريم مزدوج", "📈 توصية"],
-            ["💬 دردشة"]
-        ]
-        
-        await update.message.reply_text(
-            "🔙 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-
-async def handle_second_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصورة الثانية وتحليل الفريم المزدوج - الإصدار المعدل"""
-    user_id = update.effective_user.id
-    wait_msg = await update.message.reply_text("📊 جاري تحليل الصورتين معاً...")
-    
-    try:
-        # الحصول على الصورة
-        photo = await update.message.photo[-1].get_file()
-        
-        timestamp = int(time.time())
-        original_path = os.path.join(IMAGE_CACHE_DIR, f"dual2_{user_id}_{timestamp}_original.jpg")
-        
-        # تحميل الصورة
-        await photo.download_to_drive(original_path)
-        
-        # التحقق من تحميل الصورة
-        if not os.path.exists(original_path) or os.path.getsize(original_path) == 0:
-            raise Exception("فشل تحميل الصورة الثانية")
-        
-        print(f"✅ تم تحميل الصورة الثانية: {original_path}")
-        
-        # ضغط الصورة
-        try:
-            compressed_path = compress_image(original_path)
-        except Exception:
-            compressed_path = original_path
-        
-        # قراءة الصورة المضغوطة
-        try:
-            with open(compressed_path, "rb") as img_file:
-                base64_image = base64.b64encode(img_file.read()).decode('utf-8')
-        except Exception:
-            with open(original_path, "rb") as img_file:
-                base64_image = base64.b64encode(img_file.read()).decode('utf-8')
-        
-        # التأكد من وجود البيانات
-        if 'dual_images' not in context.user_data:
-            context.user_data['dual_images'] = []
-        if 'dual_image_paths' not in context.user_data:
-            context.user_data['dual_image_paths'] = []
-        if 'original_paths' not in context.user_data:
-            context.user_data['original_paths'] = []
-        
-        # إضافة الصورة الثانية
-        context.user_data['dual_images'].append(base64_image)
-        context.user_data['dual_image_paths'].append(compressed_path)
-        context.user_data['original_paths'].append(original_path)
-        
-        # تحليل الصورتين معاً
-        if len(context.user_data['dual_images']) >= 2:
-            candle, trade_time, prev_context, prev_time = get_user_setting(user_id)
-            
-            # الحصول على معلومات السيولة والتوقيت
-            session_name, session_time, session_vol = get_market_session()
-            gaza_time = datetime.now(GAZA_TIMEZONE)
-            current_hour = gaza_time.hour
-            current_minute = gaza_time.minute
-            
-            # إعداد البرومبت المزدوج المحسّن
-            DUAL_PROMPT = f"""
-أنت محلل فني خبير متخصص في التحليل متعدد الإطارات الزمنية (Multi-Timeframe Analysis).
-
-🎯 **مهمة خاصة: يجب عليك مطابقة السعر الحالي في الصورة الثانية مع موقعه التشريحي في الصورة الأولى للتأكد من أننا داخل منطقة الطلب/العرض الصحيحة.**
-
-لديك صورتان:
-1. الصورة الأولى: الفريم الأعلى (H1/H4) للاتجاه العام
-2. الصورة الثانية: الفريم الأدنى ({candle}) للدخول التنفيذي
-
-🛡️ **حماية OTC الخاصة:**
-"إذا كان الزخم في فريم الدقيقة (LTF) عكس اتجاه فريم الساعة (HTF) بقوة انفجارية (Marubozu)، أعطِ الأولوية للزخم اللحظي وحذر من أن اتجاه الفريم الكبير قد يكون مخترقاً."
-
-مهمتك: تحليل التوافق بين الفريمين وإصدار توصية دقيقة بناءً على:
-• اتجاه الفريم الأعلى (HTF)
-• نقاط الدخول على الفريم الأدنى (LTF)
-• توافق الإشارات بين الفريمين
-• مطابقة السعر بين الفريمين
-
-📊 **معطيات التحليل:**
-• الفريم الأعلى: H1/H4 (اتجاه عام)
-• الفريم الأدنى: {candle} (دخول تنفيذي)
-• جلسة السوق: {session_name} ({session_vol} سيولة)
-• استراتيجية التداول: {trade_time}
-
-🎯 **قواعد التحليل المزدوج:**
-1. **توافق الاتجاه:** يجب أن يكون اتجاه الفريم الأدنى متوافقاً مع اتجاه الفريم الأعلى
-2. **التوقيت الذكي:** الدخول على الفريم الأدنى عند نقاط POI المتوافقة مع اتجاه الفريم الأعلى
-3. **فلتر التضارب:** إذا كان هناك تضارب بين الفريمين، تُلغى الصفقة
-4. **مطابقة السعر:** تأكد من أن السعر في الصورة الثانية يقع في نفس المنطقة الهيكلية في الصورة الأولى
-
-🔍 **خطوات التحليل:**
-1. تحليل الفريم الأعلى: تحديد اتجاه الهيكل، مناطق العرض/الطلب، مستويات الدعم/المقاومة
-2. تحليل الفريم الأدنى: البحث عن نقاط الدخول، أنماط الشموع، مناطق OB
-3. **المطابقة السعرية:** مقارنة موقع السعر الحالي بين الفريمين
-4. التحقق من التوافق: التأكد من تطابق الاتجاه والإشارات
-5. إصدار التوصية النهائية: شراء/بيع/انتظار
-
-⚠️ **فلترات الحماية:**
-• إذا كان اتجاه HTF صاعد لكن LTF يظهر شموع ماروبوزو هابطة قوية → الانتظار
-• إذا كان السعر في LTF عند مستوى مختلف عن موقعه في HTF → التأكد من صحة المنطقة
-• إذا كان هناك تضارب واضح → إلغاء الصفقة
-
-📋 **تنسيق الإجابة:**
-🎯 **التحليل المزدوج (Multi-Timeframe Analysis):**
-• اتجاه الفريم الأعلى: [صاعد/هابط/جانبي]
-• اتجاه الفريم الأدنى: [صاعد/هابط/جانبي]
-• درجة التوافق: [عالية/متوسطة/منخفضة]
-• حالة المطابقة السعرية: [✅ متطابق / ⚠️ يوجد فرق بسيط / ❌ غير متطابق]
-
-⚡ **التوصية التنفيذية:**
-• القرار: (شراء 🟢 / بيع 🔴 / انتظار 🟡)
-• سبب القرار: [توضيح بناءً على التوافق بين الفريمين والمطابقة السعرية]
-• نقطة الدخول: [السعر المثالي بناءً على الفريم الأدنى]
-• وقف الخسارة: [بناءً على تحليل الفريمين]
-• الأهداف: [TP1, TP2 بناءً على الفريم الأعلى]
-
-⚠️ **إدارة المخاطر:**
-• مستوى الثقة: [0-100]٪
-• نقطة الإلغاء: [السعر الذي يفسد التوافق]
-• ملاحظات OTC: [تحذيرات خاصة بسوق OTC]
-
-قم بتحليل الصورتين وأعطني الإجابة بالتنسيق المطلوب.
-"""
-            
-            headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
-            
-            # --- الخطوة 1: التحليل الأولي للفريم المزدوج ---
-            payload_1 = {
-                "model": MISTRAL_MODEL,
-                "messages": [
-                    {
-                        "role": "user", 
-                        "content": [
-                            {"type": "text", "text": DUAL_PROMPT},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{context.user_data['dual_images'][0]}", "detail": "high"}},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{context.user_data['dual_images'][1]}", "detail": "high"}}
-                        ]
-                    }
-                ],
-                "max_tokens": 1200,
-                "temperature": 0.1
-            }
-            
-            response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=60)
-            
-            if response_1.status_code != 200:
-                await wait_msg.edit_text(f"❌ حدث خطأ في التحليل المزدوج. الرمز: {response_1.status_code}")
-                cleanup_user_data(context, user_id)
-                return MAIN_MENU
-            
-            initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
-            
-            # --- الخطوة 2: التدقيق النهائي (نفس نظام التحليل الفردي) ---
-            await wait_msg.edit_text("📊 جاري تدقيق التحليل المزدوج...")
-            
-            AUDIT_DUAL_PROMPT = f"""
-            أنت مدقق تقني متخصص في تحليل الفريم المزدوج. مهمتك التدقيق على التحليل التالي:
-            
-            *التحليل الأولي:* {initial_analysis}
-            
-            لديك صورتان:
-            1. صورة الفريم الأعلى (HTF)
-            2. صورة الفريم الأدنى (LTF)
-            
-            🔍 **مهمات التدقيق:**
-            1. تحقق من دقة الأسعار المذكورة في كلا الصورتين
-            2. تأكد من مطابقة السعر بين الفريمين
-            3. تحقق من صحة مناطق العرض/الطلب المذكورة
-            4. تأكد من تطبيق قواعد OTC الخاصة
-            
-            📊 **قواعد التدقيق:**
-            - إذا كان السعر في LTF يختلف عن موقعه في HTF بأكثر من 0.0010 → ذكر التناقض
-            - إذا كانت مناطق العرض/الطلب غير متطابقة → ذكر التحذير
-            - إذا كان هناك تضارب في اتجاه الهيكل → اقترح الانتظار
-            
-            🎯 **تنسيق التدقيق:**
-            🕵️ **نتائج التدقيق:**
-            • دقة الأسعار: [✅ دقيقة / ⚠️ تحتاج تصحيح / ❌ غير دقيقة]
-            • مطابقة الفريمين: [✅ متطابقين / ⚠️ يوجد فرق / ❌ غير متطابقين]
-            • صحة التوصية: [✅ صحيحة / ⚠️ تحتاج تعديل / ❌ غير صحيحة]
-            
-            ⚡ **التعديلات المقترحة:**
-            [اذكر أي تعديلات ضرورية بناءً على التدقيق]
-            
-            ⚠️ **التحليل النهائي بعد التدقيق:**
-            [قدم التحليل النهائي مع مراعاة نتائج التدقيق]
-            
-            تأكد من أن التوصية النهائية تأخذ بعين الاعتبار تدقيقك.
-            """
-            
-            payload_2 = {
-                "model": MISTRAL_MODEL_AUDIT,
-                "messages": [
-                    {
-                        "role": "user", 
-                        "content": [
-                            {"type": "text", "text": AUDIT_DUAL_PROMPT},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{context.user_data['dual_images'][0]}", "detail": "high"}},
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{context.user_data['dual_images'][1]}", "detail": "high"}}
-                        ]
-                    }
-                ],
-                "max_tokens": 1000,
-                "temperature": 0.2,
-                "top_p": 1.0
-            }
-            
-            response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=60)
-            
-            if response_2.status_code == 200:
-                audit_analysis = response_2.json()['choices'][0]['message']['content'].strip()
-                final_analysis = audit_analysis
-            else:
-                print(f"Obeida Dual Audit Warning: {response_2.status_code}")
-                final_analysis = initial_analysis
-            
-            # تنظيف النص من التكرارات
-            final_analysis = clean_repeated_text(final_analysis)
-            
-            final_result = (
-                f"✅ **تم تحليل الفريم المزدوج بنجاح!**\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"📊 **الفريم الأعلى:** H1/H4 (الاتجاه العام)\n"
-                f"📊 **الفريم الأدنى:** {candle} (الدخول التنفيذي)\n"
-                f"⏱️ **وقت التحليل:** {int(time.time() - context.user_data.get('dual_analysis_start', 0))} ثانية\n"
-                f"━━━━━━━━━━━━━━━━\n"
-                f"{final_analysis}\n\n"
-                f"🤖 **Powered by - Obeida Trading**"
-            )
-            
-            await wait_msg.edit_text(
-                final_result,
-                parse_mode="Markdown"
-            )
-            
-            # حفظ سياق التحليل
-            save_analysis_context(user_id, final_analysis)
-            
-        else:
-            await wait_msg.edit_text("❌ لم يتم استلام الصورتين بشكل صحيح. حاول مرة أخرى.")
-        
-    except Exception as e:
-        print(f"❌ خطأ في handle_second_image: {traceback.format_exc()}")
-        await wait_msg.edit_text(f"❌ حدث خطأ في التحليل المزدوج: {str(e)[:200]}")
-    finally:
-        # تنظيف الذاكرة المؤقتة بغض النظر عن النتيجة
-        try:
-            # تنظيف جميع الملفات المؤقتة
-            all_paths = []
-            if 'original_paths' in context.user_data:
-                all_paths.extend(context.user_data['original_paths'])
-            if 'dual_image_paths' in context.user_data:
-                all_paths.extend(context.user_data['dual_image_paths'])
-            
-            for filepath in all_paths:
-                if filepath and os.path.exists(filepath):
-                    try:
-                        os.remove(filepath)
-                        print(f"🧹 تم حذف: {filepath}")
-                    except Exception as e:
-                        print(f"⚠️ خطأ في حذف الملف: {filepath}, {e}")
-            
-            # تنظيف الذاكرة
-            cleanup_user_data(context, user_id)
-            
-        except Exception as cleanup_error:
-            print(f"⚠️ خطأ في التنظيف النهائي: {cleanup_error}")
-    
-    keyboard = [["📊 تحليل صورة"], ["📊 تحليل فريم مزدوج"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
-    
-    # ✅ تم التعديل: استخدام ReplyKeyboardMarkup بدلاً من InlineKeyboardMarkup
-    await update.message.reply_text(
-        "📊 **اختر الإجراء التالي:**",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-    )
-    
-    return MAIN_MENU
-
-async def handle_cancel_dual(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إلغاء وضع الفريم المزدوج مع تنظيف كامل"""
-    user_id = update.effective_user.id
-    
-    # تنظيف شامل للذاكرة
-    cleanup_user_data(context, user_id)
-    
-    keyboard = [
-        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["📊 تحليل فريم مزدوج", "📈 توصية"],
-        ["💬 دردشة"]
-    ]
-    
-    await update.message.reply_text(
-        "❌ **تم إلغاء وضع الفريم المزدوج وتنظيف الذاكرة**\n\n"
-        "العودة للقائمة الرئيسية",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-    )
-    return MAIN_MENU
-
 # --- حارس الأخطاء (Error Handler) ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """معالجة الأخطاء في البوت"""
@@ -1996,8 +1554,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["📊 تحليل فريم مزدوج", "📈 توصية"],
-        ["💬 دردشة"]
+        ["💬 دردشة", "📈 توصية"]
     ]
     
     await update.message.reply_text(
@@ -2064,9 +1621,6 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return ANALYZE_MODE
     
-    elif user_message == "📊 تحليل فريم مزدوج":
-        return await start_dual_timeframe_analysis(update, context)
-    
     elif user_message == "💬 دردشة":
         return await start_chat_mode(update, context)
     
@@ -2075,8 +1629,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["📊 تحليل فريم مزدوج", "📈 توصية"],
-        ["💬 دردشة"]
+        ["💬 دردشة", "📈 توصية"]
     ]
     await update.message.reply_text(
         "اختر أحد الخيارات من القائمة:",
@@ -2092,8 +1645,7 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["📊 تحليل فريم مزدوج", "📈 توصية"],
-            ["💬 دردشة"]
+            ["💬 دردشة", "📈 توصية"]
         ]
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
@@ -2131,8 +1683,7 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["📊 تحليل فريم مزدوج", "📈 توصية"],
-            ["💬 دردشة"]
+            ["💬 دردشة", "📈 توصية"]
         ]
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
@@ -2143,7 +1694,7 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
     if user_message in TRADE_TIMES:
         save_user_setting(user_id, "trade_time", user_message)
         
-        keyboard = [["📊 تحليل صورة"], ["📊 تحليل فريم مزدوج"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+        keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
         candle, _, _, _ = get_user_setting(user_id)
         
@@ -2172,8 +1723,7 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["📊 تحليل فريم مزدوج", "📈 توصية"],
-            ["💬 دردشة"]
+            ["💬 دردشة", "📈 توصية"]
         ]
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
@@ -2202,21 +1752,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ⚙️ **كيفية الاستخدام:**
     1. استخدم أزرار القائمة للتنقل
     2. أرسل صورة الشارت للتحليل
-    3. اختر "تحليل فريم مزدوج" لتحليل صورتين معاً
-    4. اختر "دردشة" للاستفسارات النصية
-    5. اختر "توصية" لتحليل العملات
+    3. اختر "دردشة" للاستفسارات النصية
+    4. اختر "توصية" لتحليل العملات
     
     📈 **نظام التوصيات:**
     • تحليل فني للعملات والمؤشرات
     • أربعة أقسام رئيسية
     • توصيات مفصلة لكل عملة
     • تحليل سريع ومباشر
-    
-    📊 **نظام الفريم المزدوج المتقدم:**
-    • تحليل صورتين معاً (فريم أعلى + فريم أدنى)
-    • مطابقة الأسعار بين الفريمات
-    • نظام تدقيق مزدوج (تحليل + تدقيق)
-    • حماية OTC متقدمة
     
     ⏱️ **خيارات مدة الصفقة:**
     • **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة
@@ -2227,12 +1770,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **ذاكرة السياق:** يتذكر التحليل السابق لمدة 10 دقائق
     • **حساب توقيت الشمعة:** يحسب الثواني المتبقية للإغلاق
     • **نظام تنظيف الذاكرة:** تنظيف تلقائي للبيانات المؤقتة
-    • **مطابقة الأسعار:** تأكد من تطابق الأسعار بين الفريمات
     • **نظام التدقيق المزدوج:** تحليل + تدقيق للحصول على دقة أعلى
     
     📊 **مميزات البوت:**
     • تحليل فني للرسوم البيانية 
-    • نظام فريم مزدوج متقدم
     • دردشة ذكية 
     • نظام توصيات العملات
     • حفظ إعداداتك الشخصية
@@ -2299,14 +1840,6 @@ def main():
             ],
             CATEGORY_SELECTION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection)
-            ],
-            WAITING_FIRST_IMAGE: [
-                MessageHandler(filters.PHOTO, handle_first_image),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cancel_dual)
-            ],
-            WAITING_SECOND_IMAGE: [
-                MessageHandler(filters.PHOTO, handle_second_image),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cancel_dual)
             ],
         },
         fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
