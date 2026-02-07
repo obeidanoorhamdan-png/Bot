@@ -702,7 +702,7 @@ async def summarize_with_fast_model(text_to_summarize):
             },
             {"role": "user", "content": f"لخص هذا التحليل الفني وأعط تنبيهات فورية:\n\n{text_to_summarize}"}
         ],
-        "max_tokens": 800,
+        "max_tokens": 1200,
         "temperature": 0.3,
         "top_p": 1.0
     }
