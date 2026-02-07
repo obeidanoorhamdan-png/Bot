@@ -356,32 +356,31 @@ def split_message(text, max_length=4000):
 
 # --- وظائف إدارة الذاكرة ---
 def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None):
-    """تنظيف البيانات المؤقتة للمستخدم"""
+    """تنظيف البيانات المؤقتة للمستخدم - الإصدار المحسّن"""
     try:
         # تنظيف الملفات المؤقتة
-        if user_id:
-            # البحث عن ملفات هذا المستخدم في مجلد التخزين المؤقت
+        if user_id and os.path.exists(IMAGE_CACHE_DIR):
+            # البحث عن جميع ملفات هذا المستخدم
             try:
                 for filename in os.listdir(IMAGE_CACHE_DIR):
-                    if f"_{user_id}_" in filename:
+                    if f"_{user_id}_" in filename or f"dual1_{user_id}_" in filename or f"dual2_{user_id}_" in filename:
                         filepath = os.path.join(IMAGE_CACHE_DIR, filename)
                         if os.path.exists(filepath):
                             os.remove(filepath)
+                            print(f"🧹 تم حذف ملف المستخدم: {filename}")
             except Exception as e:
                 print(f"⚠️ خطأ في تنظيف ملفات المستخدم {user_id}: {e}")
         
-        # تنظيف البيانات المؤقتة
-        if 'dual_images' in context.user_data:
-            del context.user_data['dual_images']
-        if 'dual_image_paths' in context.user_data:
-            del context.user_data['dual_image_paths']
-        if 'dual_analysis_mode' in context.user_data:
-            del context.user_data['dual_analysis_mode']
-        if 'last_analysis' in context.user_data:
-            del context.user_data['last_analysis']
-        if 'dual_analysis_start' in context.user_data:
-            del context.user_data['dual_analysis_start']
-            
+        # تنظيف البيانات المؤقتة في الذاكرة
+        keys_to_remove = [
+            'dual_images', 'dual_image_paths', 'dual_analysis_mode',
+            'last_analysis', 'dual_analysis_start', 'original_paths'
+        ]
+        
+        for key in keys_to_remove:
+            if key in context.user_data:
+                del context.user_data[key]
+                
         print(f"✅ تم تنظيف الذاكرة والملفات للمستخدم {user_id}")
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الذاكرة: {e}")
@@ -1130,7 +1129,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 
 📉 المرحلة 6: MACD المحسن
 • 1-5 دقائق: تجاهل التقاطعات البطيئة ودايفرجنس عند تعارضها مع زخم قوي
-• 15-60 دقيقة: خط الصفر + دايفرجنس عند POI
+• 15-60 دقائق: خط الصفر + دايفرجنس عند POI
 • حل التعارض: سلوك سعري واضح → تجاهل MACD
 
 ⏰ المرحلة 7: تعدد الإطارات
@@ -1496,6 +1495,7 @@ async def start_dual_timeframe_analysis(update: Update, context: ContextTypes.DE
     context.user_data['dual_analysis_mode'] = True
     context.user_data['dual_images'] = []
     context.user_data['dual_image_paths'] = []
+    context.user_data['original_paths'] = []
     context.user_data['dual_analysis_start'] = time.time()
     
     keyboard = [["الرجوع للقائمة الرئيسية"]]
@@ -1516,71 +1516,155 @@ async def start_dual_timeframe_analysis(update: Update, context: ContextTypes.DE
     return WAITING_FIRST_IMAGE
 
 async def handle_first_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصورة الأولى في وضع الفريم المزدوج"""
+    """معالجة الصورة الأولى في وضع الفريم المزدوج - الإصدار المعدل"""
+    user_id = update.effective_user.id
     wait_msg = await update.message.reply_text("📊 جاري حفظ صورة الفريم الأعلى...")
-    photo = await update.message.photo[-1].get_file()
-    
-    timestamp = int(time.time())
-    path = os.path.join(IMAGE_CACHE_DIR, f"dual1_{update.effective_user.id}_{timestamp}.jpg")
     
     try:
-        await photo.download_to_drive(path)
+        # الحصول على أفضل جودة للصورة
+        photo = await update.message.photo[-1].get_file()
+        
+        timestamp = int(time.time())
+        # استخدام اسم فريد للملف
+        original_path = os.path.join(IMAGE_CACHE_DIR, f"dual1_{user_id}_{timestamp}_original.jpg")
+        
+        # التأكد من وجود المجلد
+        if not os.path.exists(IMAGE_CACHE_DIR):
+            os.makedirs(IMAGE_CACHE_DIR)
+        
+        # تحميل الصورة
+        await photo.download_to_drive(original_path)
+        
+        # التحقق من أن الصورة تم تحميلها بنجاح
+        if not os.path.exists(original_path) or os.path.getsize(original_path) == 0:
+            raise Exception("فشل تحميل الصورة - الملف فارغ أو غير موجود")
+        
+        print(f"✅ تم تحميل الصورة: {original_path} ({os.path.getsize(original_path)/1024:.1f} KB)")
         
         # ضغط الصورة
-        compressed_path = compress_image(path)
+        try:
+            compressed_path = compress_image(original_path)
+            print(f"✅ تم ضغط الصورة: {compressed_path}")
+        except Exception as compress_error:
+            print(f"⚠️ خطأ في ضغط الصورة، استخدام الصورة الأصلية: {compress_error}")
+            compressed_path = original_path
         
-        with open(compressed_path, "rb") as img_file:
-            context.user_data['dual_images'] = [base64.b64encode(img_file.read()).decode('utf-8')]
-            context.user_data['dual_image_paths'] = [compressed_path]  # حفظ المسارات للحذف لاحقاً
+        # قراءة الصورة المضغوطة وتحويلها إلى base64
+        try:
+            with open(compressed_path, "rb") as img_file:
+                base64_image = base64.b64encode(img_file.read()).decode('utf-8')
+            
+            if not base64_image:
+                raise Exception("فشل تحويل الصورة إلى base64")
+        except Exception as read_error:
+            print(f"❌ خطأ في قراءة الصورة: {read_error}")
+            # محاولة استخدام الصورة الأصلية
+            with open(original_path, "rb") as img_file:
+                base64_image = base64.b64encode(img_file.read()).decode('utf-8')
+        
+        # تهيئة البيانات إذا لم تكن موجودة
+        if 'dual_images' not in context.user_data:
+            context.user_data['dual_images'] = []
+        if 'dual_image_paths' not in context.user_data:
+            context.user_data['dual_image_paths'] = []
+        if 'original_paths' not in context.user_data:
+            context.user_data['original_paths'] = []
+        
+        # حفظ الصورة في الذاكرة
+        context.user_data['dual_images'] = [base64_image]
+        context.user_data['dual_image_paths'] = [compressed_path]
+        context.user_data['original_paths'] = [original_path]
         
         keyboard = [["الرجوع للقائمة الرئيسية"]]
         
         await wait_msg.edit_text(
-            "✅ **تم حفظ صورة الفريم الأعلى**\n\n"
+            "✅ **تم حفظ صورة الفريم الأعلى بنجاح**\n\n"
             "📤 **الخطوة 2/2:** أرسل صورة الفريم الأدنى الآن للدخول:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         
+        return WAITING_SECOND_IMAGE
+        
     except Exception as e:
         print(f"❌ خطأ في handle_first_image: {traceback.format_exc()}")
-        await wait_msg.edit_text("❌ حدث خطأ في حفظ الصورة. حاول مرة أخرى.")
+        error_message = f"❌ حدث خطأ في حفظ الصورة: {str(e)}"
         
-        # تنظيف أي ملفات مؤقتة
-        for filepath in [path, path.replace('.jpg', '_compressed.jpg')]:
-            if filepath and os.path.exists(filepath):
-                try:
-                    os.remove(filepath)
-                except:
-                    pass
+        # محاولة تنظيف أي ملفات مؤقتة تم إنشاؤها
+        try:
+            # البحث عن أي ملفات تم إنشاؤها لهذا المستخدم
+            if os.path.exists(IMAGE_CACHE_DIR):
+                for filename in os.listdir(IMAGE_CACHE_DIR):
+                    if f"dual1_{user_id}_" in filename:
+                        filepath = os.path.join(IMAGE_CACHE_DIR, filename)
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
+        except Exception as cleanup_error:
+            print(f"⚠️ خطأ في تنظيف الملفات: {cleanup_error}")
         
-        cleanup_user_data(context, update.effective_user.id)
+        await wait_msg.edit_text(error_message)
+        
+        # تنظيف الذاكرة المؤقتة
+        cleanup_user_data(context, user_id)
+        
+        keyboard = [
+            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+            ["📊 تحليل فريم مزدوج", "📈 توصية"],
+            ["💬 دردشة"]
+        ]
+        
+        await update.message.reply_text(
+            "🔙 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
         return MAIN_MENU
-    
-    return WAITING_SECOND_IMAGE
 
 async def handle_second_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصورة الثانية وتحليل الفريم المزدوج"""
+    """معالجة الصورة الثانية وتحليل الفريم المزدوج - الإصدار المعدل"""
     user_id = update.effective_user.id
     wait_msg = await update.message.reply_text("📊 جاري تحليل الصورتين معاً...")
-    photo = await update.message.photo[-1].get_file()
-    
-    timestamp = int(time.time())
-    path = os.path.join(IMAGE_CACHE_DIR, f"dual2_{user_id}_{timestamp}.jpg")
     
     try:
-        await photo.download_to_drive(path)
+        # الحصول على الصورة
+        photo = await update.message.photo[-1].get_file()
+        
+        timestamp = int(time.time())
+        original_path = os.path.join(IMAGE_CACHE_DIR, f"dual2_{user_id}_{timestamp}_original.jpg")
+        
+        # تحميل الصورة
+        await photo.download_to_drive(original_path)
+        
+        # التحقق من تحميل الصورة
+        if not os.path.exists(original_path) or os.path.getsize(original_path) == 0:
+            raise Exception("فشل تحميل الصورة الثانية")
+        
+        print(f"✅ تم تحميل الصورة الثانية: {original_path}")
         
         # ضغط الصورة
-        compressed_path = compress_image(path)
+        try:
+            compressed_path = compress_image(original_path)
+        except Exception:
+            compressed_path = original_path
         
-        with open(compressed_path, "rb") as img_file:
-            if 'dual_images' not in context.user_data:
-                context.user_data['dual_images'] = []
-            if 'dual_image_paths' not in context.user_data:
-                context.user_data['dual_image_paths'] = []
-            
-            context.user_data['dual_images'].append(base64.b64encode(img_file.read()).decode('utf-8'))
-            context.user_data['dual_image_paths'].append(compressed_path)
+        # قراءة الصورة المضغوطة
+        try:
+            with open(compressed_path, "rb") as img_file:
+                base64_image = base64.b64encode(img_file.read()).decode('utf-8')
+        except Exception:
+            with open(original_path, "rb") as img_file:
+                base64_image = base64.b64encode(img_file.read()).decode('utf-8')
+        
+        # التأكد من وجود البيانات
+        if 'dual_images' not in context.user_data:
+            context.user_data['dual_images'] = []
+        if 'dual_image_paths' not in context.user_data:
+            context.user_data['dual_image_paths'] = []
+        if 'original_paths' not in context.user_data:
+            context.user_data['original_paths'] = []
+        
+        # إضافة الصورة الثانية
+        context.user_data['dual_images'].append(base64_image)
+        context.user_data['dual_image_paths'].append(compressed_path)
+        context.user_data['original_paths'].append(original_path)
         
         # تحليل الصورتين معاً
         if len(context.user_data['dual_images']) >= 2:
@@ -1780,15 +1864,26 @@ async def handle_second_image(update: Update, context: ContextTypes.DEFAULT_TYPE
     finally:
         # تنظيف الذاكرة المؤقتة بغض النظر عن النتيجة
         try:
-            # تنظيف ملفات هذا المستخدم
-            for filepath in [path, compressed_path] + context.user_data.get('dual_image_paths', []):
+            # تنظيف جميع الملفات المؤقتة
+            all_paths = []
+            if 'original_paths' in context.user_data:
+                all_paths.extend(context.user_data['original_paths'])
+            if 'dual_image_paths' in context.user_data:
+                all_paths.extend(context.user_data['dual_image_paths'])
+            
+            for filepath in all_paths:
                 if filepath and os.path.exists(filepath):
-                    os.remove(filepath)
+                    try:
+                        os.remove(filepath)
+                        print(f"🧹 تم حذف: {filepath}")
+                    except Exception as e:
+                        print(f"⚠️ خطأ في حذف الملف: {filepath}, {e}")
             
             # تنظيف الذاكرة
             cleanup_user_data(context, user_id)
-        except Exception as e:
-            print(f"⚠️ خطأ في تنظيف الملفات: {e}")
+            
+        except Exception as cleanup_error:
+            print(f"⚠️ خطأ في التنظيف النهائي: {cleanup_error}")
     
     keyboard = [["📊 تحليل صورة"], ["📊 تحليل فريم مزدوج"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
     
