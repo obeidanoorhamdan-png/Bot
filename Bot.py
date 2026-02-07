@@ -2162,25 +2162,21 @@ def run_flask_server():
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-async def run_telegram_bot_async():
-    """تشغيل Telegram bot بشكل غير متزامن"""
-    print("🤖 Starting Telegram Bot...")
-    print(f"⚡ Powered by - Obeida Trading")
-    print("📊 نظام الذاكرة: نشط")
-    print("⏱️ حساب توقيت الشموع: نشط")
-    print("📡 نظام الفريم المزدوج: نشط")
-    print("🔄 نظام تنظيف الذاكرة: نشط")
-    print("🎯 نظام مطابقة الأسعار: نشط")
-    print("🛡️ نظام حماية الأخطاء: نشط")
+def main():
+    """الدالة الرئيسية - النسخة السهلة"""
+    print("🤖 Starting Powered by - Obeida Trading ...")
+    
+    # تشغيل Flask
+    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
+    flask_thread.start()
+    
+    print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
     
     # تهيئة قاعدة البيانات
     init_db()
     
     # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
-    
-    # إضافة معالج الأخطاء
-    application.add_error_handler(error_handler)
     
     # معالج المحادثة
     conv_handler = ConversationHandler(
@@ -2232,49 +2228,7 @@ async def run_telegram_bot_async():
     print("📡 Bot is now polling for updates...")
     
     # تشغيل البوت
-    await application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-
-async def main_async():
-    """الدالة الرئيسية غير المتزامنة"""
-    print("🤖 Starting Powered by - Obeida Trading ...")
-    print("=" * 60)
-    
-    # تشغيل Flask في thread منفصل
-    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
-    flask_thread.start()
-    
-    print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
-    print("=" * 60)
-    
-    # إنشاء مهمة التنظيف الدوري
-    cleanup_task = asyncio.create_task(periodic_cleanup())
-    
-    try:
-        # تشغيل البوت
-        await run_telegram_bot_async()
-    except Exception as e:
-        print(f"❌ خطأ رئيسي في تشغيل البوت: {e}")
-        print("🔄 محاولة إعادة التشغيل...")
-    finally:
-        # إلغاء مهمة التنظيف
-        cleanup_task.cancel()
-        
-        # تنظيف نهائي
-        try:
-            shutil.rmtree(IMAGE_CACHE_DIR, ignore_errors=True)
-        except:
-            pass
-
-def main():
-    """الدالة الرئيسية"""
-    try:
-        # تشغيل البوت في حلقة غير متزامنة
-        asyncio.run(main_async())
-    except KeyboardInterrupt:
-        print("\n\n👋 تم إيقاف البوت بواسطة المستخدم")
-    except Exception as e:
-        print(f"❌ خطأ غير متوقع: {e}")
-        print("🔄 حاول إعادة تشغيل البوت...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
