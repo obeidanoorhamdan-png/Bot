@@ -1887,6 +1887,7 @@ async def handle_second_image(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     keyboard = [["📊 تحليل صورة"], ["📊 تحليل فريم مزدوج"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
     
+    # ✅ تم التعديل: استخدام ReplyKeyboardMarkup بدلاً من InlineKeyboardMarkup
     await update.message.reply_text(
         "📊 **اختر الإجراء التالي:**",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
