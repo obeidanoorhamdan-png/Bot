@@ -1,7 +1,7 @@
 python-telegram-bot
 flask
 requests
-pillow
+Pillow
 python-dotenv
 aiohttp
 apscheduler
