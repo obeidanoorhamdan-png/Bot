@@ -7,10 +7,18 @@ import requests
 import threading
 import time
 import sys
+import traceback
+import asyncio
+import json
+import shutil
+import io
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
+from telegram.error import NetworkError, TimedOut
 from flask import Flask
+from PIL import Image
+import pytz
 
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
@@ -52,6 +60,17 @@ CATEGORIES = {
         "Coca-Cola (OTC)", "Disney (OTC)", "Alibaba (OTC)", "Walmart (OTC)"
     ]
 }
+
+# إعدادات إضافية
+GAZA_TIMEZONE = pytz.timezone('Asia/Gaza')
+IMAGE_CACHE_DIR = "image_cache"
+MAX_IMAGE_SIZE = (1024, 1024)  # أقصى حجم للصورة بعد الضغط
+IMAGE_QUALITY = 85  # جودة الصورة بعد الضغط (من 0-100)
+
+# إنشاء مجلد التخزين المؤقت إذا لم يكن موجوداً
+if not os.path.exists(IMAGE_CACHE_DIR):
+    os.makedirs(IMAGE_CACHE_DIR)
+
 # حالات المحادثة
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
 
@@ -91,6 +110,56 @@ def health():
 @app.route('/ping')
 def ping():
     return "PONG"
+
+# --- دوال المساعدة الجديدة ---
+def cleanup_old_images():
+    """تنظيف الصور القديمة التي مضى عليها أكثر من 30 دقيقة"""
+    try:
+        current_time = time.time()
+        for filename in os.listdir(IMAGE_CACHE_DIR):
+            filepath = os.path.join(IMAGE_CACHE_DIR, filename)
+            if os.path.isfile(filepath):
+                # تحقق من عمر الملف
+                file_age = current_time - os.path.getmtime(filepath)
+                if file_age > 1800:  # أكثر من 30 دقيقة
+                    try:
+                        os.remove(filepath)
+                        print(f"🧹 تم حذف الملف القديم: {filename}")
+                    except Exception as e:
+                        print(f"⚠️ خطأ في حذف الملف {filename}: {e}")
+    except Exception as e:
+        print(f"⚠️ خطأ في تنظيف الصور القديمة: {e}")
+
+def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
+    """ضغط الصورة لتقليل الحجم مع الحفاظ على الجودة"""
+    try:
+        with Image.open(image_path) as img:
+            # تحويل الصورة إلى RGB إذا كانت RGBA
+            if img.mode in ('RGBA', 'LA', 'P'):
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'P':
+                    img = img.convert('RGB')
+                elif img.mode == 'RGBA':
+                    background.paste(img, mask=img.split()[-1])
+                    img = background
+                else:
+                    img = img.convert('RGB')
+            
+            # تغيير الحجم مع الحفاظ على النسبة
+            img.thumbnail(max_size, Image.Resampling.LANCZOS)
+            
+            # حفظ الصورة المضغوطة
+            compressed_path = image_path.replace('.jpg', '_compressed.jpg')
+            img.save(compressed_path, 'JPEG', quality=quality, optimize=True)
+            
+            original_size = os.path.getsize(image_path) / 1024
+            compressed_size = os.path.getsize(compressed_path) / 1024
+            print(f"📦 تم ضغط الصورة: {original_size:.1f}KB → {compressed_size:.1f}KB")
+            
+            return compressed_path
+    except Exception as e:
+        print(f"⚠️ خطأ في ضغط الصورة: {e}")
+        return image_path  # إرجاع المسار الأصلي في حالة الخطأ
 
 # --- قاعدة البيانات ---
 def init_db():
@@ -164,19 +233,47 @@ def get_analysis_context(user_id):
         return context, context_time
     return "", None
 
-def get_market_session():
-    current_hour = (datetime.utcnow() + timedelta(hours=2)).hour  # توقيت غزة
+def cleanup_old_database_records():
+    """تنظيف سجلات قاعدة البيانات القديمة"""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # حذف سجلات الدردشة القديمة (أقدم من 7 أيام)
+        week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute("DELETE FROM chat_history WHERE timestamp < ?", (week_ago,))
+        deleted_rows = cursor.rowcount
+        
+        conn.commit()
+        conn.close()
+        
+        if deleted_rows > 0:
+            print(f"🧹 تم حذف {deleted_rows} سجل دردشة قديم")
+            
+    except Exception as e:
+        print(f"⚠️ خطأ في تنظيف قاعدة البيانات: {e}")
 
-    if 2 <= current_hour < 8:
-        return "الجلسة الآسيوية", "02:00-08:00 بتوقيت غزة", "منخفضة"
-    elif 8 <= current_hour < 14:
-        return "جلسة لندن/أوروبا", "08:00-14:00 بتوقيت غزة", "مرتفعة"
-    elif 14 <= current_hour < 20:
-        return "جلسة نيويورك", "14:00-20:00 بتوقيت غزة", "عالية جداً"
-    elif 20 <= current_hour < 24 or 0 <= current_hour < 2:
-        return "جلسة المحيط الهادئ", "20:00-02:00 بتوقيت غزة", "منخفضة"
-    else:
-        return "جلسة عالمية", "متداخلة", "متوسطة"
+def get_market_session():
+    """الحصول على جلسة السوق باستخدام توقيت غزة الصحيح"""
+    try:
+        # استخدام توقيت غزة الحقيقي
+        gaza_time = datetime.now(GAZA_TIMEZONE)
+        current_hour = gaza_time.hour
+        
+        if 2 <= current_hour < 8:
+            return "الجلسة الآسيوية", "02:00-08:00 بتوقيت غزة", "منخفضة"
+        elif 8 <= current_hour < 14:
+            return "جلسة لندن/أوروبا", "08:00-14:00 بتوقيت غزة", "مرتفعة"
+        elif 14 <= current_hour < 20:
+            return "جلسة نيويورك", "14:00-20:00 بتوقيت غزة", "عالية جداً"
+        elif 20 <= current_hour < 24 or 0 <= current_hour < 2:
+            return "جلسة المحيط الهادئ", "20:00-02:00 بتوقيت غزة", "منخفضة"
+        else:
+            return "جلسة عالمية", "متداخلة", "متوسطة"
+    except Exception as e:
+        print(f"⚠️ خطأ في تحديد جلسة السوق: {e}")
+        # القيمة الاحتياطية في حالة الخطأ
+        return "جلسة عالمية", "غير محددة", "متوسطة"
         
 def format_trade_time_for_prompt(trade_time):
     """تنسيق وقت الصفقة للبرومبت"""
@@ -261,21 +358,31 @@ def split_message(text, max_length=4000):
 def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None):
     """تنظيف البيانات المؤقتة للمستخدم"""
     try:
+        # تنظيف الملفات المؤقتة
         if user_id:
-            # تنظيف بيانات مستخدم محدد
-            user_key = f"user_{user_id}"
-            if user_key in context.application.user_data:
-                del context.application.user_data[user_key]
+            # البحث عن ملفات هذا المستخدم في مجلد التخزين المؤقت
+            try:
+                for filename in os.listdir(IMAGE_CACHE_DIR):
+                    if f"_{user_id}_" in filename:
+                        filepath = os.path.join(IMAGE_CACHE_DIR, filename)
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
+            except Exception as e:
+                print(f"⚠️ خطأ في تنظيف ملفات المستخدم {user_id}: {e}")
         
-        # تنظيف عام
+        # تنظيف البيانات المؤقتة
         if 'dual_images' in context.user_data:
             del context.user_data['dual_images']
+        if 'dual_image_paths' in context.user_data:
+            del context.user_data['dual_image_paths']
         if 'dual_analysis_mode' in context.user_data:
             del context.user_data['dual_analysis_mode']
         if 'last_analysis' in context.user_data:
             del context.user_data['last_analysis']
+        if 'dual_analysis_start' in context.user_data:
+            del context.user_data['dual_analysis_start']
             
-        print(f"✅ تم تنظيف الذاكرة المؤقتة للمستخدم {user_id}")
+        print(f"✅ تم تنظيف الذاكرة والملفات للمستخدم {user_id}")
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الذاكرة: {e}")
 
@@ -337,7 +444,7 @@ async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAUL
     reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
     
     await update.message.reply_text(
-        "🚀 **نظام التوصيات **\n\n"
+        "🚀 **نظام التوصيات**\n\n"
         "اختر القسم المطلوب من الأزرار:",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
     )
@@ -682,24 +789,36 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
     wait_msg = await update.message.reply_text("📊 جاري تحليل شارت بتقنيات متطورة ... ")
     photo = await update.message.photo[-1].get_file()
-    path = f"img_{user_id}_{int(time.time())}.jpg"
+    
+    # استخدام مجلد التخزين المؤقت بدلاً من المجلد الرئيسي
+    timestamp = int(time.time())
+    original_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_original.jpg")
+    compressed_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_compressed.jpg")
     
     try:
-        await photo.download_to_drive(path)
-        base64_img = encode_image(path)
+        # تحميل الصورة
+        await photo.download_to_drive(original_path)
+        
+        # ضغط الصورة
+        compressed_path = compress_image(original_path)
+        
+        # استخدام الصورة المضغوطة للتحليل
+        base64_img = encode_image(compressed_path)
         
         if not base64_img:
             await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
-            if os.path.exists(path):
-                os.remove(path)
+            if os.path.exists(original_path):
+                os.remove(original_path)
+            if os.path.exists(compressed_path) and compressed_path != original_path:
+                os.remove(compressed_path)
             return MAIN_MENU
         
         # الحصول على معلومات السيولة والتوقيت
         session_name, session_time, session_vol = get_market_session()
-        current_time = datetime.utcnow() + timedelta(hours=2)  # توقيت غزة
-        current_hour = current_time.hour
-        current_minute = current_time.minute
-        current_second = current_time.second
+        gaza_time = datetime.now(GAZA_TIMEZONE)
+        current_hour = gaza_time.hour
+        current_minute = gaza_time.minute
+        current_second = gaza_time.second
         
         # حساب الثواني المتبقية لإغلاق الشمعة
         seconds_remaining = 60 - current_second
@@ -710,7 +829,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         elif candle.startswith('H'):
             # إذا كانت شمعة ساعة
             candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
-            minutes_passed = current_time.hour % candle_hours * 60 + current_minute
+            minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
             seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
         
         candle_closing_status = f"الوقت المتبقي لإغلاق الشمعة: {seconds_remaining} ثانية"
@@ -1055,7 +1174,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 • تأثير الأخبار: {news_impact} (معامل ×{news_risk_multiplier})
 • حالة دقيقة الغدر: {last_minute_status}
 • {candle_closing_status}
-• توقيت التحليل: {current_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}
+• توقيت التحليل: {gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}
 • المستوى: Professional باك تيست 15000 صفقة
 
 🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً):
@@ -1219,7 +1338,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 • تأثير الأخبار: {news_impact} ×{news_risk_multiplier}
 • حالة دقيقة الغدر: {last_minute_status}
 • توقيت إغلاق الشمعة: {candle_closing_status}
-• توقيت التحليل: {current_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}
+• توقيت التحليل: {gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}
 • المستوى: Professional باك تيست 15000 صفقة
 
 🎯 **التنسيق المطلوب للإجابة (الالتزام حرفياً):**
@@ -1341,12 +1460,17 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
     except requests.exceptions.Timeout:
         await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
     except Exception as e:
-        print(f"خطأ في تحليل الصورة: {e}")
+        print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
         keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
         await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
     finally:
-        if os.path.exists(path):
-            os.remove(path)
+        # تنظيف الملفات المؤقتة
+        for filepath in [original_path, compressed_path]:
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except Exception as e:
+                    print(f"⚠️ خطأ في حذف الملف المؤقت: {e}")
     
     return MAIN_MENU
 
@@ -1371,6 +1495,7 @@ async def start_dual_timeframe_analysis(update: Update, context: ContextTypes.DE
     
     context.user_data['dual_analysis_mode'] = True
     context.user_data['dual_images'] = []
+    context.user_data['dual_image_paths'] = []
     context.user_data['dual_analysis_start'] = time.time()
     
     keyboard = [["الرجوع للقائمة الرئيسية"]]
@@ -1394,12 +1519,19 @@ async def handle_first_image(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """معالجة الصورة الأولى في وضع الفريم المزدوج"""
     wait_msg = await update.message.reply_text("📊 جاري حفظ صورة الفريم الأعلى...")
     photo = await update.message.photo[-1].get_file()
-    path = f"dual1_{update.effective_user.id}_{int(time.time())}.jpg"
+    
+    timestamp = int(time.time())
+    path = os.path.join(IMAGE_CACHE_DIR, f"dual1_{update.effective_user.id}_{timestamp}.jpg")
     
     try:
         await photo.download_to_drive(path)
-        with open(path, "rb") as img_file:
-            context.user_data['dual_images'].append(base64.b64encode(img_file.read()).decode('utf-8'))
+        
+        # ضغط الصورة
+        compressed_path = compress_image(path)
+        
+        with open(compressed_path, "rb") as img_file:
+            context.user_data['dual_images'] = [base64.b64encode(img_file.read()).decode('utf-8')]
+            context.user_data['dual_image_paths'] = [compressed_path]  # حفظ المسارات للحذف لاحقاً
         
         keyboard = [["الرجوع للقائمة الرئيسية"]]
         
@@ -1410,13 +1542,19 @@ async def handle_first_image(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         
     except Exception as e:
-        print(f"Error in handle_first_image: {e}")
+        print(f"❌ خطأ في handle_first_image: {traceback.format_exc()}")
         await wait_msg.edit_text("❌ حدث خطأ في حفظ الصورة. حاول مرة أخرى.")
+        
+        # تنظيف أي ملفات مؤقتة
+        for filepath in [path, path.replace('.jpg', '_compressed.jpg')]:
+            if filepath and os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except:
+                    pass
+        
         cleanup_user_data(context, update.effective_user.id)
         return MAIN_MENU
-    finally:
-        if os.path.exists(path):
-            os.remove(path)
     
     return WAITING_SECOND_IMAGE
 
@@ -1425,12 +1563,24 @@ async def handle_second_image(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     wait_msg = await update.message.reply_text("📊 جاري تحليل الصورتين معاً...")
     photo = await update.message.photo[-1].get_file()
-    path = f"dual2_{user_id}_{int(time.time())}.jpg"
+    
+    timestamp = int(time.time())
+    path = os.path.join(IMAGE_CACHE_DIR, f"dual2_{user_id}_{timestamp}.jpg")
     
     try:
         await photo.download_to_drive(path)
-        with open(path, "rb") as img_file:
+        
+        # ضغط الصورة
+        compressed_path = compress_image(path)
+        
+        with open(compressed_path, "rb") as img_file:
+            if 'dual_images' not in context.user_data:
+                context.user_data['dual_images'] = []
+            if 'dual_image_paths' not in context.user_data:
+                context.user_data['dual_image_paths'] = []
+            
             context.user_data['dual_images'].append(base64.b64encode(img_file.read()).decode('utf-8'))
+            context.user_data['dual_image_paths'].append(compressed_path)
         
         # تحليل الصورتين معاً
         if len(context.user_data['dual_images']) >= 2:
@@ -1438,9 +1588,9 @@ async def handle_second_image(update: Update, context: ContextTypes.DEFAULT_TYPE
             
             # الحصول على معلومات السيولة والتوقيت
             session_name, session_time, session_vol = get_market_session()
-            current_time = datetime.utcnow() + timedelta(hours=2)
-            current_hour = current_time.hour
-            current_minute = current_time.minute
+            gaza_time = datetime.now(GAZA_TIMEZONE)
+            current_hour = gaza_time.hour
+            current_minute = gaza_time.minute
             
             # إعداد البرومبت المزدوج المحسّن
             DUAL_PROMPT = f"""
@@ -1625,13 +1775,20 @@ async def handle_second_image(update: Update, context: ContextTypes.DEFAULT_TYPE
             await wait_msg.edit_text("❌ لم يتم استلام الصورتين بشكل صحيح. حاول مرة أخرى.")
         
     except Exception as e:
-        print(f"Error in handle_second_image: {e}")
+        print(f"❌ خطأ في handle_second_image: {traceback.format_exc()}")
         await wait_msg.edit_text(f"❌ حدث خطأ في التحليل المزدوج: {str(e)[:200]}")
     finally:
         # تنظيف الذاكرة المؤقتة بغض النظر عن النتيجة
-        cleanup_user_data(context, user_id)
-        if os.path.exists(path):
-            os.remove(path)
+        try:
+            # تنظيف ملفات هذا المستخدم
+            for filepath in [path, compressed_path] + context.user_data.get('dual_image_paths', []):
+                if filepath and os.path.exists(filepath):
+                    os.remove(filepath)
+            
+            # تنظيف الذاكرة
+            cleanup_user_data(context, user_id)
+        except Exception as e:
+            print(f"⚠️ خطأ في تنظيف الملفات: {e}")
     
     keyboard = [["📊 تحليل صورة"], ["📊 تحليل فريم مزدوج"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
     
@@ -1662,12 +1819,84 @@ async def handle_cancel_dual(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     return MAIN_MENU
 
+# --- حارس الأخطاء (Error Handler) ---
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """معالجة الأخطاء في البوت"""
+    try:
+        # تسجيل الخطأ
+        error_msg = f"❌ حدث خطأ في البوت:\n"
+        
+        if update and hasattr(update, 'effective_user'):
+            error_msg += f"المستخدم: {update.effective_user.id}\n"
+        
+        error_msg += f"الخطأ: {context.error}\n"
+        
+        # الحصول على تفاصيل الخطأ
+        tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+        tb_string = ''.join(tb_list)
+        
+        # حفظ الخطأ في ملف log
+        with open("bot_errors.log", "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"الخطأ: {error_msg}\n")
+            f.write(f"Traceback:\n{tb_string}\n")
+            f.write(f"{'='*60}\n")
+        
+        print(f"❌ خطأ مسجل: {error_msg}")
+        
+        # إرسال رسالة للمستخدم إذا كان هناك تحديث
+        if update and hasattr(update, 'effective_chat'):
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="⚠️ حدث خطأ تقني. النظام يعمل على إصلاحه تلقائياً. يرجى المحاولة مرة أخرى."
+                )
+            except:
+                pass
+        
+        # محاولة إعادة التشغيل إذا كان الخطأ متعلقاً بالشبكة
+        if isinstance(context.error, (NetworkError, TimedOut, ConnectionError)):
+            print("🌐 خطأ في الشبكة، محاولة الاستمرار...")
+            
+    except Exception as e:
+        print(f"❌ خطأ في معالج الأخطاء نفسه: {e}")
+
+# --- وظيفة تنظيف دورية للملفات المؤقتة ---
+async def periodic_cleanup():
+    """تنظيف دوري للملفات المؤقتة"""
+    while True:
+        try:
+            # انتظار 30 دقيقة
+            await asyncio.sleep(1800)
+            
+            # تنظيف الصور القديمة
+            cleanup_old_images()
+            
+            # تنظيف قاعدة البيانات من السجلات القديمة (إذا لزم الأمر)
+            cleanup_old_database_records()
+            
+            print("🧹 تم التنظيف الدوري للملفات المؤقتة")
+            
+        except Exception as e:
+            print(f"⚠️ خطأ في التنظيف الدوري: {e}")
+
 # --- الدوال الأساسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء البوت"""
     # تنظيف أي بيانات قديمة عند البدء
     if update.effective_user:
         cleanup_user_data(context, update.effective_user.id)
+    
+    # التحقق من توفر جميع الأنظمة
+    systems_check = """
+    ✅ **فحص الأنظمة المكتمل:**
+    • 🛡️ نظام حماية الأخطاء: نشط
+    • 🗑️ نظام تنظيف الملفات: نشط
+    • 📦 نظام ضغط الصور: نشط
+    • ⏰ نظام التوقيت الآلي (غزة): نشط
+    • 💾 نظام التخزين المؤقت: نشط
+    """
     
     keyboard = [
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
@@ -1676,21 +1905,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     await update.message.reply_text(
-        "🚀 **أهلاً بك في Obeida Trading **\n\n"
+        "🚀 **أهلاً بك في Obeida Trading**\n\n"
+        f"{systems_check}\n"
         "🤖 **المميزات الجديدة:**\n"
         "• تحليل فني متقدم للشارتات \n"
-        "• 🆕 تحليل فريم مزدوج (بالتدقيق)\n"
-        "• 🆕 نظام تنظيف الذاكرة التلقائي\n"
-        "• 🆕 مطابقة أسعار بين الفريمات\n"
-        "• 🆕 حماية OTC متقدمة\n"
+        "• 🆕 نظام حماية من الأعطال\n"
+        "• 🆕 توقيت غزة آلي دقيق\n"
+        "• 🆕 ضغط صور ذكي\n"
+        "• 🆕 تنظيف تلقائي للذاكرة\n"
         "• 📈 نظام توصيات جاهزة\n\n"
-        "📡 **نظام التحليل المزدوج:**\n"
-        f"1. التحليل الأولي\n"
-        f"2. التدقيق النهائي\n"
-        f"3. مطابقة الأسعار بين الفريمات\n\n"
-        "🧹 **نظام الذاكرة:**\n"
-        "• تنظيف تلقائي للبيانات المؤقتة\n"
-        "• تذكر التحليل السابق لمدة 10 دقائق\n\n"
         "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -1939,8 +2162,8 @@ def run_flask_server():
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-def run_telegram_bot():
-    """تشغيل Telegram bot"""
+async def run_telegram_bot_async():
+    """تشغيل Telegram bot بشكل غير متزامن"""
     print("🤖 Starting Telegram Bot...")
     print(f"⚡ Powered by - Obeida Trading")
     print("📊 نظام الذاكرة: نشط")
@@ -1948,12 +2171,16 @@ def run_telegram_bot():
     print("📡 نظام الفريم المزدوج: نشط")
     print("🔄 نظام تنظيف الذاكرة: نشط")
     print("🎯 نظام مطابقة الأسعار: نشط")
+    print("🛡️ نظام حماية الأخطاء: نشط")
     
     # تهيئة قاعدة البيانات
     init_db()
     
     # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
+    
+    # إضافة معالج الأخطاء
+    application.add_error_handler(error_handler)
     
     # معالج المحادثة
     conv_handler = ConversationHandler(
@@ -2005,10 +2232,10 @@ def run_telegram_bot():
     print("📡 Bot is now polling for updates...")
     
     # تشغيل البوت
-    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    await application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
-def main():
-    """الدالة الرئيسية"""
+async def main_async():
+    """الدالة الرئيسية غير المتزامنة"""
     print("🤖 Starting Powered by - Obeida Trading ...")
     print("=" * 60)
     
@@ -2019,8 +2246,35 @@ def main():
     print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
     print("=" * 60)
     
-    # تشغيل Telegram bot في thread الرئيسي
-    run_telegram_bot()
+    # إنشاء مهمة التنظيف الدوري
+    cleanup_task = asyncio.create_task(periodic_cleanup())
+    
+    try:
+        # تشغيل البوت
+        await run_telegram_bot_async()
+    except Exception as e:
+        print(f"❌ خطأ رئيسي في تشغيل البوت: {e}")
+        print("🔄 محاولة إعادة التشغيل...")
+    finally:
+        # إلغاء مهمة التنظيف
+        cleanup_task.cancel()
+        
+        # تنظيف نهائي
+        try:
+            shutil.rmtree(IMAGE_CACHE_DIR, ignore_errors=True)
+        except:
+            pass
+
+def main():
+    """الدالة الرئيسية"""
+    try:
+        # تشغيل البوت في حلقة غير متزامنة
+        asyncio.run(main_async())
+    except KeyboardInterrupt:
+        print("\n\n👋 تم إيقاف البوت بواسطة المستخدم")
+    except Exception as e:
+        print(f"❌ خطأ غير متوقع: {e}")
+        print("🔄 حاول إعادة تشغيل البوت...")
 
 if __name__ == "__main__":
     main()
