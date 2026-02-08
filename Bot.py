@@ -61,6 +61,63 @@ CATEGORIES = {
     ]
 }
 
+# --- إعدادات سحب الصور الآلي ---
+CHART_API_KEY = os.environ.get('CHART_API_KEY', "c94425")  # مفتاح API سحب الصور
+CHART_API_URL = "https://api.screenshotmachine.com/"
+
+# رموز التداول الحقيقية لكل أصل
+SYMBOL_MAP = {
+    "EUR/USD (OTC)": "OANDA:EURUSD",
+    "GBP/USD (OTC)": "OANDA:GBPUSD",
+    "USD/JPY (OTC)": "OANDA:USDJPY",
+    "USD/CHF (OTC)": "OANDA:USDCHF",
+    "AUD/USD (OTC)": "OANDA:AUDUSD",
+    "USD/CAD (OTC)": "OANDA:USDCAD",
+    "NZD/USD (OTC)": "OANDA:NZDUSD",
+    "EUR/GBP (OTC)": "OANDA:EURGBP",
+    "EUR/JPY (OTC)": "OANDA:EURJPY",
+    "GBP/JPY (OTC)": "OANDA:GBPJPY",
+    "EUR/CHF (OTC)": "OANDA:EURCHF",
+    "AUD/JPY (OTC)": "OANDA:AUDJPY",
+    "EUR/AUD (OTC)": "OANDA:EURAUD",
+    "EUR/CAD (OTC)": "OANDA:EURCAD",
+    "GBP/AUD (OTC)": "OANDA:GBPAUD",
+    "CAD/JPY (OTC)": "OANDA:CADJPY",
+    "CHF/JPY (OTC)": "OANDA:CHFJPY",
+    "NZD/JPY (OTC)": "OANDA:NZDJPY",
+    "GBP/CHF (OTC)": "OANDA:GBPCHF",
+    "AUD/CAD (OTC)": "OANDA:AUDCAD",
+    "Gold (OTC)": "TVC:GOLD",
+    "Silver (OTC)": "TVC:SILVER",
+    "UKOIL (OTC)": "TVC:UKOIL",
+    "USOIL (OTC)": "TVC:USOIL",
+    "Natural Gas (OTC)": "TVC:NATURALGAS",
+    "S&P 500 (OTC)": "SP:SPX",
+    "Dow Jones (OTC)": "DJ:DJI",
+    "Nasdaq 100 (OTC)": "NASDAQ:NDX",
+    "DAX 40 (OTC)": "XETR:DAX",
+    "CAC 40 (OTC)": "EURONEXT:CAC",
+    "FTSE 100 (OTC)": "FTSE:UKX",
+    "Hang Seng (OTC)": "HKEX:HSI",
+    "Nikkei 225 (OTC)": "TSE:NKY",
+    "Apple (OTC)": "NASDAQ:AAPL",
+    "Amazon (OTC)": "NASDAQ:AMZN",
+    "Google (OTC)": "NASDAQ:GOOGL",
+    "Facebook (OTC)": "NASDAQ:META",
+    "Microsoft (OTC)": "NASDAQ:MSFT",
+    "Tesla (OTC)": "NASDAQ:TSLA",
+    "Netflix (OTC)": "NASDAQ:NFLX",
+    "Intel (OTC)": "NASDAQ:INTC",
+    "Boeing (OTC)": "NYSE:BA",
+    "Visa (OTC)": "NYSE:V",
+    "McDonald's (OTC)": "NYSE:MCD",
+    "Pfizer (OTC)": "NYSE:PFE",
+    "Coca-Cola (OTC)": "NYSE:KO",
+    "Disney (OTC)": "NYSE:DIS",
+    "Alibaba (OTC)": "NYSE:BABA",
+    "Walmart (OTC)": "NYSE:WMT"
+}
+
 # إعدادات إضافية
 GAZA_TIMEZONE = pytz.timezone('Asia/Gaza')
 IMAGE_CACHE_DIR = "image_cache"
@@ -149,7 +206,7 @@ def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
             
             # حفظ الصورة المضغوطة
-            compressed_path = image_path.replace('.jpg', '_compressed.jpg')
+            compressed_path = image_path.replace('.jpg', '_compressed.jpg').replace('.png', '_compressed.jpg')
             img.save(compressed_path, 'JPEG', quality=quality, optimize=True)
             
             original_size = os.path.getsize(image_path) / 1024
@@ -374,7 +431,8 @@ def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None):
         # تنظيف البيانات المؤقتة في الذاكرة
         keys_to_remove = [
             'dual_images', 'dual_image_paths', 'dual_analysis_mode',
-            'last_analysis', 'dual_analysis_start', 'original_paths'
+            'last_analysis', 'dual_analysis_start', 'original_paths',
+            'selected_symbol', 'chart_analysis_mode'
         ]
         
         for key in keys_to_remove:
@@ -384,6 +442,60 @@ def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None):
         print(f"✅ تم تنظيف الذاكرة والملفات للمستخدم {user_id}")
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الذاكرة: {e}")
+
+# --- نظام سحب الصور الآلي ---
+def download_chart_image(symbol_name):
+    """سحب صورة الشارت الآلية للرمز المحدد"""
+    try:
+        # الحصول على رمز التداول من الخريطة
+        trading_symbol = SYMBOL_MAP.get(symbol_name, None)
+        if not trading_symbol:
+            print(f"⚠️ لا يوجد رمز تداول لـ {symbol_name}")
+            return None
+        
+        # بناء رابط الشارت مع إعدادات متقدمة
+        chart_url = f"https://www.tradingview.com/chart/?symbol={trading_symbol}&interval=60&theme=dark"
+        
+        # إعدادات التقاط الصورة
+        params = {
+            'key': CHART_API_KEY,
+            'url': chart_url,
+            'dimension': '1200x800',
+            'delay': '3000',  # انتظار 3 ثواني لتحميل الشارت
+            'device': 'desktop',
+            'format': 'png',
+            'cacheLimit': '0'
+        }
+        
+        api_url = f"{CHART_API_URL}?{'&'.join([f'{k}={v}' for k, v in params.items()])}"
+        
+        print(f"📥 جاري سحب صورة لـ {symbol_name}...")
+        print(f"🔗 الرمز: {trading_symbol}")
+        
+        response = requests.get(api_url, timeout=30)
+        
+        if response.status_code == 200 and len(response.content) > 1000:
+            # حفظ الصورة في المجلد المؤقت
+            timestamp = int(time.time())
+            filename = f"chart_{trading_symbol.replace(':', '_')}_{timestamp}.png"
+            filepath = os.path.join(IMAGE_CACHE_DIR, filename)
+            
+            with open(filepath, 'wb') as f:
+                f.write(response.content)
+            
+            print(f"✅ تم سحب صورة بنجاح: {filename} ({len(response.content)//1024}KB)")
+            
+            # ضغط الصورة
+            compressed_path = compress_image(filepath)
+            
+            return compressed_path
+        else:
+            print(f"❌ فشل في سحب الصورة: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"⚠️ خطأ في سحب الصورة: {e}")
+        return None
 
 # --- وظائف نظام التوصية الجديد ---
 def get_mistral_analysis(symbol):
@@ -444,21 +556,365 @@ def get_mistral_analysis(symbol):
         print(f"Error in get_mistral_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
 
+async def handle_photo_analysis_for_recommendation(update: Update, context: ContextTypes.DEFAULT_TYPE, image_path, symbol_name):
+    """تحليل الصورة المسحوبة للتوصيات"""
+    user_id = update.effective_user.id
+    candle, trade_time, prev_context, prev_time = get_user_setting(user_id)
+    
+    wait_msg = await update.message.reply_text(f"📊 جاري تحليل شارت {symbol_name} بتقنيات متطورة...")
+    
+    try:
+        # استخدام الصورة المسحوبة
+        base64_img = encode_image(image_path)
+        
+        if not base64_img:
+            await wait_msg.edit_text(f"❌ **خطأ في قراءة صورة {symbol_name}.**")
+            return
+        
+        # الحصول على معلومات السيولة والتوقيت
+        session_name, session_time, session_vol = get_market_session()
+        gaza_time = datetime.now(GAZA_TIMEZONE)
+        current_hour = gaza_time.hour
+        current_minute = gaza_time.minute
+        current_second = gaza_time.second
+        
+        # حساب الثواني المتبقية
+        seconds_remaining = 60 - current_second
+        if candle.startswith('M'):
+            candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
+            seconds_remaining = (candle_minutes * 60) - ((current_minute % candle_minutes) * 60 + current_second)
+        elif candle.startswith('H'):
+            candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
+            minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
+            seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
+        
+        candle_closing_status = f"الوقت المتبقي لإغلاق الشمعة: {seconds_remaining} ثانية"
+        if seconds_remaining < 10:
+            candle_closing_status += " ⚠️ (الوقت حرج)"
+        
+        # تحديد فريم التحقق
+        verification_timeframe = ""
+        candle_value = candle[1:] if candle.startswith(('S', 'M', 'H', 'D')) else candle
+        
+        if candle.startswith('S'):
+            if candle_value in ['5', '10', '15']:
+                verification_timeframe = "S15"
+            else:
+                verification_timeframe = "S30"
+        elif candle.startswith('M'):
+            if int(candle_value) <= 5:
+                verification_timeframe = "M1"
+            elif int(candle_value) <= 15:
+                verification_timeframe = "M5"
+            else:
+                verification_timeframe = "M15"
+        elif candle.startswith('H'):
+            verification_timeframe = "H1"
+        elif candle.startswith('D'):
+            verification_timeframe = "H4"
+        
+        # ========== البرومبت المحسن مع التحسينات المطلوبة ==========
+        ENHANCED_PROMPT = f"""
+أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
+مهمتك تحليل شارت {symbol_name} المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
+
+🔥 **قانون الفتيلة القاتلة (The Wick Law):**
+1. أي ذيل (Wick) يمثل أكثر من 60% من حجم الشمعة عند منطقة دعم/مقاومة يُعتبر "رفض سعري قاتل".
+2. إذا رأيت ذيلاً طويلاً يخترق منطقة سيولة ثم يعود، هذا إشارة انعكاس فورية - ألغِ تحليل الهيكل وادخل عكس اتجاه الذيل.
+3. الذيل الأطول في آخر 5 شموع هو "مفتاح القرار" - اتجاهه يحدد الاتجاه القادم.
+
+🎯 **التصحيح السعري الرقمي (Price Action Calibration):**
+1. الرقم المستدير (مثل 1.68000) هو "مغناطيس سعري" - لا تعطي إشارة ارتداد إلا بعد ملامسته بـ 3 نقاط على الأقل.
+2. إذا كان السعر يتجه لرقم مستدير بفتحات شموع واسعة (>50 نقطة)، فمن الانتحار التداول عكسه.
+3. قاعدة "7 نقاط الذهبية": إذا كان السعر ضمن 7 نقاط من رقم مستدير، توقع انفجاراً سعرياً لملامسته.
+
+⚡ **خوارزمية الزخم (Momentum vs Structure):**
+1. **في أسواق OTC: الزخم هو الملك** - الهيكل يأتي في المرتبة الثانية.
+2. إذا وجدت 3 شموع متتالية بنفس اللون وبأجسام ممتلئة (>80%)، يُحظر البيع حتى لو وصل السعر لقمة تاريخية.
+3. "قانون القطار السريع": لا تقف أمام قطار الزخم - إذا رأيت اندفاعاً قوياً، انضم له حتى أقرب رقم مستدير.
+4. نسبة 90/10: في OTC، الزخم يمثل 90% من الحركة، الهيكل 10% فقط.
+
+🔍 **كشف التلاعب بالسيولة (Liquidity Sweep Detection):**
+1. ابحث عن "القمم المتساوية" (Equal Highs) و"القيعان المتساوية" (Equal Lows) - صناع السوق يضعون أوامرهم فوق/تحتها.
+2. المنطق الصحيح: "انتظر اختراق القمة ثم ادخل بيعاً مع العودة" - ليس البيع من القمة مباشرة.
+3. أي اختراق لقمة/قاع متساوية يتبعه عودة سريعة (<3 شموع) هو "سحب سيولة" وليس "تغير اتجاه".
+
+🛡️ **فلاتر الحماية المتقدمة:**
+1. **فلتر الفجوات (FVG):** السعر دائماً يعود لسد الثغرات. لا تدخل بيعاً مع FVG غير مغطاة فوقك.
+2. **فلتر الزمن الذهبي:** أفضل أوقات التداول: بداية الساعة (00:00-00:05) ونهاية الساعة (55:00-59:59).
+3. **فلتر حجم التداول:** لا تعتمد أي إشارة بدون حجم تداول مرتفع (>150% من المتوسط).
+
+📊 **نظام التحليل المتدرج:**
+1. **المستوى 1 - الرفض السعري:** تحليل الذيول أولاً (Wicks analysis)
+2. **المستوى 2 - الزخم:** قياس قوة الحركة الحالية (Momentum strength)
+3. **المستوى 3 - الفجوات:** تحديد FVG النشطة (Active FVGs)
+4. **المستوى 4 - السيولة:** رسم خرائط Equal Highs/Lows
+
+🎯 **التنسيق المطلوب للإجابة:**
+
+📊 **تحليل {symbol_name} المتقدم:**
+• قانون الفتيلة: [طول الذيل/اتجاهه/تأثيره]
+• المغناطيس الرقمي: [أقرب رقم مستدير/المسافة منه]
+• خوارزمية الزخم: [قوة الزخم/عدد الشموع المتتالية]
+• كشف التلاعب: [مواقع السيولة/أنماط السحب]
+
+🎯 **الإشارة التنفيذية:**
+• القرار الفني: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡) 
+• السبب الرئيسي: [بناءً على أي من القوانين الأربعة]
+• نقطة الدخول: [السعر الدقيق + الشرط]
+• الأهداف: TP1: [...], TP2: [...], TP3: [...]
+• وقف الخسارة: [محمي بطبقتين]
+
+⚠️ **تحذيرات الأمان:**
+• فلاتر مفعلة: [قائمة الفلاتر النشطة]
+• مستوى الخطورة: [منخفض/متوسط/عالي]
+• وقت التنفيذ: [مثالي/جيد/سيء]
+
+🔧 **المعطيات الفنية:**
+• الرمز: {symbol_name}
+• الإطار الزمني: {candle}
+• جلسة السوق: {session_name}
+• وقت التحليل: {gaza_time.strftime('%H:%M:%S')}
+• نظام: OTC المتقدم
+
+الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب.
+"""
+        
+        headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
+        
+        # التحليل الأولي
+        await wait_msg.edit_text(f"📊 جاري تحليل {symbol_name} (المرحلة 1/2)...")
+        
+        payload_1 = {
+            "model": MISTRAL_MODEL,
+            "messages": [
+                {
+                    "role": "user", 
+                    "content": [
+                        {"type": "text", "text": ENHANCED_PROMPT},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                    ]
+                }
+            ],
+            "max_tokens": 1000,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "random_seed": 42
+        }
+        
+        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
+        
+        if response_1.status_code != 200:
+            raise Exception(f"خطأ في التحليل: {response_1.status_code}")
+        
+        initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
+        
+        # التدقيق النهائي
+        await wait_msg.edit_text(f"📊 جاري تدقيق تحليل {symbol_name} (المرحلة 2/2)...")
+        
+        AUDIT_PROMPT = f"""
+أنت مدقق فني خبير. مهمتك التحقق من:
+1. تطبيق "قانون الفتيلة القاتلة" بشكل صحيح
+2. مراعاة "المغناطيس الرقمي" للأرقام المستديرة
+3. احترام "خوارزمية الزخم" في أسواق OTC
+4. كشف "التلاعب بالسيولة" بدقة
+
+التحليل الأولي:
+{initial_analysis}
+
+📋 قواعد التدقيق الإلزامية:
+✅ التأكد من أن الذيل الطويل (>60%) تم تحليله كإشارة انعكاس
+✅ التحقق من ذكر أقرب رقم مستدير والمسافة منه
+✅ التأكد من عدم اقتراح بيع ضد زخم قوي (3+ شموع متتالية)
+✅ البحث عن Equal Highs/Lows وتحديد استراتيجية الدخول المناسبة
+
+🎯 التنسيق المطلوب للإجابة (المحدث):
+
+📊 **نتائج الفحص الفني لـ {symbol_name}:**
+• تقييم قانون الفتيلة: [✅ مطبق / ⚠️ جزئي / ❌ غير مطبق]
+• تحليل المغناطيس الرقمي: [الرقم/المسافة/التأثير]
+• تقييم خوارزمية الزخم: [القوة/الاتجاه/المخالفات]
+• كشف التلاعب: [المواقع/الأنماط/التوصية]
+
+🎯 **التوصية والتوقعات:**
+• القرار النهائي: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡)
+• الثقة: [0-100]% = [💥/🔥/⚡/❄️]
+• الدخول: [السعر + الشرط]
+• الأهداف: 
+  🎯 TP1: [الهدف القريب + السبب]
+  🎯 TP2: [الهدف المتوسط + السبب]
+  🎯 TP3: [الهدف البعيد + السبب]
+• الوقف: [السعر + طبقات الحماية]
+
+⚠️ **إدارة المخاطر:**
+• الفلاتر النشطة: [قائمة]
+• مستوى الخطورة: [منخفض/متوسط/عالي]
+• وقت التنفيذ الأمثل: [الفترة]
+• التحذيرات: [أي تحذيرات خاصة]
+
+📝 **ملاحظات التحليل:**
+1. ملاحظة حول قانون الفتيلة
+2. ملاحظة حول الزخم والهيكل
+3. ملاحظة حول السيولة والفجوات
+4. ملاحظة عامة للتداول الآمن
+
+الآن قم بالتدقيق وأعطني الإجابة النهائية.
+"""
+        
+        payload_2 = {
+            "model": MISTRAL_MODEL_AUDIT,
+            "messages": [
+                {
+                    "role": "user", 
+                    "content": [
+                        {"type": "text", "text": AUDIT_PROMPT},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                    ]
+                }
+            ],
+            "max_tokens": 1000,
+            "temperature": 0.1,
+            "top_p": 1.0,
+            "random_seed": 42
+        }
+        
+        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
+        
+        if response_2.status_code == 200:
+            audit_result = response_2.json()['choices'][0]['message']['content'].strip()
+        else:
+            audit_result = f"📋 **ملاحظة:** تعذر التدقيق - استخدام التحليل الأولي\n\n{initial_analysis}"
+        
+        # تنظيف النتيجة
+        audit_result = clean_repeated_text(audit_result)
+        
+        # إعداد النتيجة النهائية
+        time_display = format_trade_time_for_prompt(trade_time)
+        
+        full_result = (
+            f"✅ **تحليل {symbol_name} - تم بنجاح!**\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{audit_result}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔧 **الإعدادات المستخدمة:**\n"
+            f"• الإطار الزمني: {candle}\n"
+            f"• استراتيجية: {time_display}\n"
+            f"• نظام التحليل: القانون الفتيلة + الزخم + الأرقام\n"
+            f"• وقت التحليل: {gaza_time.strftime('%H:%M:%S بتوقيت غزة')}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🤖 **Powered by - Obeida Trading**"
+        )
+        
+        full_result = clean_repeated_text(full_result)
+        
+        # إرسال النتيجة
+        if len(full_result) > 4000:
+            parts = split_message(full_result, max_length=4000)
+            await wait_msg.edit_text(parts[0], parse_mode="Markdown")
+            for part in parts[1:]:
+                await update.message.reply_text(part, parse_mode="Markdown")
+        else:
+            await wait_msg.edit_text(full_result, parse_mode="Markdown")
+        
+    except requests.exceptions.Timeout:
+        await wait_msg.edit_text(f"⏱️ تجاوز الوقت المحدد لتحليل {symbol_name}.")
+    except Exception as e:
+        print(f"❌ خطأ في تحليل صورة التوصية: {e}")
+        await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل {symbol_name}**\nيرجى المحاولة مرة أخرى.")
+
+async def handle_recommendation_with_chart(update: Update, context: ContextTypes.DEFAULT_TYPE, symbol_to_analyze):
+    """معالجة التوصية مع سحب صورة الشارت تلقائياً"""
+    user_id = update.effective_user.id
+    
+    # تحميل صورة الشارت تلقائياً
+    chart_msg = await update.message.reply_text(f"📥 جاري سحب صورة الشارت لـ `{symbol_to_analyze}`...")
+    
+    chart_path = download_chart_image(symbol_to_analyze)
+    
+    if not chart_path or not os.path.exists(chart_path):
+        await chart_msg.edit_text(f"❌ تعذر سحب صورة الشارت لـ `{symbol_to_analyze}`\n\nجاري تحليل النصي فقط...")
+        
+        # التحليل النصي كبديل
+        analysis = get_mistral_analysis(symbol_to_analyze)
+        
+        final_msg = (
+            f"📈 **نتائج تحليل {symbol_to_analyze}**\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"{analysis}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"⚠️ *ملاحظة:* تعذر سحب الصورة الآلية\n"
+            f"🤖 **Powered by - Obeida Trading**"
+        )
+        
+        await chart_msg.edit_text(
+            clean_repeated_text(final_msg),
+            parse_mode="Markdown"
+        )
+    else:
+        await chart_msg.edit_text(f"✅ تم سحب صورة الشارت!\n📊 جاري تحليل `{symbol_to_analyze}`...")
+        
+        # استخدام دالة تحليل الصورة مع الصورة المسحوبة
+        try:
+            await handle_photo_analysis_for_recommendation(update, context, chart_path, symbol_to_analyze)
+        except Exception as e:
+            print(f"❌ خطأ في تحليل الصورة المسحوبة: {e}")
+            
+            # التحليل النصي كبديل في حالة الخطأ
+            analysis = get_mistral_analysis(symbol_to_analyze)
+            
+            final_msg = (
+                f"📈 **نتائج تحليل {symbol_to_analyze}**\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"{analysis}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"⚠️ *ملاحظة:* تم التحليل النصي بسبب خطأ في الصورة\n"
+                f"🤖 **Powered by - Obeida Trading**"
+            )
+            
+            await chart_msg.edit_text(
+                clean_repeated_text(final_msg),
+                parse_mode="Markdown"
+            )
+        
+        # تنظيف الملف المؤقت
+        try:
+            if os.path.exists(chart_path):
+                os.remove(chart_path)
+        except:
+            pass
+    
+    # عرض الأزرار للاستمرار
+    reply_keyboard = [[key] for key in CATEGORIES.keys()]
+    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+    
+    await update.message.reply_text(
+        "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    
+    # تنظيف الذاكرة
+    if 'selected_symbol' in context.user_data:
+        del context.user_data['selected_symbol']
+    
+    return RECOMMENDATION_MODE
+
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء وضع التوصية"""
     reply_keyboard = [[key] for key in CATEGORIES.keys()]
     reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
     
     await update.message.reply_text(
-        "🚀 **نظام التوصيات**\n\n"
-        "اختر القسم المطلوب من الأزرار:",
+        "🚀 **نظام التوصيات المتقدم**\n\n"
+        "اختر القسم المطلوب من الأزرار:\n\n"
+        "📸 **الميزة الجديدة:** يمكنك الآن الحصول على تحليل بصري مع صورة الشارت تلقائياً!",
         reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
     )
     return RECOMMENDATION_MODE
 
 async def handle_recommendation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات نظام التوصية"""
+    """معالجة اختيارات نظام التوصية مع دعم الصور الآلية"""
     user_text = update.message.text.strip()
+    user_id = update.effective_user.id
     
     # العودة للقائمة الرئيسية
     if user_text == "الرجوع للقائمة الرئيسية":
@@ -487,39 +943,87 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
             symbol_to_analyze = user_text
             break
     
-    # إذا وجدت العملة، ابدأ التحليل
+    # إذا وجدت العملة، ابدأ التحليل مع سحب الصورة
     if symbol_to_analyze:
-        wait_msg = await update.message.reply_text(f"⏳ جاري إرسال توصيات `{symbol_to_analyze}`...")
-        analysis = get_mistral_analysis(symbol_to_analyze)
+        # تنظيف الذاكرة المؤقتة أولاً
+        cleanup_user_data(context, user_id)
         
-        final_msg = (
-            f"📈 **نتائج توصية {symbol_to_analyze}**\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"{analysis}\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Powered by - Obeida Trading**"
-        )
+        # طلب من المستخدم اختيار نوع التحليل
+        keyboard = [
+            ["📸 تحليل مع صورة آلية", "📝 تحليل نصي فقط"],
+            ["الرجوع للقائمة الرئيسية"]
+        ]
         
-        # تنظيف النص من التكرارات
-        final_msg = clean_repeated_text(final_msg)
-        
-        await wait_msg.edit_text(
-            final_msg,
+        await update.message.reply_text(
+            f"📈 **اختر نوع تحليل {symbol_to_analyze}:**\n\n"
+            f"📸 **تحليل مع صورة آلية:**\n"
+            f"• سحب صورة الشارت تلقائياً\n"
+            f"• تحليل بصري متقدم\n"
+            f"• نتائج دقيقة مع رسوم بيانية\n\n"
+            f"📝 **تحليل نصي فقط:**\n"
+            f"• تحليل سريع\n"
+            f"• بدون انتظار سحب الصورة\n"
+            f"• توصيات مبنية على البيانات\n",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
         )
         
-        # عرض الأزرار للاستمرار
-        reply_keyboard = [[key] for key in CATEGORIES.keys()]
-        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+        # حفظ الرمز المختار في الذاكرة المؤقتة
+        context.user_data['selected_symbol'] = symbol_to_analyze
         
-        await update.message.reply_text(
-            "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-        )
-        return RECOMMENDATION_MODE
+        return CATEGORY_SELECTION
+    
+    # معالجة اختيار نوع التحليل
+    if user_text in ["📸 تحليل مع صورة آلية", "📝 تحليل نصي فقط"]:
+        symbol_to_analyze = context.user_data.get('selected_symbol', None)
+        
+        if not symbol_to_analyze:
+            await update.message.reply_text("❌ لم يتم اختيار عملة. الرجاء المحاولة مرة أخرى.")
+            return await start_recommendation_mode(update, context)
+        
+        if user_text == "📸 تحليل مع صورة آلية":
+            return await handle_recommendation_with_chart(update, context, symbol_to_analyze)
+        else:
+            # التحليل النصي فقط
+            wait_msg = await update.message.reply_text(f"⏳ جاري تحليل `{symbol_to_analyze}`...")
+            analysis = get_mistral_analysis(symbol_to_analyze)
+            
+            final_msg = (
+                f"📈 **نتائج تحليل {symbol_to_analyze}**\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"{analysis}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🤖 **Powered by - Obeida Trading**"
+            )
+            
+            final_msg = clean_repeated_text(final_msg)
+            
+            await wait_msg.edit_text(
+                final_msg,
+                parse_mode="Markdown"
+            )
+            
+            # عرض الأزرار للاستمرار
+            reply_keyboard = [[key] for key in CATEGORIES.keys()]
+            reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+            
+            await update.message.reply_text(
+                "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+                reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+            )
+            
+            # تنظيف الذاكرة
+            if 'selected_symbol' in context.user_data:
+                del context.user_data['selected_symbol']
+            
+            return RECOMMENDATION_MODE
     
     # إذا كان النص "🔙 العودة للقائمة"
     if user_text == "🔙 العودة للقائمة":
+        # تنظيف الذاكرة
+        if 'selected_symbol' in context.user_data:
+            del context.user_data['selected_symbol']
+        
         reply_keyboard = [[key] for key in CATEGORIES.keys()]
         reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
         
@@ -586,7 +1090,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # برومبتات متخصصة حسب الاختيار
     system_prompts = {
-        "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عميقة في:
+        "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عمققة في:
 🎯 **التحليل الفني والمالي:** خبرة في أسواق المال، تحليل الشارتات، واستراتيجيات التداول
 💻 **البرمجة والتقنية:** إتقان Python، JavaScript، تطوير الويب، الذكاء الاصطناعي
 📊 **البيانات والتحليل:** تحليل البيانات، الإحصاء، وتقديم رؤى استراتيجية
@@ -724,7 +1228,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
         
         if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content']
+            result = response.json()['choices'][0]['message']['content'].strip()
             
             # تنظيف النص من التكرارات
             result = clean_repeated_text(result)
@@ -954,19 +1458,75 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             except:
                 previous_context_info = ""
         
-        # ========== البرومبت الرئيسي المحدث مع جميع الإضافات ==========
+        # ========== البرومبت الرئيسي المحدث مع جميع الإضافات الجديدة ==========
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
 مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
 
-🎯 **قاعدة فلتر المسافة الذهبية:** أنت ملزم باستخراج السعر من المحور الأيمن (Y-axis) ومقارنته بأقرب رقم مستدير (.000). إذا كانت المسافة أقل من 0.00010، تُلغى جميع أوامر البيع/الشراء العكسية ويتم تفعيل نظام 'اللحاق بالمغناطيس السعري' - أي متابعة الاتجاه حتى لمس الرقم المستدير.
+🔥 **قانون الفتيلة القاتلة (The Wick Law) - الإصدار المحسن:**
+1. الذيل (Wick) أهم من الجسم في التحليل من صورة واحدة
+2. أي ذيل يمثل أكثر من 60% من حجم الشمعة عند منطقة دعم/مقاومة = "إشارة انعكاس فورية"
+3. إذا رأيت ذيلاً طويلاً يخترق منطقة سيولة ثم يعود = "أمر تنفيذ عكسي فورياً" (مهما كان اتجاه الشموع السابقة)
+4. الذيل الأطول في آخر 5 شموع هو "مفتاح القرار النهائي"
+
+🎯 **التصحيح السعري الرقمي (Price Action Calibration) - الدقة المطلقة:**
+1. ابحث عن "الأرقام المستديرة" (مثل 1.68000) داخل الصورة واربطها بالزخم
+2. **القاعدة الذهبية:** "الرقم المستدير مغناطيس؛ لا تعطي إشارة ارتداد إلا بعد ملامسته بـ 3 نقاط على الأقل"
+3. إذا كان السعر متجهاً لرقم مستدير بفتحات شموع واسعة = "من الانتحار التداول عكسه"
+4. قاعدة "7 نقاط الذهبية": إذا كان السعر ضمن 7 نقاط من رقم مستدير = "توقع انفجاراً سعرياً لملامسته"
+
+⚡ **خوارزمية الزخم (Momentum vs Structure) - النسخة النهائية:**
+**السر الذي سيجعل الكود يعمل في كل الأسواق:**
+• **في الأسواق الحقيقية (Real Market):** الهيكل (Structure) هو الملك
+• **في أسواق الـ OTC:** الزخم (Momentum) هو الملك
+
+**الشرط الإلزامي الجديد:**
+إذا وجدت 3 شموع متتالية بنفس اللون وبأجسام ممتلئة (>80%)، يُحظر البيع حتى لو وصل السعر لقمة تاريخية.
+الزخم في هذه الحالة أقوى من أي تحليل فني.
+
+🔍 **كشف "التلاعب بالسيولة" (Liquidity Sweep Detection) - المنطق العملي:**
+بدلاً من البحث عن نماذج مثل "الرأس والكتفين"، ابحث عن:
+1. "القمم المتساوية" (Equal Highs) - صناع السوق يضعون أوامر البيع فوقها
+2. "القيعان المتساوية" (Equal Lows) - صناع السوق يضعون أوامر الشراء تحتها
+
+**المنطق الصحيح للتداول:**
+• الخطأ: البيع من قمة متساوية مباشرة
+• الصحيح: "انتظر اختراق القمة ثم ادخل بيعاً مع العودة"
+
+🛡️ **فلاتر الحماية المتقدمة من صورة واحدة:**
+1. **فلتر الفجوات (FVG Priority):** السعر دائماً يعود لسد الثغرات أولاً
+2. **فلتر الزمن الذهبي (Golden Time):** أفضل الأوقات = أول وآخر 5 دقائق من الساعة
+3. **فلتر الحجم (Volume Filter):** لا إشارة بدون حجم (>150% من المتوسط)
+
+📊 **نظام التحليل المتدرج لصورة واحدة:**
+**المرحلة 1: تحليل الذيول (Wick Analysis)**
+1. قياس طول كل ذيل في آخر 5 شموع
+2. تحديد الذيل الأطول واتجاهه
+3. تطبيق "قانون الفتيلة القاتلة"
+
+**المرحلة 2: تحليل الزخم (Momentum Analysis)**
+1. عد الشموع المتتالية بنفس الاتجاه
+2. قياس امتلاء الأجسام (>80% = قوي)
+3. تطبيق "قانون القطار السريع"
+
+**المرحلة 3: تحليل الأرقام (Number Analysis)**
+1. تحديد أقرب رقم مستدير
+2. حساب المسافة منه
+3. تطبيق "قاعدة 7 نقاط الذهبية"
+
+**المرحلة 4: تحليل السيولة (Liquidity Analysis)**
+1. البحث عن Equal Highs/Lows
+2. تحديد مناطق "سحب السيولة"
+3. وضع خطة "الاختراق والعودة"
 
 {previous_context_info}
 
-🎯 نظام التحليل متعدد المستويات
+🎯 نظام التحليل متعدد المستويات - النسخة المحسنة
+
+🎯 **قاعدة فلتر المسافة الذهبية:** أنت ملزم باستخراج السعر من المحور الأيمن (Y-axis) ومقارنته بأقرب رقم مستدير (.000). إذا كانت المسافة أقل من 0.00010، تُلغى جميع أوامر البيع/الشراء العكسية ويتم تفعيل نظام 'اللحاق بالمغناطيس السعري' - أي متابعة الاتجاه حتى لمس الرقم المستدير.
 
 📊 المستوى 1: التحليل الاستراتيجي (الخريطة الكبرى)
-• الهيكل العام: تحليل موجات إيليوت + BOS/CHoCh
+• الهيكل العام: تحليل موجات إيليوت + BOS/CHoCH
 • مراحل Wyckoff: التحديد الدقيق لمرحلة (Accumulation/Markup/Distribution/Decline)
 • الحكم الزمني: توافق {verification_timeframe} مع {candle} للإشارات
 • السياق السوقي: {session_name} - {session_vol} سيولة
@@ -1173,9 +1733,14 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 3. تأكيد مزدوج: القرار صحيح عند ظهور مرتين بنفس المعطيات
 4. تحقق من كل الأسعار والمستويات في الصورة بدقة
 
-📊 المعطيات الفنية:
+📊 **المعطيات الفنية - النسخة المحسنة:**
+• نظام التحليل: "قانون الفتيلة + الزخم + الأرقام + السيولة"
+• قانون الفتيلة: مفعل (الذيل > 60% = انعكاس)
+• المغناطيس الرقمي: مفعل (الأرقام المستديرة)
+• خوارزمية الزخم: مفعل (3 شموع >80% = استمرار)
+• كشف التلاعب: مفعل (Equal Highs/Lows)
 • إطار الزمن الحالي: {candle} ({candle_category})
-• فريم التحقق: {verification_timeframe} (مخصص للتحقق من كسر الهيكل)
+• فريم التحقق: {verification_timeframe}
 • استراتيجية التداول: {trading_strategy}
 • جلسة السوق: {session_name} ({session_time})
 • حالة السيولة: {session_vol}
@@ -1185,10 +1750,14 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 • توقيت التحليل: {gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}
 • المستوى: Professional باك تيست 15000 صفقة
 
-🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً):
+🎯 **التنسيق المطلوب للإجابة (الالتزام حرفياً مع الإضافات الجديدة):**
 
 📊 التحليل الفني المتقدم:
 • البصمة الزمنية: {kill_zone_status}
+• **قانون الفتيلة:** [طول الذيل الحرج/تأثيره/القرار]
+• **المغناطيس الرقمي:** [أقرب رقم مستدير/المسافة/التوقيت]
+• **خوارزمية الزخم:** [قوة الزخم/عدد الشموع/الاتجاه]
+• **كشف التلاعب:** [مواقع السيولة/استراتيجية الدخول]
 • حالة الهيكل: (صاعد/هابط) + (مرحلة وايكوف الحالية) + (توافق 4/4 إطارات: نعم/لا)
 • خريطة السيولة: (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
 • الفجوات السعرية: (المناطق التي سيعود السعر لتغطيتها)
@@ -1196,10 +1765,12 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 
 🎯 الإشارة التنفيذية:
 • السعر الحالي: [السعر الدقيق من الشارت - مستخرج من المحور اليمني]
+• **سبب القرار الرئيسي:** [بناءً على: الفتيلة/الزخم/الرقم/السيولة]
 • حالة الشمعة: [مفتوحة / مغلقة] - الوقت المتبقي: [{seconds_remaining} ثانية]
 • القرار الفني: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡) 
 • قوة الإشارة: (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
 • نقطة الدخول: [السعر الدقيق بناءً على OB + شرط الإغلاق]
+• **شروط الدخول الإضافية:** [1. قانون الفتيلة، 2. المغناطيس الرقمي، 3. الزخم، 4. السيولة]
 • الأهداف الربحية:
 🎯 TP1: [سحب أول سيولة داخلية], [احتمالية الوصول]
 🎯 TP2: [الهدف الرئيسي - منطقة عرض/طلب قوية]
@@ -1207,16 +1778,21 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 • وقف الخسارة: [السعر مع 3 طبقات حماية]
 • المدة المتوقعة: [عدد الدقائق] (بناءً على معادلة الزخم السعري)
 • وقت الذروة المتوقع: [مثلاً: خلال الـ 3 شموع القادمة]
+• **نظام التحليل المُستخدم:** [قانون الفتيلة/الزخم/الأرقام/السيولة]
 • الحالة النفسية: [خوف 🥺 / جشع 🤑 / تردد 🤌 / استسلام 👎]
 • علامات التلاعب: [موجودة ✔️ / غير موجودة ❎]
 
 ⚠️ إدارة المخاطر:
+• **الفلاتر النشطة:** [1. قانون الفتيلة، 2. المغناطيس الرقمي، 3. خوارزمية الزخم، 4. كشف التلاعب]
 • مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
 • نقطة الإلغاء: [السعر الذي يفسد التحليل]
 • فريم التحقق: {verification_timeframe} (للتأكد من كسر الهيكل الحقيقي)
 
-💡 تعليمات نهائية:
-"الأولوية القصوى: في حالة التعارض بين ذيول الشموع وقوة الاندفاع (Momentum)، تغلُب قوة الاندفاع في سوق الـ OTC، ويُمنع توقع القمم والقيعان (Top/Bottom Fishing). عند الاقتراب من رقم مستدير، تتحول الأولوية إلى 'تتبع الزخم حتى لمس الرقم' قبل التفكير في أي انعكاس."
+💡 **القوانين الذهبية للتداول من صورة واحدة:**
+1. **الذيل الطويل يقتل الهيكل** - إذا كان الذيل >60%، انعكس فوراً
+2. **الرقم المستدير مغناطيس** - لا تعاكس الاتجاه قبل ملامسته
+3. **3 شموع قوية = قطار سريع** - لا تقف أمام القطار
+4. **الاختراق ثم العودة = سحب سيولة** - ادخل مع العودة لا مع الاختراق
 
 الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط، بدون أي نص إضافي أو تفسيرات خارج الهيكل.
 """
@@ -1260,6 +1836,12 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
         أنت محلل فني خبير في SMC + ICT + Wyckoff + Volume Profile + Market Psychology. مهمتك: تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية متعددة الطبقات.
 
 *التحليل الأولي:* {initial_analysis}
+
+🔥 **التحسينات الإلزامية:**
+1. **تحقق من قانون الفتيلة:** هل تم تحليل الذيول الطويلة (>60%) بشكل صحيح؟
+2. **تحقق من المغناطيس الرقمي:** هل تم ذكر أقرب رقم مستدير والمسافة منه؟
+3. **تحقق من خوارزمية الزخم:** هل تم احترام قاعدة "3 شموع قوية"؟
+4. **تحقق من كشف التلاعب:** هل تم تحديد Equal Highs/Lows بشكل صحيح؟
 
 📊 المستوى 1: التحليل الاستراتيجي
 • الهيكل العام: موجات إيليوت + BOS/CHoCh
@@ -1341,6 +1923,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 *تذكر:* يجب أن يكون تدقيقك موضوعياً ويعتمد على الصورة فقط. لا تخترع أسعاراً أو مستويات غير موجودة.
 
 📊 المعطيات الفنية:
+• نظام التحليل: قانون الفتيلة + الزخم + الأرقام + السيولة
 • الإطار الحالي: {candle} ({candle_category})
 • فريم التحقق: {verification_timeframe}
 • استراتيجية التداول: {trading_strategy}
@@ -1355,6 +1938,10 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 
 📊 التحليل الفني المتقدم:
 • البصمة الزمنية: {kill_zone_status}
+• **قانون الفتيلة:** [✅ مطبق / ⚠️ جزئي / ❌ غير مطبق]
+• **المغناطيس الرقمي:** [✅ مطبق / ⚠️ جزئي / ❌ غير مطبق]
+• **خوارزمية الزخم:** [✅ مطبق / ⚠️ جزئي / ❌ غير مطبق]
+• **كشف التلاعب:** [✅ مطبق / ⚠️ جزئي / ❌ غير مطبق]
 • حالة الهيكل: (صاعد/هابط) + (مرحلة وايكوف الحالية) + (توافق 4/4 إطارات: نعم/لا)
 • خريطة السيولة: (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
 • الفجوات السعرية: (المناطق التي سيعود السعر لتغطيتها)
@@ -1363,10 +1950,12 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 🎯 الإشارة التنفيذية:
 • مقارنة مع التحليل السابق: [✅ مطابق تماماً / ⚡ محسّن / ❌ مصحح]، درجة التشابه: [0–100]%
 • السعر الحالي: [ السعر الدقيق من الشارت ]
+• **سبب القرار الرئيسي:** [الفتيلة/الزخم/الرقم/السيولة]
 • حالة الشمعة: [مفتوحة / مغلقة] - الوقت المتبقي: [{seconds_remaining} ثانية]
 • القرار الفني: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡) 
 • قوة الإشارة: (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
 • نقطة الدخول: [السعر الدقيق بناءً على OB + شرط الإغلاق]
+• **شروط الدخول:** [1. قانون الفتيلة، 2. المغناطيس الرقمي، 3. الزخم، 4. السيولة]
 • الأهداف الربحية:
 🎯 TP1: [سحب أول سيولة داخلية], [احتمالية الوصول]
 🎯 TP2: [الهدف الرئيسي - منطقة عرض/طلب قوية]
@@ -1374,10 +1963,12 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 • وقف الخسارة: [السعر مع 3 طبقات حماية]
 • المدة المتوقعة: [عدد الدقائق] (بناءً على معادلة الزخم السعري)
 • وقت الذروة المتوقع: [مثلاً: خلال الـ 3 شموع القادمة]
+• **نظام التحليل المُستخدم:** [قانون الفتيلة/الزخم/الأرقام/السيولة]
 • الحالة النفسية: [خوف 🥺 / جشع 🤑 / تردد 🤌 / استسلام 👎]
 • علامات التلاعب: [موجودة ✔️ / غير موجودة ❎]
 
 ⚠️ إدارة المخاطر:
+• **الفلاتر النشطة:** [1. قانون الفتيلة، 2. المغناطيس الرقمي، 3. خوارزمية الزخم، 4. كشف التلاعب]
 • مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
 • نقطة الإلغاء: [السعر الذي يفسد التحليل]
 • فريم التحقق: {verification_timeframe} (للتأكد من كسر الهيكل الحقيقي)
@@ -1429,6 +2020,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
             f"• سرعة الشموع: {candle} ({candle_category})\n"
             f"• استراتيجية التداول: {time_display}\n"
             f"• فريم التحقق للكسر: {verification_timeframe}\n"
+            f"• نظام التحليل: قانون الفتيلة + الزخم + الأرقام + السيولة\n"
             f"• الوقت المتبقي للإغلاق: {seconds_remaining} ثانية\n"
             f"━━━━━━━━━━━━━━━━━\n"
             f"🤖 **Powered by - Obeida Trading**"
@@ -1559,8 +2151,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 **المميزات الجديدة:**\n"
         "• تحليل فني متقدم للشارتات\n"
         "• 🆕 دردشة \n"
-        "• 📈 نظام توصيات جاهزة\n"
+        "• 📈 نظام توصيات جاهزة مع سحب صور آلي\n"
         "• إعدادات تخصيص كاملة\n"
+        "• **ميزة جديدة:** نظام التوصيات بسحب الصور الآلي!\n\n"
         "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -1608,7 +2201,8 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📡 **نظام التحليل:** \n"
                 f"1. التحليل الأولي\n"
                 f"2. التدقيق النهائي\n\n"
-                f"📋 **نظام الذاكرة:** نشط (يتذكر التحليل السابق)\n\n"
+                f"📋 **نظام الذاكرة:** نشط (يتذكر التحليل السابق)\n"
+                f"🔧 **نظام القوانين:** قانون الفتيلة + الزخم + الأرقام + السيولة\n\n"
                 f"أرسل صورة الرسم البياني (الشارت) الآن:",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
                 parse_mode="Markdown"
@@ -1698,7 +2292,8 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
             f"✅ مدة الصفقة: {user_message}\n\n"
             f"📡 **نظام التحليل:** \n"
             f"1. التحليل الأولي = ✔️\n"
-            f"2. التدقيق النهائي = ✔️\n\n"
+            f"2. التدقيق النهائي = ✔️\n"
+            f"3. نظام القوانين = ✔️ (الفتيلة + الزخم + الأرقام + السيولة)\n\n"
             f"⬇️⬇️ يمكنك الآن تحليل صورة ⬇️⬇️:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
@@ -1748,11 +2343,16 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     3. اختر "دردشة" للاستفسارات النصية
     4. اختر "توصية" لتحليل العملات
     
-    📈 **نظام التوصيات:**
+    📈 **نظام التوصيات الجديد:**
     • تحليل فني للعملات والمؤشرات
     • أربعة أقسام رئيسية
-    • توصيات مفصلة لكل عملة
-    • تحليل سريع ومباشر
+    • **ميزة جديدة:** سحب صور الشارتات تلقائياً
+    • خيار "تحليل مع صورة آلية" أو "تحليل نصي فقط"
+    • تحليل متقدم مع نظام القوانين الأربعة:
+      1. قانون الفتيلة القاتلة
+      2. التصحيح السعري الرقمي
+      3. خوارزمية الزخم
+      4. كشف التلاعب بالسيولة
     
     ⏱️ **خيارات مدة الصفقة:**
     • **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة
@@ -1764,11 +2364,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **حساب توقيت الشمعة:** يحسب الثواني المتبقية للإغلاق
     • **نظام تنظيف الذاكرة:** تنظيف تلقائي للبيانات المؤقتة
     • **نظام المرحلتين :** تحليل + تدقيق للحصول على دقة أعلى
+    • **نظام القوانين الأربعة:** تحليل متكامل من صورة واحدة
     
     📊 **مميزات البوت:**
     • تحليل فني للرسوم البيانية 
     • دردشة ذكية 
-    • نظام توصيات العملات
+    • نظام توصيات العملات مع سحب الصور الآلي
     • حفظ إعداداتك الشخصية
     • واجهة سهلة بالأزرار
     """
@@ -1795,6 +2396,8 @@ def run_flask_server():
 def main():
     """الدالة الرئيسية - النسخة السهلة"""
     print("🤖 Starting Powered by - Obeida Trading ...")
+    print("🔧 نظام سحب الصور الآلي: جاهز")
+    print("⚡ نظام القوانين الأربعة: مفعل (الفتيلة + الزخم + الأرقام + السيولة)")
     
     # تشغيل Flask
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
@@ -1846,8 +2449,16 @@ def main():
     # إضافة معالج للنصوص
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu))
     
+    # إضافة معالج الأخطاء
+    application.add_error_handler(error_handler)
+    
     print("✅ Telegram Bot initialized successfully")
     print("📡 Bot is now polling for updates...")
+    print("🚀 المميزات النشطة:")
+    print("  1. نظام سحب الصور الآلي للتوصيات")
+    print("  2. نظام القوانين الأربعة للتحليل")
+    print("  3. نظام التوصيات المحسن")
+    print("  4. نظام التنظيف التلقائي")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
