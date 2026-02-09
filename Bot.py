@@ -29,6 +29,11 @@ MISTRAL_MODEL = "pixtral-large-latest"          # للرؤية والاستخر�
 MISTRAL_MODEL_AUDIT = "mistral-large-latest"        # للتحليل المنطقي واتخاذ القرار
 MODEL_SUMMARY = "mistral-medium-latest"        # للتلخيص السريع
 
+
+CLEAN_CHECKER_URL = "https://api.xylserver.org/ai.php"
+CLEAN_CHECKER_MODEL = "claude-3-5-sonnet"
+
+
 DB_NAME = "abood-gpt.db"
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
@@ -1873,7 +1878,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
         await wait_msg.edit_text("استنى شويه قاعد بحلل 🤌...")
         
         payload_1 = {
-            "model": MISTRAL_MODEL,
+            "model": CLEAN_CHECKER_MODEL,
             "messages": [
                 {
                     "role": "user", 
@@ -2099,7 +2104,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 """
         
         payload_2 = {
-            "model": MISTRAL_MODEL_AUDIT,
+            "model": MISTRAL_MODEL,
             "messages": [
                 {
                     "role": "user", 
