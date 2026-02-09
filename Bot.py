@@ -26,13 +26,8 @@ TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U"
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "WhGHh0RvwtLLsRwlHYozaNrmZWkFK2f1")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "pixtral-large-latest"          # للرؤية والاستخراج البصري
-MISTRAL_MODEL_AUDIT = "mistral-large-latest"        # للتحليل المنطقي واتخاذ القرار
+MISTRAL_MODEL_AUDIT = "mistral-large-latest"        # للتحليل المنطقي
 MODEL_SUMMARY = "mistral-medium-latest"        # للتلخيص السريع
-
-
-CLEAN_CHECKER_URL = "https://api.xylserver.org/ai.php"
-CLEAN_CHECKER_MODEL = "claude-3-5-sonnet"
-
 
 DB_NAME = "abood-gpt.db"
 
@@ -1878,7 +1873,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
         await wait_msg.edit_text("استنى شويه قاعد بحلل 🤌...")
         
         payload_1 = {
-            "model": CLEAN_CHECKER_MODEL,
+            "model": MISTRAL_MODEL,
             "messages": [
                 {
                     "role": "user", 
@@ -2104,7 +2099,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 """
         
         payload_2 = {
-            "model": MISTRAL_MODEL,
+            "model": MISTRAL_MODEL_AUDIT,
             "messages": [
                 {
                     "role": "user", 
