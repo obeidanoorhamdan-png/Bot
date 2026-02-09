@@ -1528,7 +1528,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # إعدادات ثابتة
         GENERATION_CONFIG = {
-            "max_tokens": 910,
+            "max_tokens": 1000,
             "temperature": 0.0,
             "top_p": 1.0,
             "random_seed": 42
