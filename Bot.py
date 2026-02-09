@@ -23,7 +23,6 @@ import pytz
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
 
-# ⚡ إعدادات Mistral AI API الجديدة
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "WhGHh0RvwtLLsRwlHYozaNrmZWkFK2f1")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "pixtral-large-latest"          # للرؤية والاستخراج البصري
@@ -525,7 +524,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     # إذا وجدت العملة، ابدأ التحليل مع سحب الصورة
     if symbol_to_analyze:
         save_last_recommendation_symbol(context, symbol_to_analyze)
-        wait_msg = await update.message.reply_text(f"⏳ جاري سحب وتحليل `{symbol_to_analyze}`...")
+        wait_msg = await update.message.reply_text(f"⏳ استنى شويه بسحب صورة `{symbol_to_analyze}`🤌...")
         
         # سحب صورة الشارت أولاً
         chart_image_path = download_chart_image(symbol_to_analyze)
@@ -541,7 +540,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
             # استخدام الصورة للتحليل الفني
             try:
                 # استدعاء تحليل الصورة
-                await wait_msg.edit_text(f"📊 جاري تحليل شارت {symbol_to_analyze} بتقنيات متطورة...")
+                await wait_msg.edit_text(f"استنى شويه قاعد أحلل {symbol_to_analyze} 🤌...")
                 
                 # إنشاء كائن تحديث مؤقت للصورة
                 from telegram import PhotoSize
@@ -1103,7 +1102,7 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
     # الحصول على آخر عملة تم اختيارها
     last_symbol = get_last_recommendation_symbol(context)
     
-    wait_msg = await update.message.reply_text(f"📊 جاري تحليل {last_symbol} من الصورة المرفقة...")
+    wait_msg = await update.message.reply_text(f"📊 استنى شوي العملة: {last_symbol} قيد تحليل 🤌...")
     
     try:
         # حفظ الصورة مؤقتاً
@@ -1157,13 +1156,8 @@ async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="🚀 **وضع الدردشة Obeida Trading**\n\n"
-             "أنا مساعدك الذكي متعدد المواهب:\n"
-             "• مستشار استثماري وتحليلات مالية\n"
-             "• خبير برمجي وتقني\n"
-             "• محلل بيانات واستراتيجيات\n"
-             "• كاتب محتوى إبداعي\n"
-             "• مساعد شخصي ذكي\n\n"
+        text="🚀 **وضع الدردشة مع Obeida Trading**\n\n"
+             "أنا مساعدك الذكي متعدد المجالات :\n"
              "اختر مجال المساعدة أو أرسل سؤالك مباشرة:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -1301,14 +1295,14 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     if user_message in system_prompts:
         await update.message.reply_text(
             f"✅ **تم اختيار: {user_message}**\n\n"
-            f"🎯 **جاهز لخدمتك في هذا التخصص**\n"
-            f"أرسل سؤالك الآن وسأقدم لك إجابة متخصصة وشاملة:",
+            f"🎯 **جاهز لخدمتك في اي وقت **\n"
+            f"💬  أرسل سؤالك الآن 💬:",
             parse_mode="Markdown"
         )
         return CHAT_MODE
     
     # إظهار حالة المعالجة
-    wait_msg = await update.message.reply_text("Obeida Trading 🤔...")
+    wait_msg = await update.message.reply_text("قاعد افكر استنى شوي 🤌...")
     
     try:
         # استدعاء واجهة Mistral AI
@@ -1338,7 +1332,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             result = clean_repeated_text(result)
             
             # إضافة تذييل مميز
-            footer = "\n\n━━━━━------━━━━\n🤖 **Powered by - Obeida Trading ** 🤖"
+            footer = "\n\n━━━━━━━━━━━━\n🤖 **Powered by - Obeida Trading ** 🤖"
             result = result + footer
             
             # أزرار الدردشة المتقدمة
@@ -1403,7 +1397,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return MAIN_MENU
 
-    wait_msg = await update.message.reply_text("📊 جاري تحليل شارت بتقنيات متطورة ... ")
+    wait_msg = await update.message.reply_text(" ثواني وساقوم بتحليل 🤌...")
     photo = await update.message.photo[-1].get_file()
     
     timestamp = int(time.time())
@@ -1440,7 +1434,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
             seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
         
-        candle_closing_status = f"الوقت المتبقي لإغلاق الشمعة: {seconds_remaining} ثانية"
+        candle_closing_status = f"الوقت المتبقي الشمعة: {seconds_remaining} ثانية"
         if seconds_remaining < 10:
             candle_closing_status += " ⚠️ (الوقت حرج جداً - تجنب الدخول)"
         elif seconds_remaining < 30:
@@ -1835,20 +1829,19 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 • توقيت التحليل: {gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}
 • المستوى: Professional باك تيست 15000 صفقة
 
-🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً):
+🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصرآ:
 
 📊 التحليل الفني المتقدم:
 • البصمة الزمنية: {kill_zone_status}
 • تطبيق قانون الفتيلة: [نعم/لا] - نسبة الذيل: [٪]
 • رقم مستدير قريب: [السعر مع المسافة]
-• حالة الزخم الثلاثي: [مطبق/غير مطبق]
-• حالة الهيكل: (صاعد/هابط) + (مرحلة وايكوف الحالية) + (توافق 4/4 إطارات: نعم/لا)
+• حالة الهيكل: (صاعد/هابط) + (توافق 4/4 إطارات: نعم/لا)
 • خريطة السيولة: (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
 • الفجوات السعرية: (المناطق التي سيعود السعر لتغطيتها)
 • ذاكرة السياق: (ملاحظات من التحليل السابق إذا وجدت)
 
 🎯 الإشارة التنفيذية:
-• السعر الحالي: [السعر الدقيق من الشارت - مستخرج من المحور اليمني]
+• السعر الحالي: [السعر الدقيق من الشارت ]
 • حالة الشمعة: [مفتوحة / مغلقة] - الوقت المتبقي: [{seconds_remaining} ثانية]
 • القرار الفني: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡) 
 • قوة الإشارة: (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
@@ -1867,7 +1860,6 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 • مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
 • نقطة الإلغاء: [السعر الذي يفسد التحليل]
 • فريم التحقق: {verification_timeframe} (للتأكد من كسر الهيكل الحقيقي)
-• تطبيق قوانين جديدة: [الفجوات ✓ / الزخم ✓ / الأرقام ✓ / الفتيلة ✓]
 
 💡 تعليمات نهائية:
 "الأولوية القصوى: في حالة التعارض بين ذيول الشموع وقوة الاندفاع (Momentum)، تغلُب قوة الاندفاع في سوق الـ OTC، ويُمنع توقع القمم والقيعان (Top/Bottom Fishing). عند الاقتراب من رقم مستدير، تتحول الأولوية إلى 'تتبع الزخم حتى لمس الرقم' قبل التفكير في أي انعكاس."
@@ -1878,7 +1870,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         # --- الخطوة 1: التحليل الأولي الأساسي ---
-        await wait_msg.edit_text("📊 جاري تحليل (المرحلة 1/2)...")
+        await wait_msg.edit_text("استنى شويه قاعد بحلل 🤌...")
         
         payload_1 = {
             "model": MISTRAL_MODEL,
@@ -1903,7 +1895,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
         initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
         
         # --- الخطوة 2: التدقيق والتحسين الثاني ---
-        await wait_msg.edit_text("📊 جاري تدقيق التحليل (المرحلة 2/2)...")
+        await wait_msg.edit_text("استنى شويه اخر لمسات 🤌...")
         
         # برومبت التدقيق المحدث
         AUDIT_PROMPT = f"""
@@ -2073,20 +2065,17 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 • توقيت التحليل: {gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}
 • المستوى: Professional باك تيست 15000 صفقة
 
-🎯 **التنسيق المطلوب للإجابة (الالتزام حرفياً):**
+🎯 **التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصرآ:**
 
 📊 التحليل الفني المتقدم:
 • البصمة الزمنية: {kill_zone_status}
 • تطبيق قانون الفتيلة: [نعم/لا] - نسبة الذيل: [٪]
-• رقم مستدير قريب: [السعر مع المسافة]
-• حالة الزخم الثلاثي: [مطبق/غير مطبق]
-• حالة الهيكل: (صاعد/هابط) + (مرحلة وايكوف الحالية) + (توافق 4/4 إطارات: نعم/لا)
+• حالة الهيكل: (صاعد/هابط) + (توافق 4/4 إطارات: نعم / لا )
 • خريطة السيولة: (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
 • الفجوات السعرية: (المناطق التي سيعود السعر لتغطيتها)
-• ذاكرة السياق: (ملاحظات من التحليل السابق إذا وجدت)
 
 🎯 الإشارة التنفيذية:
-• مقارنة مع التحليل السابق: [✅ مطابق تماماً / ⚡ محسّن / ❌ مصحح]، درجة التشابه: [0–100]%
+• مقارنة مع التحليل السابق: [✅ مطابق تماماً / ⚡ محسن / ❌ مصحح]، درجة التشابه: [0–100]%
 • السعر الحالي: [ السعر الدقيق من الشارت ]
 • حالة الشمعة: [مفتوحة / مغلقة] - الوقت المتبقي: [{seconds_remaining} ثانية]
 • القرار الفني: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡) 
@@ -2105,8 +2094,8 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
 ⚠️ إدارة المخاطر:
 • مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
 • نقطة الإلغاء: [السعر الذي يفسد التحليل]
-• فريم التحقق: {verification_timeframe} (للتأكد من كسر الهيكل الحقيقي)
-• تطبيق قوانين جديدة: [الفجوات ✓ / الزخم ✓ / الأرقام ✓ / الفتيلة ✓]
+
+الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط، بدون أي نص إضافي أو تفسيرات خارج الهيكل.
 """
         
         payload_2 = {
@@ -2147,16 +2136,13 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
         
         # إعداد النص النهائي
         full_result = (
-            f"✅ **تم التحليل والتدقيق بنجاح!**\n"
+            f"✅ **تم التحليل  صفقتك بنجاح** ✅\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"{audit_result}\n\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"🔧 **الإعدادات المستخدمة:**\n"
-            f"• سرعة الشموع: {candle} ({candle_category})\n"
-            f"• استراتيجية التداول: {time_display}\n"
-            f"• فريم التحقق للكسر: {verification_timeframe}\n"
-            f"• الوقت المتبقي للإغلاق: {seconds_remaining} ثانية\n"
-            f"• جلسة السوق: {session_name} ({session_time})\n"
+            f"•🕧 فريم التحقق للكسر: {verification_timeframe}\n"
+            f"•🕧 جلسة السوق: {session_name} ({session_time})\n"
             f"━━━━━━━━━━━━━━━━━\n"
             f"🤖 **Powered by - Obeida Trading**"
         )
@@ -2269,13 +2255,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     await update.message.reply_text(
-        "🚀 **أهلاً بك في Obeida Trading**\n\n"
-        "🤖 **المميزات الجديدة:**\n"
-        "• تحليل فني متقدم للشارتات\n"
-        "• 🆕 دردشة ذكية متعددة التخصصات\n"
-        "• 📈 نظام توصيات مع سحب الصور التلقائي\n"
-        "• إعدادات تخصيص كاملة\n"
-        "• تطبيق قوانين التداول جميعها\n\n"
+        "🚀 *أهلاً بك في Obeida Trading*\n\n"
+        "🤖 *⬇️ نقدم لكم الخدمات التالية ⬇️*"
+        "• 📊 نظام تحليل شارت \n"
+        "• 📈 نظام توصيات الجاهزة \n"
+        "• 💬 نظام دردشة الذكية \n"
+        "•⚙️ إعدادات تخصيص كاملة ⚙️ \n\n"
         "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -2292,7 +2277,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(["الرجوع للقائمة الرئيسية"])
         
         await update.message.reply_text(
-            "⚙️ **إعدادات التحليل الفني**\n\n"
+            "⚙️ *إعدادات التحليل الفني*\n\n"
             "حدد سرعة الشموع للبدء:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
@@ -2304,7 +2289,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not candle or not trade_time:
             keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
             await update.message.reply_text(
-                "❌ **يجب ضبط الإعدادات أولاً**\n\n"
+                "❌ *يجب ضبط الإعدادات أولاً*\n\n"
                 "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
                 parse_mode="Markdown"
@@ -2316,19 +2301,14 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             time_display = format_trade_time_for_prompt(trade_time)
             
             await update.message.reply_text(
-                f"📊 **جاهز للتحليل**\n\n"
-                f"الإعدادات الحالية:\n"
-                f"• سرعة الشموع: {candle}\n"
-                f"• {time_display}\n\n"
-                f"📡 **نظام التحليل:** \n"
-                f"1. التحليل الأولي مع القوانين الجديدة\n"
-                f"2. التدقيق النهائي\n\n"
-                f"📋 **القوانين المطبقة:**\n"
-                f"• قانون الفتيلة القاتلة\n"
-                f"• قانون الزخم الثلاثي\n"
-                f"• قانون الأرقام المستديرة\n"
-                f"• قانون الفجوات\n\n"
-                f"أرسل صورة الرسم البياني (الشارت) الآن:",
+                f"📊* نظام جاهز لتحليل *:\n\n"
+                f"⚙️ الإعدادات الذي تستخدمها ⚙️:\n"
+                f"•🏃 سرعة الشموع: {candle}\n"
+                f"•🕧 استراتيجية : {time_display}\n\n"
+                f"📡 *نظام التحليل الشارات :* \n"
+                f"1. 🔧 مرحلة تفكيك هيكل الشارت \n"
+                f"2. 🔬 مرحلة تحليل صورة الشارت \n\n"
+                f"📤 قم برفع صورة  (الشارت) الآن: 📤",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
                 parse_mode="Markdown"
             )
@@ -2374,12 +2354,12 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
         
         await update.message.reply_text(
             f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n"
-            f"الآن حدد **مدة الصفقة** المتوقعة:\n\n"
-            f"📊 **خيارات مدة الصفقة:**\n"
-            f"• **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة\n"
-            f"• **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة\n"
-            f"• **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة\n\n"
-            f"اختر الإطار الزمني المناسب لاستراتيجيتك:",
+            f" ⬇️ الآن حدد ** مدة الصفقة** المتوقعة ⬇️:\n\n"
+            f"📊 **🕧 خيارات مدة الصفقة: 🕧**\n"
+            f"•1- **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة\n"
+            f"•2- **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة\n"
+            f"•3- **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة\n\n"
+            f" 🖊️ اختر الإطار الزمني المناسب لاستراتيجيتك:🖊️",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
         )
@@ -2415,10 +2395,10 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
             f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
             f"✅ سرعة الشموع: {candle}\n"
             f"✅ مدة الصفقة: {user_message}\n\n"
-            f"📡 **نظام التحليل الجديد:** \n"
-            f"• التحليل الأولي = ✔️\n"
-            f"• التدقيق النهائي = ✔️\n"
-            f"⬇️⬇️ يمكنك الآن تحليل صورة ⬇️⬇️:",
+            f"📡 ** نظام تحليل مستهدفة :** \n"
+            f"• 1- تفكيك هيكل شارت  =مفعلة ✔️\n"
+            f"• تحليل صورة شارت = مفعلة ✔️\n"
+            f" 📤 قم الأن برفع صورة شارت : 📤",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
         )
@@ -2479,12 +2459,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
     
     📡 **مميزات البوت المتقدمة:**
-    • تحليل فني للرسوم البيانية بتقنيات متطورة
-    • دردشة ذكية متعددة التخصصات
-    • نظام توصيات مع سحب الصور التلقائي
-    • حفظ إعداداتك الشخصية
-    • واجهة سهلة بالأزرار
-    • نظام تنظيف تلقائي للذاكرة
+    • 📊 تحليل فني للرسوم البيانية بتقنيات متطورة
+    • 💬 دردشة ذكية متعددة التخصصات
+    • 📈 نظام توصيات الجاهزة 
+    • ⚙️ حفظ إعداداتك الشخصية
+    • 🔹 واجهة سهلة بالأزرار
+    • 🗑️ نظام تنظيف تلقائي للذاكرة
     """
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -2560,8 +2540,8 @@ def main():
     # إضافة معالج للأخطاء
     application.add_error_handler(error_handler)
     
-    print("✅ Telegram Bot initialized successfully")
-    print("📡 Bot is now polling for updates...")
+    print("✅ Telegram Bot  safe mode ...")
+    print("📡 Bot Obeida Trading online...")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
