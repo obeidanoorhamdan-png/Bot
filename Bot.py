@@ -21,7 +21,7 @@ from PIL import Image
 import pytz
 
 # --- الإعدادات ---
-TOKEN = os.environ.get('TOKEN', "7324911542:AAGcVkwzjtf3wDB3u7cprOLVyoMLA5JCm8U")
+TOKEN = os.environ.get('TOKEN', "8583903565:AAFveu3KYGkPsC8L6WyermoaZ1tI_EtFHHs")
 
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "uVciwkEG5hhHb8LVJsPg7qgqfHXRZLxp")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
