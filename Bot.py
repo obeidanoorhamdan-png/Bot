@@ -63,8 +63,8 @@ CATEGORIES = {
 # إعدادات إضافية
 GAZA_TIMEZONE = pytz.timezone('Asia/Gaza')
 IMAGE_CACHE_DIR = "image_cache"
-MAX_IMAGE_SIZE = (1024, 1024)  # أقصى حجم للصورة بعد الضغط
-IMAGE_QUALITY = 85  # جودة الصورة بعد الضغط (من 0-100)
+MAX_IMAGE_SIZE = (800, 600)  # ⬅️ قلصنا حجم الصورة هنا
+IMAGE_QUALITY = 70  # ⬅️ قلصنا الجودة
 
 # إنشاء مجلد التخزين المؤقت إذا لم يكن موجوداً
 if not os.path.exists(IMAGE_CACHE_DIR):
@@ -139,14 +139,22 @@ def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
                 else:
                     img = img.convert('RGB')
             
+            # ⬅️ إضافة resize مباشر قبل thumbnail
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
             
-            compressed_path = image_path.replace('.jpg', '_compressed.jpg')
-            img.save(compressed_path, 'JPEG', quality=quality, optimize=True)
+            # تخزين في ذاكرة أولاً قبل الحفظ
+            buffer = io.BytesIO()
+            img.save(buffer, 'JPEG', quality=quality, optimize=True)
+            
+            compressed_path = image_path.replace('.jpg', '_compressed.jpg').replace('.png', '_compressed.jpg')
+            
+            # حفظ الملف
+            with open(compressed_path, 'wb') as f:
+                f.write(buffer.getvalue())
             
             original_size = os.path.getsize(image_path) / 1024
             compressed_size = os.path.getsize(compressed_path) / 1024
-            print(f"📦 تم ضغط الصورة: {original_size:.1f}KB → {compressed_size:.1f}KB")
+            print(f"📦 تم ضغط الصورة: {original_size:.1f}KB → {compressed_size:.1f}KB (نسبة ضغط: {(1 - compressed_size/original_size)*100:.1f}%)")
             
             return compressed_path
     except Exception as e:
@@ -177,7 +185,7 @@ def download_chart_image(symbol="BTCUSDT"):
         
         CHART_URL = f"https://www.tradingview.com/chart/?symbol={chart_symbol}&interval=5"
         
-        api_url = f"https://api.screenshotmachine.com/?key={API_KEY}&url={CHART_URL}&dimension=800x600&device=desktop&delay=2000&format=png"
+        api_url = f"https://api.screenshotmachine.com/?key={API_KEY}&url={CHART_URL}&dimension=800x600&device=desktop&delay=2000&format=jpg"  # ⬅️ غيرنا إلى jpg
         
         print(f"📥 جاري سحب صورة لـ {symbol}...")
         
@@ -185,13 +193,19 @@ def download_chart_image(symbol="BTCUSDT"):
         
         if response.status_code == 200:
             timestamp = int(time.time())
-            image_path = os.path.join(IMAGE_CACHE_DIR, f"chart_{symbol.replace(' ', '_')}_{timestamp}.png")
+            image_path = os.path.join(IMAGE_CACHE_DIR, f"chart_{symbol.replace(' ', '_')}_{timestamp}.jpg")
             
             with open(image_path, "wb") as f:
                 f.write(response.content)
             
             print(f"✅ تم سحب صورة {symbol} بنجاح!")
-            return image_path
+            
+            # ⬅️ ضغط الصورة مباشرة بعد السحب
+            compressed_path = compress_image(image_path)
+            if compressed_path != image_path and os.path.exists(image_path):
+                os.remove(image_path)  # حذف الصورة الأصلية الكبيرة
+            
+            return compressed_path if compressed_path != image_path else image_path
         else:
             print(f"❌ خطأ في سحب الصورة: {response.status_code}")
             return None
@@ -539,43 +553,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
             
             # استخدام الصورة للتحليل الفني
             try:
-                # استدعاء تحليل الصورة
                 await wait_msg.edit_text(f"استنى شويه قاعد أحلل {symbol_to_analyze} 🤌...")
-                
-                # إنشاء كائن تحديث مؤقت للصورة
-                from telegram import PhotoSize
-                
-                # تحميل الصورة ككائن PhotoSize
-                photo_file = await context.bot.get_file(chart_image_path)
-                
-                # إنشاء تحديث مؤقت
-                class TempUpdate:
-                    def __init__(self, original_update, photo_path):
-                        self.effective_user = original_update.effective_user
-                        self.effective_chat = original_update.effective_chat
-                        self.message = TempMessage(photo_path)
-                
-                class TempMessage:
-                    def __init__(self, photo_path):
-                        self.photo = [TempPhotoSize(photo_path)]
-                        self.text = ""
-                
-                class TempPhotoSize:
-                    def __init__(self, file_path):
-                        self.file_path = file_path
-                    
-                    async def get_file(self):
-                        class TempFile:
-                            def __init__(self, path):
-                                self.path = path
-                            
-                            async def download_to_drive(self, destination):
-                                shutil.copy2(self.path, destination)
-                                return destination
-                        
-                        return TempFile(self.file_path)
-                
-                temp_update = TempUpdate(update, chart_image_path)
                 
                 # الحصول على إعدادات المستخدم
                 user_id = update.effective_user.id
@@ -593,14 +571,13 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
                     )
                     return RECOMMENDATION_MODE
                 
-                # تحليل الصورة
-                analysis_result = await analyze_chart_image(
-                    temp_update, 
-                    context, 
+                # ⬅️ هنا نستخدم دالة تحليل واحدة موحدة
+                analysis_result = await analyze_chart_image_single_call(
                     chart_image_path, 
                     candle, 
                     trade_time, 
-                    symbol_to_analyze
+                    symbol_to_analyze,
+                    user_id
                 )
                 
                 await wait_msg.edit_text(
@@ -673,14 +650,17 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     )
     return RECOMMENDATION_MODE
 
-async def analyze_chart_image(update, context, image_path, candle, trade_time, symbol):
-    """تحليل صورة الشارت"""
+# ⬅️ دالة التحليل الموحدة الجديدة (طلب واحد فقط)
+async def analyze_chart_image_single_call(image_path, candle, trade_time, symbol, user_id):
+    """تحليل صورة الشارت بطلب واحد فقط"""
     try:
-        user_id = update.effective_user.id
         prev_context, prev_time = get_analysis_context(user_id)
         
-        # ضغط الصورة
-        compressed_path = compress_image(image_path)
+        # ⬅️ ضغط الصورة أولاً
+        if not image_path.endswith('_compressed.jpg'):
+            compressed_path = compress_image(image_path)
+        else:
+            compressed_path = image_path
         
         # استخدام الصورة المضغوطة للتحليل
         base64_img = encode_image(compressed_path)
@@ -754,8 +734,8 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         # ربط معطيات الإعدادات
         candle_category = ""
         if candle.startswith('S'):
-            candle_category = "فريمات سريعة جداً (ثواني) - حركات سريعة وانعكاسات مفاجئة"
-        elif candle.startswith('M'):
+            candle_category = "فريمات سريعة جداً (ثواني) - حركات سريع
+               elif candle.startswith('M'):
             candle_category = "فريمات متوسطة (دقائق) - حركات متوسطة السرعة"
         elif candle.startswith('H'):
             candle_category = "فريمات بطيئة (ساعات) - حركات بطيئة وثابتة"
@@ -797,14 +777,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         elif candle.startswith('D'):
             verification_timeframe = "H4"
         
-        # إعدادات ثابتة
-        GENERATION_CONFIG = {
-            "max_tokens": 910,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "random_seed": 42
-        }
-        
         # تحضير سياق التحليل السابق
         previous_context_info = ""
         if prev_context and prev_time:
@@ -818,245 +790,127 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             except:
                 previous_context_info = ""
         
-        # البرومبت الرئيسي المحدث مع جميع الإضافات الجديدة
-        MAIN_PROMPT = f"""
-أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
-مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
+        # ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️
+        # ========== البرومبت الموحد ==========
+        # ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️
+        
+        UNIFIED_PROMPT = f"""
+        أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
+        مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
 
-🎯 **قاعدة فلتر المسافة الذهبية:** أنت ملزم باستخراج السعر من المحور الأيمن (Y-axis) ومقارنته بأقرب رقم مستدير (.000). إذا كانت المسافة أقل من 0.00010، تُلغى جميع أوامر البيع/الشراء العكسية ويتم تفعيل نظام 'اللحاق بالمغناطيس السعري' - أي متابعة الاتجاه حتى لمس الرقم المستدير.
+        ⚠️ **مهمتك المزدوجة:** 
+        1. قم بتحليل الصورة بناءً على قواعد SMC والتحليل الفني المتقدم
+        2. قم بتدقيق التحليل ذاتياً وتطبيق جميع القواعد التالية في خطوة واحدة
+        3. أعطني النتيجة النهائية مباشرة دون حاجة لطلب ثاني
 
-{previous_context_info}
+        🎯 **القواعد الأساسية (يجب تطبيقها جميعاً):**
 
-🔥 **قانون الفتيلة القاتلة (The Wick Law):**
-في الصورة الواحدة، الذيل (Wick) أهم من الجسم. أي ذيل طويل يخترق منطقة سيولة ثم يعود، يعتبر "أمر تنفيذ عكسي فوراً" مهما كان اتجاه الشموع السابقة.
-✅ **قاعدة التطبيق:** إذا كان ذيل الشمعة يمثل أكثر من 60% من حجمها الإجمالي عند منطقة دعم/مقاومة، فقم بإلغاء تحليل الهيكل واعتمد على الانعكاس.
+        1. **قاعدة فلتر المسافة الذهبية:** استخرج السعر من المحور الأيمن (Y-axis) وقارنه بأقرب رقم مستدير (.000). إذا كانت المسافة < 0.00010، ألغِ جميع أوامر البيع/الشراء العكسية.
 
-💰 **ميزة التصحيح السعري الرقمي (Price Action Calibration):**
-الراديكالية في تحديد الأسعار هي المفتاح. ابحث عن "الأرقام المستديرة" (مثل 1.68000) داخل الصورة واربطها بالزخم.
-✅ **القاعدة:** إذا كان السعر متجهاً لرقم مستدير بفتحات شموع واسعة، فمن الانتحار التداول عكسه.
-📌 **التعديل الجديد:** "الرقم المستدير مغناطيس؛ لا تعطي إشارة ارتداد إلا بعد ملامسته بـ 3 نقاط على الأقل."
+        2. **قانون الفتيلة القاتلة:** إذا كان ذيل الشمعة يمثل أكثر من 60% من حجمها عند مستوى دعم/مقاومة، ألغِ تحليل الهيكل واعتمد على الانعكاس.
 
-🚀 **دمج خوارزمية الزخم (Momentum vs Structure):**
-• في الأسواق الحقيقية (Real Market)، الهيكل (Structure) هو الملك.
-• في أسواق الـ OTC، الزخم (Momentum) هو الملك.
-✅ **الشرط الإلزامي:** إذا وجدت 3 شموع متتالية بنفس اللون وبأجسام ممتلئة (>80%)، يُحظر البيع حتى لو وصل السعر لقمة تاريخية. الزخم في هذه الحالة أقوى من أي تحليل فني.
+        3. **قانون الزخم الثلاثي:** إذا وجدت 3 شموع متتالية بنفس اللون وبأجسام ممتلئة (>80%)، مُنع البيع تماماً.
 
-🎯 **كشف التلاعب بالسيولة (Liquidity Sweep Detection):**
-بدلاً من البحث عن نماذج مثل "الرأس والكتفين"، ابحث عن "القمم المتساوية" (Equal Highs). صناع السوق يضعون أوامرهم فوقها.
-✅ **المنطق العملي:** إذا رأيت قمتين متساويتين في الصورة، يجب أن تكون التوصية: "انتظر اختراق القمة ثم ادخل بيعاً مع العودة"، وليس البيع من القمة مباشرة.
+        4. **قاعدة الأرقام المستديرة:** الرقم المستدير مغناطيس. لا تعطي إشارة ارتداد إلا بعد ملامسته بـ 3 نقاط على الأقل.
 
-📊 المرحلة 1: الفحص الأولي والتحذيرات
-1.1 نظام الأمان ثلاثي الطبقات:
-• الدرع الأساسي
-• كشف وهم الزخم: 3 شموع كبيرة، فحص الاستدامة
-• التحقق الرقمي: استخراج الأسعار من المحور اليمني ومطابقتها مع الشارت
-• توقيت إغلاق الشمعة: {candle_closing_status}
+        5. **قاعدة كسر العرض بالاندفاع:** إذا تعارضت منطقة العرض مع شمعة اندفاعية تخترق مستويات السيولة، اعتبر المنطقة 'مكسورة' فوراً.
 
-1.2 كشف مخاطر OTC:
-• إشارات التلاعب: اختراق ثم عودة، انعكاس لحظي، حركة بدون حجم
-• حماية: تجنب آخر 10 ثوانٍ، أوامر معلقة، SL +20%
+        {previous_context_info}
 
-1.3 تحليل الارتباط السعري:
-• Forex: مؤشر الدولار، العملات المرتبطة، السندات
-• Stocks: المؤشر العام، القطاع، أرباح
-• Crypto: BTC، Altcoins، مؤشر الخوف والجشع
+        📊 **المعطيات التقنية:**
+        • العملة/الرمز: {symbol}
+        • الإطار الزمني: {candle} ({candle_category})
+        • استراتيجية التداول: {trading_strategy}
+        • جلسة السوق: {session_name} ({session_time})
+        • حالة السيولة: {session_vol}
+        • تأثير الأخبار: {news_impact} (معامل ×{news_risk_multiplier})
+        • الوقت المتبقي: {seconds_remaining} ثانية
+        • فريم التحقق: {verification_timeframe}
 
-💰 المرحلة 2: التحليل الهيكلي
-2.1 تحديد الهيكل: SMC + BOS/CHoCh بدقة
-2.2 استخراج الإحداثيات: High/Low، نسبة الحركة، دقة مطلقة
-2.3 مصفاة التسعير: Discount للشراء، Premium للبيع، مناطق الطوارئ <20%/>80%
+        🔍 **خطوات التحليل المطلوبة (يجب تطبيقها جميعاً):**
 
-💰 المرحلة 3: السيولة والزخم
-3.1 كشف وهم الزخم: فجوات، شموع خبر، ذيول طويلة، V-Reversal
-3.2 خرائط السيولة: Equal Highs/Lows، Inducement، Liquidity Sweeps، FVG
-3.3 انعكاس الزخم المفاجئ: رفض بعد اندفاع، فشل اختراق، انخفاض حجم، دايفرجنس
+        1. **استخراج البيانات الدقيقة:** 
+           - استخرج الأسعار من المحور Y بدقة
+           - حدد الوقت من ساعة المنصة في الصورة
+           - حساب المسافة للهدف المقدر
 
-🎯 المرحلة 4: القرار الذكي
-• POI صالح + نموذج شموعي + سلوك سعري واضح + توافق الاتجاه
-• تعديل المخاطر حسب الأخبار: SL × {news_risk_multiplier}, الحجم ÷ {news_risk_multiplier}
-• حظر كامل: أخبار قوية ±30 دقيقة، زخم وهمي، فشل الفلاتر، V-Reversal، تضارب المؤشرات
-• حل التعارض: الأولوية: الزخم → السيولة → الفجوات → الهيكل → المؤشرات → السياق الزمني
+        2. **التدقيق الذاتي:**
+           - تحقق من كل سعر ومستوى مذكور في تحليلك
+           - تأكد من تطبيق جميع القواعد الخمسة المذكورة أعلاه
+           - صحح أي أخطاء في الأسعار أو المستويات
 
-💡 قاعدة كسر العرض بالاندفاع:
-"إذا تعارضت منطقة العرض مع شمعة اندفاعية (Marubozu) تخترق مستويات السيولة، اعتبر المنطقة 'مكسورة' فوراً ولا تقترح البيع إلا بعد إعادة اختبار ناجحة أو فشل اختراق مؤكد (SFP) مع تأكيد من شمعتين."
+        3. **التقييم النهائي:**
+           - قدم التوصية النهائية مع مستوى الثقة
+           - أضف ملاحظات عن تطبيق القواعد
+           - حدد نقاط الدخول والخروج بدقة
 
-📊 المرحلة 5: سلوك الشموع
-• استجابة POI: رفض/امتصاص/جانبي، القوة: جسم/ذيول، الحجم
-• قانون 3 شموع: اختبار → تصحيح → اختراق
-• التتابع الزمني: شمعة 1 رد فعل، شمعة 2 تأكيد، شمعة 3 قرار
+        🎯 **التنسيق المطلوب (الالتزام حرفياً):**
 
-📉 المرحلة 6: MACD المحسن
-• 1-5 دقائق: تجاهل التقاطعات البطيئة ودايفرجنس عند تعارضها مع زخم قوي
-• 15-60 دقائق: خط الصفر + دايفرجنس عند POI
-• حل التعارض: سلوك سعري واضح → تجاهل MACD
+        📊 **التحليل الفني المتقدم لـ {symbol}:**
+        • البصمة الزمنية: {kill_zone_status}
+        • تطبيق قانون الفتيلة: [نعم/لا] - نسبة الذيل: [٪]
+        • رقم مستدير قريب: [السعر مع المسافة]
+        • حالة الهيكل: (صاعد/هابط/تجميع)
+        • خريطة السيولة: (أقرب فخ + الهدف القادم)
 
-⏰ المرحلة 7: تعدد الإطارات
-• HTF: الاتجاه العام، MTF1: العرض/الطلب، MTF2: OB نشطة، LTF: الدخول
-• توافق: 4/4=+40, 3/4=+30, 2/4=تقليل حجم 50%, 1/4=منع الدخول
-• استراتيجية: شراء = HTF صاعد → تصحيح → OB → إشارة، بيع = HTF هابط → ارتداد → OB → إشارة
+        🎯 **الإشارة التنفيذية:**
+        • السعر الحالي: [السعر الدقيق من الصورة]
+        • القرار الفني: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡)
+        • قوة الإشارة: (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
+        • نقطة الدخول: [السعر الدقيق]
+        • الأهداف: TP1: [سعر], TP2: [سعر]
+        • وقف الخسارة: [السعر مع حماية]
+        • المدة المتوقعة: [الوقت بالدقائق]
 
-🎯 المرحلة 8: درجات الثقة (معدلة)
-• + نقاط: زخم قوي (9-10) ×2 = +40، POI +25، نموذج شموعي +20، سلوك واضح +25، توافق الإطارات +30، حجم أعلى +15، أخبار هادئة +20، BOS +30، تغطية فجوة +15، اختراق مع بداية ساعة جديدة +25
-• - خصومات: تعارض مؤشرات -20، أخبار قوية -25، زخم وهمي -15، V-Reversal قريب -30، سيولة OTC منخفضة -10، بيع فوق 50% من موجة صاعدة بدون دخول Premium -40
-• مستويات: 95-100 💥💥, 85-94 💥, 70-84 🔥, 55-69 ⚡, 40-54 ❄️, <40 🚫
+        ⚠️ **إدارة المخاطر:**
+        • مستوى الثقة: [0-100]٪
+        • نقطة الإلغاء: [السعر الذي يفسد السيناريو]
+        • تطبيق القواعد: [تم تطبيق 5/5 قواعد] أو [تم تطبيق X/5 قواعد]
 
-📊 المرحلة 9: الحجم المتقدم
-• اختراق >150%, امتصاص: حجم عالي + حركة محدودة
-• تصحيح <70%, انعكاس: حجم مرتفع مفاجئ
-• نقاط التحكم: POC = دعم/مقاومة, VA 70% توازن, EVA خارج VA = قوة
+        📝 **ملاحظات التدقيق الذاتي:**
+        - [ملاحظة 1 عن تطبيق القواعد]
+        - [ملاحظة 2 عن الدقة في الأسعار]
+        - [ملاحظة 3 عن المخاطر]
 
-🔄 المرحلة 10: إدارة الصفقات
-• Long: TP1 SL للتعادل +40%, TP2 أعلى شمعة +30%, TP3 30% بترايل
-• Short: نفس النمط
-• OTC حماية: SL +20%, بعد 3 شموع، حجم 33/33/34
-
-🧠 المرحلة 11: التحليل السلوكي والتلاعب
-• الخوف، الجشع، التردد، الاستسلام
-• التلاعب: Liquidity Sweep, Stop Hunt, False Breakout, Bait Pattern
-• سلوك OTC: نمط 3 مرات، اختراقات محددة، شمعة تغير السياق، أوامر معلقة
-• التمييز: ذيل + عودة = فخ, جسم كامل + إغلاق = BOS
-
-⚠️ المرحلة 12: تثبيت القرار النهائي
-1. قرار ثابت لكل صورة متطابقة
-2. لا تغيير إلا عند تغير واضح في الشارت
-3. تأكيد مزدوج: القرار صحيح عند ظهور مرتين بنفس المعطيات
-4. تحقق من كل الأسعار والمستويات في الصورة بدقة
-
-📊 **التحليل الفني المتقدم لـ {symbol}:**
-• الإطار الزمني: {candle} ({candle_category})
-• استراتيجية التداول: {trading_strategy}
-• جلسة السوق: {session_name} ({session_time})
-• حالة السيولة: {session_vol}
-
-🔍 **المطلوب تحليل (SMC + Wyckoff + Volume Profile):**
-- رصد الـ Order Block النشط و الـ FVG غير المغطى.
-- تحديد منطقة الفخ (Inducement) والسيولة المستهدفة (BSL/SSL).
-- حساب قوة الاتجاه باستخدام (RSI Divergence) وحجم التداول.
-- تطبيق قوانين الفتيلة والزخم والأرقام المستديرة.
-
-🎯 **التنسيق المطلوب للإجابة:**
-
-📊 **ملخص فحص {symbol}:**
-- الهيكل: (صاعد/هابط/تجميع) 
-- السيولة: (أقرب فخ + الهدف القادم)
-- الفجوات: (أهم منطقة FVG نشطة)
-- تطبيق قانون الفتيلة: [نعم/لا]
-- رقم مستدير قريب: [السعر مع المسافة]
-
-🎯 **خطة التنفيذ:**
-- القرار: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡) 
-- القوة: (عالية/متوسطة/ضعيفة)
-- الدخول: [السعر الدقيق] 
-- الهدف (TP1/TP2): [مستويات السيولة]
-- الوقف (SL): [خلف منطقة الحماية] 
-- الزمن: [الوقت المتوقع بالدقائق]
-
-⚠️ **المخاطرة:**
-- الثقة: [%] 
-- نقطة الإلغاء: [السعر الذي يفسد السيناريو]
-- تطبيق قوانين جديدة: [الفجوات ✓ / الزخم ✓ / الأرقام ✓ / الفتيلة ✓]
-
-💡 **ملاحظات التحليل:**
-- {kill_zone_status}
-- {last_minute_status}
-- {candle_closing_status}
-- تأثير الأخبار: {news_impact}
-"""
+        **الآن قم بتحليل الشارت المرفق، ودقق في تحليلك ذاتياً، وأعطني النتيجة النهائية فوراً.**
+        """
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
-        # التحليل الأولي
-        payload_1 = {
-            "model": MISTRAL_MODEL,
+        # ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️
+        # ========== الطلب الواحد الموحد ==========
+        # ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️ ⬅️
+        
+        payload = {
+            "model": MISTRAL_MODEL,  # ⬅️ استخدام موديل واحد فقط
             "messages": [
                 {
                     "role": "user", 
                     "content": [
-                        {"type": "text", "text": MAIN_PROMPT},
+                        {"type": "text", "text": UNIFIED_PROMPT},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
                     ]
                 }
             ],
-            **GENERATION_CONFIG
-        }
-        
-        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
-        
-        if response_1.status_code != 200:
-            print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
-            raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
-        
-        initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
-        
-        # التدقيق والتحسين
-        AUDIT_PROMPT = f"""
-        أنت محلل فني خبير متخصص في التدقيق والتحسين. مهمتك مراجعة التحليل الأول لـ {symbol} وتطبيق القواعد الجديدة:
-        
-        1. **قانون الفتيلة القاتلة:** تحقق من الذيول الطوحة (>60%)
-        2. **قانون الزخم الثلاثي:** 3 شموع متتالية = استمرار الاتجاه
-        3. **قانون الأرقام المستديرة:** الرقم المستدير = مغناطيس
-        4. **قانون الفجوات:** السعر يتحرك من فجوة إلى فجوة
-        
-        *التحليل الأولي:* {initial_analysis}
-        
-        📊 **المعطيات:**
-        • الإطار: {candle} ({candle_category})
-        • الاستراتيجية: {trading_strategy}
-        • الجلسة: {session_name} ({session_time})
-        • السيولة: {session_vol}
-        • الأخبار: {news_impact} (×{news_risk_multiplier})
-        
-        🔍 **أمر التدقيق:**
-        1. تحقق من كل سعر ومستوى مذكور في التحليل
-        2. تأكد من تطبيق جميع القواعد الجديدة
-        3. صحح أي أخطاء في الأسعار أو المستويات
-        4. أضف ملاحظات عن تطبيق القوانين الجديدة
-        
-        🎯 **قدم تحسينك بالتنسيق التالي:**
-        
-        📊 **التحليل المحسن لـ {symbol}:**
-        [هنا التحليل المحسن مع التطبيق الكامل للقوانين الجديدة]
-        
-        🔧 **التعديلات المطبقة:**
-        - [ ] قانون الفتيلة: [تم/غير مطلوب]
-        - [ ] قانون الزخم: [تم/غير مطلوب]
-        - [ ] قانون الأرقام: [تم/غير مطلوب]
-        - [ ] قانون الفجوات: [تم/غير مطلوب]
-        
-        ⚡ **الخلاصة النهائية:**
-        [التوصية النهائية مع مستوى الثقة]
-        """
-        
-        payload_2 = {
-            "model": MISTRAL_MODEL_AUDIT,
-            "messages": [
-                {
-                    "role": "user", 
-                    "content": [
-                        {"type": "text", "text": AUDIT_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
-                    ]
-                }
-            ],
-            "max_tokens": 910,
-            "temperature": 0.2,
+            "max_tokens": 1500,  # ⬅️ قللنا عدد التوكنات
+            "temperature": 0.1,
             "top_p": 1.0,
             "random_seed": 42
         }
         
-        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
         
-        if response_2.status_code == 200:
-            audit_result = response_2.json()['choices'][0]['message']['content'].strip()
-        else:
-            print(f"Obeida Vision Warning (Model 2): {response_2.status_code}")
-            audit_result = f"📋 **ملاحظة:** تعذر التدقيق - استخدام التحليل الأولي مباشرة\n\n{initial_analysis}"
+        if response.status_code != 200:
+            print(f"❌ خطأ في تحليل الصورة: {response.status_code} - {response.text}")
+            return f"❌ **حدث خطأ في التحليل:** {response.status_code}\nيرجى المحاولة مرة أخرى."
+        
+        analysis_result = response.json()['choices'][0]['message']['content'].strip()
         
         # تنظيف النصوص
-        audit_result = clean_repeated_text(audit_result)
+        analysis_result = clean_repeated_text(analysis_result)
         
         # حفظ سياق التحليل
-        save_analysis_context(user_id, audit_result)
+        save_analysis_context(user_id, analysis_result)
         
         # إعداد النص النهائي
         time_display = format_trade_time_for_prompt(trade_time)
@@ -1064,13 +918,12 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         full_result = (
             f"✅ **تم تحليل {symbol} بنجاح!**\n"
             f"━━━━━━━━━━━━━━━━\n"
-            f"{audit_result}\n\n"
+            f"{analysis_result}\n\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"🔧 **الإعدادات المستخدمة:**\n"
             f"• سرعة الشموع: {candle} ({candle_category})\n"
             f"• استراتيجية التداول: {time_display}\n"
             f"• فريم التحقق للكسر: {verification_timeframe}\n"
-            f"• الوقت المتبقي للإغلاق: {seconds_remaining} ثانية\n"
             f"• جلسة السوق: {session_name} ({session_time})\n"
             f"━━━━━━━━━━━━━━━━━\n"
             f"🤖 **Powered by - Obeida Trading**"
@@ -1088,7 +941,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         return f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى."
     finally:
         # تنظيف الملفات المؤقتة
-        for filepath in [image_path, compressed_path]:
+        for filepath in [image_path]:
             if os.path.exists(filepath):
                 try:
                     os.remove(filepath)
@@ -1111,6 +964,9 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
         image_path = os.path.join(IMAGE_CACHE_DIR, f"recommendation_{user_id}_{timestamp}.jpg")
         await photo.download_to_drive(image_path)
         
+        # ⬅️ ضغط الصورة مباشرة
+        compressed_path = compress_image(image_path)
+        
         # الحصول على إعدادات المستخدم
         candle, trade_time, _, _ = get_user_setting(user_id)
         
@@ -1118,14 +974,13 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
             await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
             return RECOMMENDATION_MODE
         
-        # تحليل الصورة
-        analysis_result = await analyze_chart_image(
-            update, 
-            context, 
-            image_path, 
+        # ⬅️ استخدام الدالة الموحدة للتحليل
+        analysis_result = await analyze_chart_image_single_call(
+            compressed_path, 
             candle, 
             trade_time, 
-            last_symbol
+            last_symbol,
+            user_id
         )
         
         await wait_msg.edit_text(analysis_result, parse_mode="Markdown")
@@ -1402,860 +1257,27 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     
     timestamp = int(time.time())
     original_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_original.jpg")
-    compressed_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_compressed.jpg")
     
     try:
         await photo.download_to_drive(original_path)
+        
+        # ⬅️ ضغط الصورة مباشرة
         compressed_path = compress_image(original_path)
-        base64_img = encode_image(compressed_path)
         
-        if not base64_img:
-            await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
-            if os.path.exists(original_path):
-                os.remove(original_path)
-            if os.path.exists(compressed_path) and compressed_path != original_path:
-                os.remove(compressed_path)
-            return MAIN_MENU
-        
-        # الحصول على معلومات السيولة والتوقيت
-        session_name, session_time, session_vol = get_market_session()
-        gaza_time = datetime.now(GAZA_TIMEZONE)
-        current_hour = gaza_time.hour
-        current_minute = gaza_time.minute
-        current_second = gaza_time.second
-        
-        # حساب الثواني المتبقية لإغلاق الشمعة
-        seconds_remaining = 60 - current_second
-        if candle.startswith('M'):
-            candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
-            seconds_remaining = (candle_minutes * 60) - ((current_minute % candle_minutes) * 60 + current_second)
-        elif candle.startswith('H'):
-            candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
-            minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
-            seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
-        
-        candle_closing_status = f"الوقت المتبقي الشمعة: {seconds_remaining} ثانية"
-        if seconds_remaining < 10:
-            candle_closing_status += " ⚠️ (الوقت حرج جداً - تجنب الدخول)"
-        elif seconds_remaining < 30:
-            candle_closing_status += " ⚠️ (الوقت قصير)"
-        
-        # نظام الدرع الأساسي (Fundamental Shield)
-        news_impact = "🟢 منخفض"
-        news_warning = ""
-        news_risk_multiplier = 1.0
-        
-        high_impact_hours = [
-            (14, 30), (16, 0), (20, 0),
-            (8, 0), (9, 0), (10, 0),
-            (2, 30), (4, 0),
-            (17, 30),
-        ]
-        
-        for news_hour, news_minute in high_impact_hours:
-            time_diff = abs((current_hour * 60 + current_minute) - (news_hour * 60 + news_minute))
-            if time_diff <= 60:
-                news_impact = "🔴 عالي جداً"
-                news_risk_multiplier = 2.5
-                news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة"
-                break
-            elif time_diff <= 120:
-                news_impact = "🟡 متوسط"
-                news_risk_multiplier = 1.5
-                news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
-                break
-        
-        # الفلتر الزمني (Kill Zones)
-        kill_zone_status = ""
-        if 10 <= current_hour < 13:
-            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
-        elif 15 <= current_hour < 18:
-            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
-        elif 0 <= current_hour < 9 or current_hour >= 22:
-            kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
-        else:
-            kill_zone_status = "خارج مناطق القتل الرئيسية"
-        
-        # معالجة "دقيقة الغدر"
-        is_last_minute = 1 if current_minute in [29, 59, 14, 44] else 0
-        last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
-        
-        # ربط معطيات الإعدادات
-        candle_category = ""
-        if candle.startswith('S'):
-            candle_category = "فريمات سريعة جداً (ثواني) - حركات سريعة وانعكاسات مفاجئة"
-        elif candle.startswith('M'):
-            candle_category = "فريمات متوسطة (دقائق) - حركات متوسطة السرعة"
-        elif candle.startswith('H'):
-            candle_category = "فريمات بطيئة (ساعات) - حركات بطيئة وثابتة"
-        elif candle.startswith('D'):
-            candle_category = "فريمات طويلة (يومي) - اتجاهات طويلة الأمد"
-        
-        trading_strategy = ""
-        position_sizing = ""
-        
-        if trade_time == "قصير (1m-15m)":
-            trading_strategy = "تداول سكالبينج (Scalping) - دخول وخروج سريع"
-            position_sizing = "حجم كبير نسبياً مع وقف خسارة ضيق"
-        elif trade_time == "متوسط (4h-Daily)":
-            trading_strategy = "تداول سوينج (Swing) - متوسط الأجل"
-            position_sizing = "حجم معتدل مع وقف خسارة متوسط"
-        elif trade_time == "طويل (Weekly-Monthly)":
-            trading_strategy = "تداول موقف (Position) - طويل الأجل"
-            position_sizing = "حجم صغير مع وقف خسارة واسع"
-        
-        # تحديد فريم التحقق الديناميكي
-        verification_timeframe = ""
-        
-        candle_value = candle[1:] if candle.startswith(('S', 'M', 'H', 'D')) else candle
-        
-        if candle.startswith('S'):
-            if candle_value in ['5', '10', '15']:
-                verification_timeframe = "S15"
-            else:
-                verification_timeframe = "S30"
-        elif candle.startswith('M'):
-            if int(candle_value) <= 5:
-                verification_timeframe = "M1"
-            elif int(candle_value) <= 15:
-                verification_timeframe = "M5"
-            else:
-                verification_timeframe = "M15"
-        elif candle.startswith('H'):
-            verification_timeframe = "H1"
-        elif candle.startswith('D'):
-            verification_timeframe = "H4"
-        
-        # إعدادات ثابتة
-        GENERATION_CONFIG = {
-            "max_tokens": 1000,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "random_seed": 42
-        }
-        
-        # تحضير سياق التحليل السابق
-        previous_context_info = ""
-        if prev_context and prev_time:
-            try:
-                prev_time_obj = datetime.fromisoformat(prev_time)
-                minutes_ago = int((datetime.now() - prev_time_obj).total_seconds() / 60)
-                previous_context_info = f"""
-                📋 **ذاكرة السياق (منذ {minutes_ago} دقيقة):**
-                {prev_context}
-                """
-            except:
-                previous_context_info = ""
-        
-        # البرومبت الرئيسي المحدث مع جميع الإضافات
-        MAIN_PROMPT = f"""
-أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
-مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
-
-🎯 **قاعدة فلتر المسافة الذهبية:** أنت ملزم باستخراج السعر من المحور الأيمن (Y-axis) ومقارنته بأقرب رقم مستدير (.000). إذا كانت المسافة أقل من 0.00010، تُلغى جميع أوامر البيع/الشراء العكسية ويتم تفعيل نظام 'اللحاق بالمغناطيس السعري' - أي متابعة الاتجاه حتى لمس الرقم المستدير.
-
-{previous_context_info}
-
-🔥 **قانون الفتيلة القاتلة (The Wick Law):**
-في الصورة الواحدة، الذيل (Wick) أهم من الجسم. أي ذيل طويل يخترق منطقة سيولة ثم يعود، يعتبر "أمر تنفيذ عكسي فوراً" مهما كان اتجاه الشموع السابقة.
-✅ **قاعدة التطبيق:** إذا كان ذيل الشمعة يمثل أكثر من 60% من حجمها الإجمالي عند منطقة دعم/مقاومة، فقم بإلغاء تحليل الهيكل واعتمد على الانعكاس.
-
-💰 **ميزة التصحيح السعري الرقمي (Price Action Calibration):**
-الراديكالية في تحديد الأسعار هي المفتاح. ابحث عن "الأرقام المستديرة" (مثل 1.68000) داخل الصورة واربطها بالزخم.
-✅ **القاعدة:** إذا كان السعر متجهاً لرقم مستدير بفتحات شموع واسعة، فمن الانتحار التداول عكسه.
-📌 **التعديل الجديد:** "الرقم المستدير مغناطيس؛ لا تعطي إشارة ارتداد إلا بعد ملامسته بـ 'ذيل' (Wick) ثم العودة للإغلاق دونه. قبل ذلك، الهدف هو لمس الرقم."
-
-🚀 **دمج خوارزمية الزخم (Momentum vs Structure):**
-• في الأسواق الحقيقية (Real Market)، الهيكل (Structure) هو الملك.
-• في أسواق الـ OTC، الزخم (Momentum) هو الملك.
-✅ **الشرط الإلزامي:** إذا وجدت 3 شموع متتالية بنفس اللون وبأجسام ممتلئة (>80%)، يُحظر البيع حتى لو وصل السعر لقمة تاريخية. الزخم في هذه الحالة أقوى من أي تحليل فني.
-
-🎯 **كشف التلاعب بالسيولة (Liquidity Sweep Detection):**
-بدلاً من البحث عن نماذج مثل "الرأس والكتفين"، ابحث عن "القمم المتساوية" (Equal Highs). صناع السوق يضعون أوامرهم فوقها.
-✅ **المنطق العملي:** إذا رأيت قمتين متساويتين في الصورة، يجب أن تكون التوصية: "انتظر اختراق القمة ثم ادخل بيعاً مع العودة"، وليس البيع من القمة مباشرة.
-
-🔄 **قفل الأمان للزخم (The Momentum Deadlock):**
-إذا رصدت 3 شموع متتالية بنفس اللون بجسم يمثل >80% من حجم الشمعة، يُحظر تماماً إصدار إشارة عكسية. في هذه الحالة، تتحول المهمة من 'توقع الانعكاس' إلى 'تحديد أقرب هدف مغناطيسي (Liquidity/Round Number)' والمطالبة باللحاق بالاتجاه.
-
-🔍 **ميزة "كشف كسر الحقيقة" (The Truth-Break Detection):**
-عند حدوث هبوط ثم صعود مفاجئ (V-Shape)، قارن حجم شمعة الارتداد بآخر شموع الهبوط. إذا ابتلعت الشمعة الخضراء آخر شمعتين حمراوين، اعتبر الهبوط السابق 'Stop Hunt' (فخ سيولة) وألغِ جميع مستويات المقاومة القريبة؛ السعر الآن في وضع اندفاع مؤسسي.
-
-🎯 **تعديل "قاعدة الرقم المستدير كهدف" (Round Number Target Logic):**
-في سوق الـ OTC، الأرقام المستديرة (مثل 0.18900) هي أهداف وليست مقاومات. لا تعطي إشارة ارتداد من الرقم المستدير إلا بعد أن يتم اختراقه بـ 'ذيل' (Wick) ثم العودة للإغلاق دونه. قبل ذلك، الهدف هو لمس الرقم.
-
-🎯 **نظام "مضاد للخسارة" - الإضافات النهائية:**
-
-🔄 **قاعدة "إعادة اختبار الفراغ" (FVG Rejection):**
-عندما يعود السعر لفجوة (FVG) هابطة بشمعة اندفاعية خضراء ولا يحترمها (لا يرتد منها للأسفل)، فهذا يسمى **Inversion FVG**.
-✅ **القاعدة التنفيذية:** بمجرد إغلاق شمعة دقيقة **فوق منتصف الفجوة الهابطة**، تتحول وظيفة هذه المنطقة من "مقاومة للبيع" إلى "منصة إطلاق للشراء". يتم إلغاء جميع أوامر البيع وإصدار إشارة شراء فورية مع جعل قاع الفجوة نقطة وقف.
-
-⏰ **ميزة "تزامن الوقت مع الرقم المستدير" (Kill-Zone Timing):**
-في الـ OTC، الدقائق التي تنتهي بـ **(5، 10، 15، 30، 45)** هي دقائق "تعديل المراكز".
-✅ **القاعدة الإلزامية:** إذا كان السعر قريباً من رقم مستدير (مثل 0.18900) عند الدقيقة **44 أو 59 أو 14 أو 29**، فإنه سيقوم بـ **"قفزة انتحارية" للمس الرقم قبل إغلاق الشمعة الكبيرة**. يُحظر إصدار إشارة انعكاس قبل هذه اللحظة، والمطلوب هو متابعة الاتجاه حتى يلمس الرقم.
-
-📊 **فلتر "ثبات الحجم البصري" (Visual Volume Stability):**
-إذا كانت الشمعة الصاعدة **تفتقر للذيل العلوي (Flat Top)**، فهذا يعني أن ضغط الشراء لم ينتهِ بعد، ولا يوجد بائعون تجرأوا على الدخول.
-✅ **قاعدة الحظر:** **ممنوع البيع حتى تظهر أول شمعة بـ 'ذيل علوي' يمثل 30% على الأقل من حجمها الكلي.** الشموع المسطحة القمة هي علامة على اندفاع مؤسسي مستمر.
-
-🛡️ **نظام "الخوارزمية لا تقهر" - الإضافات النهائية:**
-
-🎯 **قاعدة "فخ القمة المزدوجة في الـ OTC":**
-في الـ OTC، القمم المتساوية (Equal Highs) ليست مقاومات، بل هي "بنزين" للصعود.
-✅ **المنطق التنفيذي:** "إذا رأيت قمتين متساويتين والسعر يقترب منهما بـ 3 شموع خضراء، احذر البيع. السعر سيقوم بـ **'Stop Hunt' (اختراق سريع) لضرب الستوب لوز ثم يكمل صعوده أو يرتد لاحقاً**. الدخول يكون مع الاختراق وليس ضده."
-
-🎯 **ميزة "التدقيق البكسلي للمحور Y" (Precision Y-Axis):**
-أنت ملزم بمطابقة ذيل الشمعة مع الرقم المقابل له على المسطرة اليمنى بدقة.
-✅ **القاعدة الإلزامية:** "إذا كان الذيل يلمس 0.18877، فلا تقرب الهدف لـ 0.18880؛ استخدم الرقم الفعلي لحساب الفجوة السعرية (FVG) بدقة."
-
-🎯 **قانون "السيولة المغناطيسية" (Magnet Liquidity):**
-السعر يتحرك دائماً من "سيولة داخلية" (فجوة) إلى "سيولة خارجية" (قمة/قاع).
-✅ **القاعدة التنفيذية:** "عندما يغلق السعر فوق فجوة (FVG) هابطة، تصبح هذه الفجوة 'دفعاً' (Propulsion). الهدف القادم حتماً هو القمة السابقة (Old High). **لا تقترح أي صفقة بيع طالما لم يتم لمس القمة الخارجية**."
-
-🛡️ **لمسات النظام المكتمل بنسبة 100%:**
-
-🎯 **قاعدة "إغلاق الثغرة الأمنية" (The Safety Gap Rule):**
-إذا تم تغطية مسار هابط استغرق 10 دقائق بصعود استغرق دقيقتين فقط، فهذا ليس مجرد صعود، بل هو **'اندفاع مؤسسي' (Institutional Drive)**.
-✅ **قاعدة الحظر:** "في هذه الحالة، **يُمنع البيع حتى لو ظهرت شمعة حمراء صغيرة**، لأنها ستكون مجرد 'توقف مؤقت' (Rest Point) قبل انفجار ثانٍ."
-
-🎯 **ميزة "كشف الفتيلة الكاذبة" (False Wick Detection):**
-أحياناً يترك السعر ذيلاً طويلاً بالأعلى يوهمك بالهبوط، لكنه في الحقيقة "جس نبض" للسيولة.
-✅ **المنطق التنفيذي:** "إذا ترك السعر ذيلاً طويلاً (Wick) ثم أغلقت الشمعة التالية **فوق منتصف هذا الذيل**، فهذا يعني أن الذيل كان 'سحباً للسيولة' وليس رفضاً. **القرار: استمرار مع الاتجاه وليس الانعكاس**."
-
-🎯 **فلتر "وقت انتهاء الصلاحية" (The 5-Minute Fatigue):**
-في الـ OTC، الزخم غالباً ما يتعب بعد 5 شموع متتالية من نفس اللون.
-✅ **القاعدة:** "عند عد 5 شموع خضراء ممتلئة متتالية، ابدأ بالبحث عن **'شمعة المنهك' (Exhaustion Candle)** وهي شمعة كبيرة جداً بشكل مبالغ فيه (أكبر بـ 3 مرات من سابقاتها). **هذه هي اللحظة الوحيدة التي يُسمح فيها بتوقع ارتداد قصير**."
-
-⚡ **قواعد المعايرة الذاتية (Self-Calibration):**
-1. **تفضيل الزخم:** في حال التعارض بين 'منطقة عرض' (SMC) و 'اندفاع قوي' (OTC Momentum)، **يفوز الزخم دائماً**. لا تقترح البيع إلا بعد ظهور **CHoCh واضح على فريم أصغر**.
-2. **قاعدة الـ V-Shape:** أي هبوط يتم استرداده فوراً بنسبة **>100%** يعتبر فخاً. **الهدف القادم هو القمة التي تليها مباشرة**.
-3. **ميزان القوى:** قارن حجم الشموع الخضراء بالحمراء في آخر 10 دقائق؛ **اللون المسيطر حجماً هو الذي يحدد اتجاه صفقاتك** حتى لو كان الهيكل عكس ذلك.
-
-🔥 **اللمسات النهائية للخوارزمية المتكاملة:**
-
-🎯 **قاعدة "الاندفاع الانتحاري" (The Climax Rule):**
-في الـ OTC، عندما تقترب الشمعة من هدفها النهائي (مثل رقم مستدير أو قمة تاريخية)، يزداد حجمها بشكل جنوني في آخر 10 ثوانٍ.
-✅ **قاعدة الحظر:** "إذا زاد حجم جسم الشمعة الحالية عن **200% من متوسط حجم آخر 5 شموع** وهي تقترب من مستوى سيولة، فهذا يسمى **'اندفاع الذروة'**. **لا تدخل عكسه أبداً حتى يكتمل المسح بالكامل (Full Sweep) وتظهر شمعة رفض واضحة**."
-
-🎯 **ميزة "التوقيت الصفري" (The Zero-Second Filter):**
-السعر يغير سلوكه عند بدايات ونهايات الدقائق بسبب تذبذب الخوارزمية.
-✅ **القاعدة الإلزامية:** "**يُحظر إصدار إشارة دخول في الثواني (00-05) من بداية الدقيقة الجديدة، أو الثواني (55-59) من نهاية الدقيقة**، بسبب تذبذب الخوارزمية لتعديل السعر عند هذه النقاط."
-
-🎯 **قاعدة "الفجوة المكسورة" (The Inversion Logic):**
-أي منطقة عرض (Supply) يتم اختراقها بشمعة اندفاعية (Marubozu) تتحول فوراً إلى منطقة طلب (Demand).
-✅ **القاعدة التنفيذية:** "إذا عاد السعر ليلمس منطقة عرض تم اختراقها سابقاً، فالقرار هو **شراء مع الاتجاه الجديد، وليس البيع منها مرة أخرى**."
-
-🎯 نظام التحليل متعدد المستويات
-
-📊 المستوى 1: التحليل الاستراتيجي (الخريطة الكبرى)
-• الهيكل العام: تحليل موجات إيليوت + BOS/CHoCh
-• مراحل Wyckoff: التحديد الدقيق لمرحلة (Accumulation/Markup/Distribution/Decline)
-• الحكم الزمني: توافق {verification_timeframe} مع {candle} للإشارات
-• السياق السوقي: {session_name} - {session_vol} سيولة
-
-⚡ المستوى 2: التحليل التكتيكي (الخطة التنفيذية)
-• أنماط الشموع: تحليل 5 شموع سابقة + الشمعة الحالية
-• Order Blocks: تحديد آخر 3 مناطق طلب/عرض نشطة
-• FVG Tracking: تتبع الفجوات غير المغطاة في نطاق 50 نقطة
-• Liquidity Map: رسم خرائط Equal Highs/Lows + Inducement
-
-🎯 المستوى 3: التحليل التنفيذي (الدخول الفوري)
-• Entry Triggers: شروط الدخول المباشرة (شمعة إغلاق + حجم)
-• Risk Matrix: حساب RR ديناميكي حسب {news_risk_multiplier}
-• Position Sizing: حجم صفقة ذكي حسب {position_sizing}
-• Timing Precision: توقيت الدخول/الخروج بالثواني
-
-🔥 نظام القواعد المتقدمة (Hard-Coded Logic)
-
-🛡️ تحديثات الأمان البصري (Vision Updates):
-1. معايرة الإحداثيات: قم برسم شبكة (X,Y) وهمية؛ المحور Y للسعر و X للزمن. طابق كل ذيل شمعة بالسعر المقابل له على المسطرة اليمنى بدقة بكسلية.
-2. فلتر المصيدة (Retail Trap): حدد مستويات الدعم/المقاومة "الواضحة جداً". إذا كان السعر يتذبذب عندها، لا تدخل؛ انتظر سحب السيولة (Stop Hunt) أولاً.
-3. قاعدة الـ 50% (FVG Equilibrium): عند رصد فجوة FVG، الهدف المغناطيسي ليس بدايتها فقط، بل خط المنتصف (0.50) منها.
-4. قانون الزخم المؤسسي: إذا زاد حجم جسم الشمعة عن 200% من متوسط آخر 5 شموع، تُلغى جميع إشارات الانعكاس (Counter-trend) ويتم الدخول مع الاتجاه حصراً.
-5. التحقق من الكسر الكاذب (SFP): لا تعتمد الكسر (BOS) إلا بإغلاق كامل للجسم. ملامسة السعر للقمة بالذيل ثم العودة تعني دخولاً عكسياً فورياً.
-
-🛡️ طبقات الحماية الذكية:
-1. مصفاة الأخبار: {news_warning if news_warning else "✅ الوضع آمن"}
-2. فلتر التوقيت: {kill_zone_status}
-3. فلتر دقيقة الغدر: {last_minute_status}
-4. حاجز السيولة: لا دخول مع FVG غير مغطاة في الاتجاه المعاكس
-5. جدار الأرقام: منع الدخول عند .000/.500 ±5 نقاط بدون CHoCh على {verification_timeframe}
-6. توقيت إغلاق الشمعة: {candle_closing_status}
-
-⚡ نظام القرارات السريع:
-REJECTION ENTRY: ذيل طويل + إغلاق داخل النطاق = دخول عكسي فوري
-MOMENTUM FOLLOW: 3 شموع قوية = استمرار مع الاتجاه حتى أقرب رقم مستدير
-GAP FILLING: السعر يتحرك من فجوة إلى فجوة قبل الارتداد
-LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/44
-
-🛡️ فلتر الاندفاع الانتحاري (Momentum Kill-Switch):
-
-قاعدة الحظر المطلق (The Momentum Kill-Switch):
-1. منع الانعكاس المطلق: يُحظر تماماً إصدار إشارة (بيع) إذا كانت آخر 3 شموع خضراء ممتلئة بنسبة > 80%، حتى لو لمس السعر منطقة عرض. الاندفاع يغلب الهيكل في الـ OTC.
-2. منطقة المغناطيس العددي: إذا كان السعر ضمن نطاق 7 نقاط من رقم مستدير (.000 أو .500)، تُلغى جميع إشارات الانعكاس، وتُحول الإشارة إلى "متابعة الزخم" حتى لمس الرقم.
-3. شرط الـ Stop Hunt الإلزامي: لا تقبل دخولاً عكسياً إلا بعد حدوث "Liquidity Sweep" (ذيل طويل اخترق القمة وعاد للإغلاق تحتها) أو "شمعة رفض" واضحة. بدون هذا الدليل، استمر مع اتجاه الزخم الحالي.
-4. أولوية الاتجاه على النماذج: في فريمات الدقائق (1-5 دقائق)، يتم إلغاء جميع نماذج وايكوف والمؤشرات التقليدية إذا كان الزخم الحالي قوياً (>8 نقاط في 3 شموع).
-
-🧠 نظام الذكاء التحليلي المتكامل
-
-🎲 مصفاة القرار الذكية (وزن الزخم 50% من القرار):
-🚀 [ ] قوة الزخم الحالي: اندفاع قوي (9-10) | اندفاع متوسط (6-8) | توازن (4-5) | ضعف متوسط (2-3) | ضعف قوي (0-1)
-**وزن هذا البند: 50% من القرار النهائي** - إذا كانت آخر 3 شموع خضراء، لا يمكن كتابة كلمة "بيع" في القرار الفني
-
-[ ] اتجاه الهيكل الأساسي: صاعد قوي (9-10) | صاعد ضعيف (6-8) | جانبي (4-5) | هابط ضعيف (2-3) | هابط قوي (0-1) **وزن: 15%**
-[ ] حجم التداول النسبي: كبير جداً (9-10) | كبير (6-8) | متوسط (4-5) | صغير (2-3) | معدوم (0-1) **وزن: 10%**
-[ ] توافق الإطارات الزمنية: توافق كامل (9-10) | توافق جزئي (6-8) | تعادل (4-5) | تضارب جزئي (2-3) | تضارب كلي (0-1) **وزن: 10%**
-[ ] جودة نمط الشموع: نموذج مثالي (9-10) | نموذج جيد (6-8) | غير واضح (4-5) | نموذج ضعيف (2-3) | لا نموذج (0-1) **وزن: 5%**
-[ ] قوة مستويات S/R: مستويات قوية (9-10) | مستويات جيدة (6-8) | مستويات ضعيفة (4-5) | لا مستويات (2-3) | اختراق كامل (0-1) **وزن: 5%**
-[ ] تأثير السياق الزمني: توقيت مثالي (9-10) | توقيت جيد (6-8) | توقيت عادي (4-5) | توقيت سيء (2-3) | توقيت خطير (0-1) **وزن: 3%**
-[ ] عوامل خارجية مؤثرة: ظروف مثالية (9-10) | ظروف جيدة (6-8) | ظروف محايدة (4-5) | ظروف سيئة (2-3) | ظروف خطيرة (0-1) **وزن: 2%**
-
-📈 حساب النتيجة النهائية: (مجموع النقاط الموزونة / 100 × 100)%
-
-🔰 القواعد الأساسية
-• المدرسة: SMC + ICT + دعم كلاسيكي + فلاتر الأرقام المستديرة
-• الدرع الأساسي: {news_warning if news_warning else "✅ الوضع آمن من الأخبار"}
-• التصنيف الزمني: {candle_category}
-• استراتيجية التداول: {trading_strategy}
-• إدارة الحجم: {position_sizing}
-• أولوية الزخم: شموع ابتلاعية ≥80% + إغلاق فوق القمة السابقة = استمرار
-• منطق OTC: 3 شموع قوية → الشمعة الرابعة بنفس الاتجاه
-• تصحيح الفريم الصغير: تجاهل MACD ووايكوف عند التعارض مع السلوك السعري في فريمات الدقائق
-• كشف وهم الزخم: تحقق من استدامة الحركة
-• استخراج البيانات: أسعار دقيقة من المحور اليمني
-• فلتر الجدوى: RR ≥ 1:2 بعد تعديل الأخبار
-• **المصداقية المطلقة: كن قاصياً في نقد الشارت؛ إذا لم تكن الإشارة واضحة بنسبة 90%، فالقرار الإلزامي هو (احتفاظ 🟡) ولا تخاطر بأموال المستخدم.**
-• تقييد الوسطية: قرار واضح فقط (شراء/بيع/احتفاظ) مع مستوى الثقة
-
-📌 **القواعد الجديدة المضافة:**
-
-⚡ **قاعدة الفتيلة القاتلة:**
-"إذا كان طول الذيل (Wick) يمثل أكثر من 60% من حجم الشمعة الكلي عند مستوى دعم أو مقاومة واضح، فهذا إشارة انعكاس قوية. تجاهل اتجاه الهيكل وادخل مع اتجاه الذيل."
-
-💰 **قاعدة الأرقام المستديرة المحسنة:**
-"السعر لا يرتد من الرقم المستدير (.000, .500) إلا بعد ملامسته بمسافة لا تقل عن 3 نقاط. قبل ذلك، يعتبر الرقم المستدير 'مغناطيس' يستهدف سحب السيولة."
-
-🚀 **قانون الزخم الثلاثي:**
-"3 شموع متتالية بنفس اللون وبأجسام ممتلئة (>80%) = قطار سريع لا تقف أمامه. محظور تماماً التداول عكسه حتى مع وجود مقاومة قوية."
-
-🎯 **فلسفة الفجوات:**
-"السعر في الـ OTC يتحرك من فجوة إلى فجوة قبل الارتداد. لا تعطي إشارة انعكاس رئيسية إلا بعد ملاحظة FVG غير مغطاة في الاتجاه المعاكس."
-
-📊 المرحلة 1: الفحص الأولي والتحذيرات
-1.1 نظام الأمان ثلاثي الطبقات:
-• الدرع الأساسي
-• كشف وهم الزخم: 3 شموع كبيرة، فحص الاستدامة
-• التحقق الرقمي: استخراج الأسعار من المحور اليمني ومطابقتها مع الشارت
-• توقيت إغلاق الشمعة: {candle_closing_status}
-
-1.2 كشف مخاطر OTC:
-• إشارات التلاعب: اختراق ثم عودة، انعكاس لحظي، حركة بدون حجم
-• حماية: تجنب آخر 10 ثوانٍ، أوامر معلقة، SL +20%
-
-1.3 تحليل الارتباط السعري:
-• Forex: مؤشر الدولار، العملات المرتبطة، السندات
-• Stocks: المؤشر العام، القطاع، أرباح
-• Crypto: BTC، Altcoins، مؤشر الخوف والجشع
-
-💰 المرحلة 2: التحليل الهيكلي
-2.1 تحديد الهيكل: SMC + BOS/CHoCh بدقة
-2.2 استخراج الإحداثيات: High/Low، نسبة الحركة، دقة مطلقة
-2.3 مصفاة التسعير: Discount للشراء، Premium للبيع، مناطق الطوارئ <20%/>80%
-
-💰 المرحلة 3: السيولة والزخم
-3.1 كشف وهم الزخم: فجوات، شموع خبر، ذيول طويلة، V-Reversal
-3.2 خرائط السيولة: Equal Highs/Lows، Inducement، Liquidity Sweeps، FVG
-3.3 انعكاس الزخم المفاجئ: رفض بعد اندفاع، فشل اختراق، انخفاض حجم، دايفرجنس
-
-🎯 المرحلة 4: القرار الذكي
-• POI صالح + نموذج شموعي + سلوك سعري واضح + توافق الاتجاه
-• تعديل المخاطر حسب الأخبار: SL × {news_risk_multiplier}, الحجم ÷ {news_risk_multiplier}
-• حظر كامل: أخبار قوية ±30 دقيقة، زخم وهمي، فشل الفلاتر، V-Reversal، تضارب المؤشرات
-• حل التعارض: الأولوية: الزخم → السيولة → الفجوات → الهيكل → المؤشرات → السياق الزمني
-
-💡 قاعدة كسر العرض بالاندفاع:
-"إذا تعارضت منطقة العرض مع شمعة اندفاعية (Marubozu) تخترق مستويات السيولة، اعتبر المنطقة 'مكسورة' فوراً ولا تقترح البيع إلا بعد إعادة اختبار ناجحة أو فشل اختراق مؤكد (SFP) مع تأكيد من شمعتين."
-
-📊 المرحلة 5: سلوك الشموع
-• استجابة POI: رفض/امتصاص/جانبي، القوة: جسم/ذيول، الحجم
-• قانون 3 شموع: اختبار → تصحيح → اختراق
-• التتابع الزمني: شمعة 1 رد فعل، شمعة 2 تأكيد، شمعة 3 قرار
-
-📉 المرحلة 6: MACD المحسن
-• 1-5 دقائق: تجاهل التقاطعات البطيئة ودايفرجنس عند تعارضها مع زخم قوي
-• 15-60 دقائق: خط الصفر + دايفرجنس عند POI
-• حل التعارض: سلوك سعري واضح → تجاهل MACD
-
-⏰ المرحلة 7: تعدد الإطارات
-• HTF: الاتجاه العام، MTF1: العرض/الطلب، MTF2: OB نشطة، LTF: الدخول
-• توافق: 4/4=+40, 3/4=+30, 2/4=تقليل حجم 50%, 1/4=منع الدخول
-• استراتيجية: شراء = HTF صاعد → تصحيح → OB → إشارة، بيع = HTF هابط → ارتداد → OB → إشارة
-
-🎯 المرحلة 8: درجات الثقة (معدلة)
-• + نقاط: زخم قوي (9-10) ×2 = +40، POI +25، نموذج شموعي +20، سلوك واضح +25، توافق الإطارات +30، حجم أعلى +15، أخبار هادئة +20، BOS +30، تغطية فجوة +15، اختراق مع بداية ساعة جديدة +25
-• - خصومات: تعارض مؤشرات -20، أخبار قوية -25، زخم وهمي -15، V-Reversal قريب -30، سيولة OTC منخفضة -10، بيع فوق 50% من موجة صاعدة بدون دخول Premium -40
-• مستويات: 95-100 💥💥, 85-94 💥, 70-84 🔥, 55-69 ⚡, 40-54 ❄️, <40 🚫
-
-📊 المرحلة 9: الحجم المتقدم
-• اختراق >150%, امتصاص: حجم عالي + حركة محدودة
-• تصحيح <70%, انعكاس: حجم مرتفع مفاجئ
-• نقاط التحكم: POC = دعم/مقاومة, VA 70% توازن, EVA خارج VA = قوة
-
-🔄 المرحلة 10: إدارة الصفقات
-• Long: TP1 SL للتعادل +40%, TP2 أعلى شمعة +30%, TP3 30% بترايل
-• Short: نفس النمط
-• OTC حماية: SL +20%, بعد 3 شموع، حجم 33/33/34
-
-🧠 المرحلة 11: التحليل السلوكي والتلاعب
-• الخوف، الجشع، التردد، الاستسلام
-• التلاعب: Liquidity Sweep, Stop Hunt, False Breakout, Bait Pattern
-• سلوك OTC: نمط 3 مرات، اختراقات محددة، شمعة تغير السياق، أوامر معلقة
-• التمييز: ذيل + عودة = فخ, جسم كامل + إغلاق = BOS
-
-⚠️ المرحلة 12: تثبيت القرار النهائي
-1. قرار ثابت لكل صورة متطابقة
-2. لا تغيير إلا عند تغير واضح في الشارت
-3. تأكيد مزدوج: القرار صحيح عند ظهور مرتين بنفس المعطيات
-4. تحقق من كل الأسعار والمستويات في الصورة بدقة
-
-🎯 **النظام الزمني الذكي - حساب وقت الوصول:**
-
-**🔧 إعدادات النظام الحالية:**
-• إطار الشموع: {candle} (تم ضبطه من قبل المستخدم)
-• استراتيجية التداول: {trading_strategy}
-• جلسة السوق: {session_name} ({session_time})
-• وقت التحليل الفعلي: {gaza_time.strftime('%H:%M:%S بتوقيت غزة')}
-
-**📊 المرحلة 1 - استخراج البيانات من الصورة:**
-1. ابحث عن ساعة المنصة في الشارت (عادة في الزاوية اليسرى/اليمنى السفلى)
-2. سجل **الوقت الحالي** الذي تراه على الشارت: [ساعة:دقيقة:ثانية]
-3. قدّر **المسافة البصرية** بين السعر الحالي والهدف (بعدد النقاط)
-4. انظر إلى **آخر 3 شموع** واحسب متوسط حركتها (نقاط/شمعة)
-5. **عدد الشموع المطلوبة = المسافة ÷ متوسط حركة الشمعة**
-
-**📋 البيانات المطلوبة من الصورة:**
-• **الوقت على الشارت:** [مثال: 14:25:30]
-• **المسافة للهدف:** [عدد النقاط] نقطة
-• **متوسط حركة الشموع:** [نقاط/شمعة]
-• **الشموع المتوقعة:** [النتيجة] شمعة
-
-**🧮 المرحلة 2 - الحساب الذكي (مع ربط الفريم):**
-1. **فريم الشموع:** {candle}
-2. **مدة كل شمعة:** {{
-    'S5': '5 ثواني',
-    'S10': '10 ثواني', 
-    'S15': '15 ثواني',
-    'S30': '30 ثانية',
-    'M1': '1 دقيقة',
-    'M2': '2 دقيقة',
-    'M3': '3 دقائق',
-    'M5': '5 دقائق',
-    'M10': '10 دقائق',
-    'M15': '15 دقيقة',
-    'M30': '30 دقيقة',
-    'H1': '1 ساعة',
-    'H4': '4 ساعات',
-    'D1': '1 يوم'
-}}.get('{candle}', '{candle}')
-
-3. **المعادلة:**
-   وقت الوصول = الوقت من الشارت + (عدد الشموع × مدة الشمعة)
-
-4. **تطبيق إعدادات المستخدم:**
-   - الفريم: {candle}
-   - الإستراتيجية: {trading_strategy}
-   - حجم الصفقة: {position_sizing}
-
-⏰ **مطلوب منك إضافة قسم "التوقيت الذكي" في تحليلك:**
-
-**🕐 التحليل الزمني المتقدم:**
-• الوقت على المنصة: [أدخل الوقت من الصورة]
-• الفريم المستخدم: {candle}
-• المسافة المقدرة: [X] نقطة
-• سرعة الشموع: [Y] نقطة/شمعة
-• الشموع المتوقعة: [Z] شمعة من نوع {candle}
-
-**🎯 نتائج التوقيت:**
-• وقت البداية (من الشارت): [الوقت]
-• مدة الشمعة الواحدة: [تحويل {candle} إلى زمن]
-• وقت الوصول المتوقع: **[ساعة:دقيقة:ثانية بضبط]**
-• المدة الإجمالية: [تحويل إلى دقائق/ثواني]
-
-**🚀 التوصية الزمنية العملية:**
-"بناءً على سرعة الشموع في فريم **{candle}** واستراتيجية **{trading_strategy}**، السعر يحتاج **[عدد الشموع]** شمعة (≈[الزمن]) للوصول للهدف. التوقيت الأمثل للوصول: **[وقت الوصول]** - إبدأ العد التنازلي الآن!"
-
-**💡 ملاحظة هامة:**
-تأكد من أن الوقت الذي تستخرجه من الصورة يتوافق مع توقيت **{gaza_time.strftime('%H:%M:%S بتوقيت غزة')}**. إذا كان هناك فارق زمني، قم بضبط الحساب وفقاً لذلك.
-
-📊 المعطيات الفنية:
-• إطار الزمن الحالي: {candle} ({candle_category})
-• فريم التحقق: {verification_timeframe} (مخصص للتحقق من كسر الهيكل)
-• استراتيجية التداول: {trading_strategy}
-• جلسة السوق: {session_name} ({session_time})
-• حالة السيولة: {session_vol}
-• تأثير الأخبار: {news_impact} (معامل ×{news_risk_multiplier})
-• حالة دقيقة الغدر: {last_minute_status}
-• {candle_closing_status}
-• توقيت التحليل: {gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}
-• المستوى: Professional باك تيست 15000 صفقة
-
-🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصر:
-
-📊 التحليل الفني المتقدم:
-• البصمة الزمنية: {kill_zone_status}
-• تطبيق قانون الفتيلة: [نعم/لا] - نسبة الذيل: [٪]
-• رقم مستدير قريب: [السعر مع المسافة]
-• حالة الهيكل: (صاعد/هابط) + (توافق 4/4 إطارات: نعم/لا)
-• خريطة السيولة: (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
-• الفجوات السعرية: (المناطق التي سيعود السعر لتغطيتها)
-• ذاكرة السياق: (ملاحظات من التحليل السابق إذا وجدت)
-
-🎯 الإشارة التنفيذية:
-• السعر الحالي: [السعر الدقيق من الشارت]
-• حالة الشمعة: [مفتوحة / مغلقة] - الوقت المتبقي: [{seconds_remaining} ثانية]
-• القرار الفني: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡) 
-• قوة الإشارة: (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
-• نقطة الدخول: [السعر الدقيق بناءً على OB + شرط الإغلاق]
-• الأهداف الربحية:
-🎯 TP1: [سحب أول سيولة داخلية], [احتمالية الوصول]
-🎯 TP2: [الهدف الرئيسي - منطقة عرض/طلب قوية]
-🎯 TP3: [سيولة خارجية أو سد فجوة سعرية]
-• وقف الخسارة: [السعر مع 3 طبقات حماية]
-• المدة المتوقعة: [عدد الدقائق] (بناءً على معادلة الزخم السعري)
-• وقت الذروة المتوقع: [مثلاً: خلال الـ 3 شموع القادمة]
-• الحالة النفسية: [خوف 🥺 / جشع 🤑 / تردد 🤌 / استسلام 👎]
-• علامات التلاعب: [موجودة ✔️ / غير موجودة ❎]
-
-⚠️ إدارة المخاطر:
-• مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
-• نقطة الإلغاء: [السعر الذي يفسد التحليل]
-• فريم التحقق: {verification_timeframe} (للتأكد من كسر الهيكل الحقيقي)
-
-الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
-"""
-        
-        headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
-        
-        # --- الخطوة 1: التحليل الأولي الأساسي ---
-        await wait_msg.edit_text("استنى شويه قاعد بحلل 🤌...")
-        
-        payload_1 = {
-            "model": MISTRAL_MODEL,
-            "messages": [
-                {
-                    "role": "user", 
-                    "content": [
-                        {"type": "text", "text": MAIN_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
-                    ]
-                }
-            ],
-            **GENERATION_CONFIG
-        }
-        
-        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
-        
-        if response_1.status_code != 200:
-            print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
-            raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
-        
-        initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
-        
-        # --- الخطوة 2: التدقيق والتحسين الثاني ---
-        await wait_msg.edit_text("استنى شويه اخر لمسات 🤌...")
-        
-        # برومبت التدقيق المحدث
-        AUDIT_PROMPT = f"""
-وظيفتك الأساسية هي البحث عن تناقض بين الأسعار المذكورة في التحليل الأول وبين الأرقام الظاهرة في الصورة. إذا وجد التحليل الأول سعراً مختلفاً بينما الصورة تظهر السعر عند مختلف، قم بتصحيح كافة الأهداف بناءً على أرقام الصورة حصراً.
-مهمة: إجراء تدقيق عالي الدقة للأصل المالي
-
--خطوات التنفيذ :
-
-- الهيكل الداخلي: حدد الهيكل السوقي (BOS / ChOCH / MSS) والمنطقة (Premium / Discount)
-
-- خريطة السيولة: حدد السيولة الداخلية (Equal Highs/Lows) والخارجية (Stop Loss Clusters)، وابحث عن مسح السيولة قبل أي انعكاس
-
-- كشف عدم الكفاءة: حدد أهم فجوة سعرية (FVG) أو فجوة انعكاس (Inversion FVG) وهل تعمل كمغناطيس أو دعم
-
-- تدفق الأوامر: حدد كتلة الأوامر (Order Block) أو كتلة الكسر (Breaker Block) مع تأكيد حجم تداول عالي
-
-- تدقيق الزخم: حلل حركة أجسام الشموع، وإذا اقترب السعر من رقم نفسي مستدير (.000, .500, .200, .800) أعط الأولوية لتأثير المغناطيس
-
--التوجيه النهائي:
-- إذا كان الإعداد غامضاً: "NO CLEAR SETUP - STAND ASIDE"
-- إذا كان الاحتمال عالياً: [الاتجاه]، [منطقة الدخول]، [المنطق]
-- كن دقيقاً جداً، لا تخمن مستويات الأسعار
-
- 5. قاعدة التكذيب: إذا ذكر التحليل الأول أن السعر عند (X) ولكنك ترى بوضوح بالعين أن الشمعة تلامس خطاً مختلفاً على المحور Y، اضرب بالتحليل الأول عرض الحائط واعتمد إحداثيات الصورة فقط.
-
- أنت محلل فني خبير في SMC + ICT + Wyckoff + Volume Profile + Market Psychology. مهمتك: تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية متعددة الطبقات.
-
-*التحليل الأولي:* {initial_analysis}
-
-📊 القوانين الجديدة الإلزامية:
-1. قانون الفتيلة: ذيل >60% = انعكاس قوي
-2. قانون الزخم: 3 شموع متتالية = استمرار الاتجاه
-3. قانون الأرقام: رقم مستدير = مغناطيس
-4. قانون الفجوات: سعر → فجوة → فجوة → ارتداد
-
-📊 الخوارزميات المتقدمة والمكملة الإلزامية (دون نقصان):
-
-أ. "فخ القمة المزدوجة في الـ OTC": في الـ OTC، القمم المتساوية (Equal Highs) ليست مقاومات، بل هي "بنزين" للصعود. إذا رأيت قمتين متساويتين والسعر يقترب منهما بـ 3 شموع خضراء، احذر البيع. السعر سيقوم بـ 'Stop Hunt' (اختراق سريع) لضرب الستوب لوز ثم يكمل صعوده أو يرتد لاحقاً. الدخول يكون مع الاختراق وليس ضده.
-
-ب. "التدقيق البكسلي للمحور Y" (Precision Y-Axis): أنت ملزم بمطابقة ذيل الشمعة مع الرقم المقابل له على المسطرة اليمنى بدقة. إذا كان الذيل يلمس 0.18877، فلا تقرب الهدف لـ 0.18880؛ استخدم الرقم الفعلي لحساب الفجوة السعرية (FVG) بدقة.
-
-ج. "السيولة المغناطيسية" (Magnet Liquidity): السعر يتحرك دائماً من "سيولة داخلية" (فجوة) إلى "سيولة خارجية" (قمة/قاع). عندما يغلق السعر فوق فجوة (FVG) هابطة، تصبح هذه الفجوة 'دفعاً' (Propulsion). الهدف القادم حتماً هو القمة السابقة (Old High). لا تقترح أي صفقة بيع طالما لم يتم لمس القمة الخارجية.
-
-د. "إغلاق الثغرة الأمنية" (The Safety Gap Rule): إذا تم تغطية مسار هابط استغرق 10 دقائق بصعود استغرق دقيقتين فقط، فهذا ليس مجرد صعود، بل هو 'اندفاع مؤسسي' (Institutional Drive). في هذه الحالة، يُمنع البيع حتى لو ظهرت شمعة حمراء صغيرة، لأنها ستكون مجرد 'توقف مؤقت' (Rest Point) قبل انفجار ثانٍ.
-
-ه. "كشف الفتيلة الكاذبة" (False Wick Detection): إذا ترك السعر ذيلاً طويلاً (Wick) ثم أغلقت الشمعة التالية فوق منتصف هذا الذيل، فهذا يعني أن الذيل كان 'سحباً للسيولة' وليس رفضاً. القرار: استمرار مع الاتجاه وليس الانعكاس.
-
-و. "وقت انتهاء الصلاحية" (The 5-Minute Fatigue): في الـ OTC، الزخم غالباً ما يتعب بعد 5 شموع متتالية من نفس اللون. عند عد 5 شموع خضراء ممتلئة متتالية، ابدأ بالبحث عن 'شمعة المنهك' (Exhaustion Candle) وهي شمعة كبيرة جداً بشكل مبالغ فيه (أكبر بـ 3 مرات من سابقاتها). هذه هي اللحظة الوحيدة التي يُسمح فيها بتوقع ارتداد قصير.
-
-ز. "الاندفاع الانتحاري" (The Climax Rule): إذا زاد حجم جسم الشمعة الحالية عن 200% من متوسط حجم آخر 5 شموع وهي تقترب من مستوى سيولة، فهذا يسمى 'اندفاع الذروة'. لا تدخل عكسه أبداً حتى يكتمل المسح بالكامل (Full Sweep) وتظهر شمعة رفض واضحة.
-
-ح. "التوقيت الصفري" (The Zero-Second Filter): يُحظر إصدار إشارة دخول في الثواني (00-05) من بداية الدقيقة الجديدة، أو الثواني (55-59) من نهاية الدقيقة، بسبب تذبذب الخوارزمية لتعديل السعر عند هذه النقاط.
-
-ط. "الفجوة المكسورة" (The Inversion Logic): أي منطقة عرض (Supply) يتم اختراقها بشمعة اندفاعية (Marubozu) تتحول فوراً إلى منطقة طلب (Demand). إذا عاد السعر ليلمسها، فالقرار هو شراء مع الاتجاه الجديد، وليس البيع منها مرة أخرى.
-
-ي. "إعادة اختبار الفراغ" (FVG Rejection): عندما يعود السعر لفجوة (FVG) هابطة بشمعة اندفاعية خضراء ولا يحترمها (أي لا يرتد منها للأسفل)، فهذا يسمى Inversion FVG. بمجرد إغلاق شمعة دقيقة فوق منتصف الفجوة الهابطة، تتحول وظيفة هذه المنطقة من "مقاومة للبيع" إلى "منصة إطلاق للشراء".
-
-ك. "تزامن الوقت مع الرقم المستدير" (Kill-Zone Timing): في الـ OTC، الدقائق التي تنتهي بـ (5، 10، 15، 30، 45) هي دقائق "تعديل المراكز". إذا كان السعر قريباً من رقم مستدير (مثل 0.18900) عند الدقيقة 44 أو 59، فإنه سيقوم بـ "قفزة انتحارية" للمس الرقم قبل إغلاق الشمعة الكبيرة.
-
-ل. "ثبات الحجم البصري" (Visual Volume Stability): إذا كانت الشمعة الصاعدة تفتقر للذيل العلوي (Flat Top)، فهذا يعني أن ضغط الشراء لم ينتهِ بعد، ولا يوجد بائعون تجرأوا على الدخول. ممنوع البيع حتى تظهر أول شمعة بـ 'ذيل علوي' يمثل 30% من حجمها.
-
-م. "قفل الأمان للزخم" (The Momentum Deadlock): إذا رصدت 3 شموع متتالية بنفس اللون بجسم يمثل >80% من حجم الشمعة، يُحظر تماماً إصدار إشارة عكسية. في هذه الحالة، تتحول المهمة من 'توقع الانعكاس' إلى 'تحديد أقرب هدف مغناطيسي (Liquidity/Round Number)' والمطالبة باللحاق بالاتجاه.
-
-ن. "كشف كسر الحقيقة" (The Truth-Break Detection): عند حدوث هبوط ثم صعود مفاجئ (V-Shape)، قارن حجم شمعة الارتداد بآخر شموع الهبوط. إذا ابتلعت الشمعة الخضراء آخر شمعتين حمراوين، اعتبر الهبوط السابق 'Stop Hunt' (فخ سيولة) وألغِ جميع مستويات المقاومة القريبة؛ السعر الآن في وضع اندفاع مؤسسي.
-
-س. "قاعدة الرقم المستدير كهدف" (Round Number Target Logic): في سوق الـ OTC، الأرقام المستديرة (مثل 0.18900) هي أهداف وليست مقاومات. لا تعطي إشارة ارتداد من الرقم المستدير إلا بعد أن يتم اختراقه بـ 'ذيل' (Wick) ثم العودة للإغلاق دونه. قبل ذلك، الهدف هو لمس الرقم.
-
-ع. قواعد المعايرة الذاتية (Self-Calibration):
-1. تفضيل الزخم: في حال التعارض بين 'منطقة عرض' (SMC) و 'اندفاع قوي' (OTC Momentum)، يفوز الزخم دائماً. لا تقترح البيع إلا بعد ظهور CHoCh واضح على فريم أصغر.
-2. قاعدة الـ V-Shape: أي هبوط يتم استرداده فوراً بنسبة >100% يعتبر فخاً. الهدف القادم هو القمة التي تليها مباشرة.
-3. ميزان القوى: قارن حجم الشموع الخضراء بالحمراء في آخر 10 دقائق؛ اللون المسيطر حجماً هو الذي يحدد اتجاه صفقاتك حتى لو كان الهيكل عكس ذلك.
-
-📊 المستوى 1: التحليل الاستراتيجي
-• الهيكل العام: موجات إيليوت + BOS/CHoCh
-• مرحلة Wyckoff: Accumulation/Markup/Distribution/Decline
-• السياق الزمني: توافق {verification_timeframe} مع {candle}
-• السوق: {session_name} - {session_vol} سيولة
-
-⚡ المستوى 2: التحليل التكتيكي
-• الشموع: 5 شموع سابقة + الحالية
-• Order Blocks: آخر 3 مناطق طلب/عرض
-• FVG Tracking: فجوات غير مغطاة ≤50 نقطة
-• Liquidity Map: Equal Highs/Lows + Inducement
-
-🎯 المستوى 3: التحليل التنفيذي
-• Entry Triggers: شمعة إغلاق + حجم
-• Risk Matrix: RR ديناميكي × {news_risk_multiplier}
-• Position Sizing: {position_sizing}
-• Timing Precision: دخول/خروج بالثواني
-
-🎯 النظام الزمني الذكي - حساب وقت الوصول:
-
-*🔧 إعدادات النظام الحالية:*
-• إطار الشموع: {candle} (تم ضبطه من قبل المستخدم)
-• استراتيجية التداول: {trading_strategy}
-• جلسة السوق: {session_name} ({session_time})
-• وقت التحليل الفعلي: {gaza_time.strftime('%H:%M:%S بتوقيت غزة')}
-
-📊 المرحلة 1 - استخراج البيانات من الصورة:
-1. ابحث عن ساعة المنصة في الشارت (عادة في الزاوية اليسرى/اليمنى السفلى)
-2. سجل الوقت الحالي الذي تراه على الشارت: [ساعة:دقيقة:ثانية]
-3. قدّر المسافة البصرية بين السعر الحالي والهدف (بعدد النقاط)
-4. انظر إلى آخر 3 شموع واحسب متوسط حركتها (نقاط/شمعة)
-5. عدد الشموع المطلوبة = المسافة ÷ متوسط حركة الشمعة
-
-📋 البيانات المطلوبة من الصورة:
-• الوقت على الشارت: [مثال: 14:25:30]
-• المسافة للهدف: [عدد النقاط] نقطة
-• متوسط حركة الشموع: [نقاط/شمعة]
-• الشموع المتوقعة: [النتيجة] شمعة
-
-🧮 المرحلة 2 - الحساب الذكي (مع ربط الفريم):
-1. فريم الشموع: {candle}
-2. مدة كل شمعة: {{
- 'S5': '5 ثواني',
- 'S10': '10 ثواني',
- 'S15': '15 ثواني',
- 'S30': '30 ثانية',
- 'M1': '1 دقيقة',
- 'M2': '2 دقيقة',
- 'M3': '3 دقائق',
- 'M5': '5 دقائق',
- 'M10': '10 دقائق',
- 'M15': '15 دقيقة',
- 'M30': '30 دقيقة',
- 'H1': '1 ساعة',
- 'H4': '4 ساعات',
- 'D1': '1 يوم'
-}}.get('{candle}', '{candle}')
-
-3. المعادلة:
- وقت الوصول = الوقت من الشارت + (عدد الشموع × مدة الشمعة)
-
-4. تطبيق إعدادات المستخدم:
- - الفريم: {candle}
- - الإستراتيجية: {trading_strategy}
- - حجم الصفقة: {position_sizing}
-
-⏰ مطلوب منك إضافة قسم "التوقيت الذكي" في تحليلك:
-
-🕐 التحليل الزمني المتقدم:
-• الوقت على المنصة: [أدخل الوقت من الصورة]
-• الفريم المستخدم: {candle}
-• المسافة المقدرة: [X] نقطة
-• سرعة الشموع: [Y] نقطة/شمعة
-• الشموع المتوقعة: [Z] شمعة من نوع {candle}
-
-🎯 نتائج التوقيت:
-• وقت البداية (من الشارت): [الوقت]
-• مدة الشمعة الواحدة: [تحويل {candle} إلى زمن]
-• وقت الوصول المتوقع: [ساعة:دقيقة:ثانية بضبط]
-• المدة الإجمالية: [تحويل إلى دقائق/ثواني]
-
-🚀 التوصية الزمنية العملية:
-"بناءً على سرعة الشموع في فريم {candle} واستراتيجية {trading_strategy}، السعر يحتاج [عدد الشموع] شمعة (≈[الزمن]) للوصول للهدف. التوقيت الأمثل للوصول: [وقت الوصول] - إبدأ العد التنازلي الآن!"
-
-💡 ملاحظة هامة:
-تأكد من أن الوقت الذي تستخرجه من الصورة يتوافق مع توقيت {gaza_time.strftime('%H:%M:%S بتوقيت غزة')}. إذا كان هناك فارق زمني، قم بضبط الحساب وفقاً لذلك.
-
-
-🛡️ طبقات الحماية
-1. فلتر الأخبار: {news_warning if news_warning else "✅ آمن"}
-2. Kill Zone: {kill_zone_status}
-3. فلتر دقيقة الغدر: {last_minute_status}
-4. حاجز السيولة: لا دخول عكس FVG غير مغطاة
-5. أرقام مستديرة: منع دخول ±5 نقاط بدون CHoCh
-6. توقيت إغلاق الشمعة: {candle_closing_status}
-
-⚡ قواعد سريعة
-• REJECTION ENTRY: ذيل طويل + إغلاق داخل النطاق
-• MOMENTUM FOLLOW: 3 شموع قوية → استمرار الاتجاه
-• GAP FILLING: تحرك من فجوة إلى فجوة قبل الارتداد
-• LAST MINUTE RULE: تجاهل انعكاسات الدقيقة 29/59/14/44
-
-🔍 أمر التدقيق:
-1. تحقق من كل سعر ومستوى مذكور في التحليل مع الصورة بدقة بكسلية
-2. تأكد من تطبيق جميع القواعد التالية:
- - فلتر المسافة الذهبية: إذا كان السعر قريب من رقم مستدير (<0.00010)، فالقرار يجب أن يكون متابعة الزخم
- - فلتر الأرقام المستديرة: فريم التحقق = {verification_timeframe}
- - قاعدة المغناطيس للفجوات
- - ميزان القوى (الهيكل vs الزخم)
- - قاعدة التنبيه من الفجوات السعرية
-3. تحقق من صحة:
- • الأسعار الدقيقة من المحور اليمني
- • مناطق FVG والحاجة لتغطيتها
- • تطابق الهيكل مع مرحلة وايكوف
- • صحة قوة الإشارة بناءً على النقاط المحسوبة
-4. صحح أي أخطاء في:
- • تحديد السعر الحالي
- • نقاط الدخول والخروج
- • مستويات الثقة
- • مدة الصفقة المتوقعة
-
-*تذكر:* يجب أن يكون تدقيقك موضوعياً ويعتمد على الصورة فقط. لا تخترع أسعاراً أو مستويات غير موجودة.
-
-📊 المعطيات الفنية:
-• الإطار الحالي: {candle} ({candle_category})
-• فريم التحقق: {verification_timeframe}
-• استراتيجية التداول: {trading_strategy}
-• جلسة السوق: {session_name} ({session_time}), السيولة: {session_vol}
-• تأثير الأخبار: {news_impact} ×{news_risk_multiplier}
-• حالة دقيقة الغدر: {last_minute_status}
-• توقيت إغلاق الشمعة: {candle_closing_status}
-• توقيت التحليل: {gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}
-• المستوى: Professional باك تيست 15000 صفقة
-
-🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصرآ:
-
-📊 التحليل الفني المتقدم:
-• البصمة الزمنية: {kill_zone_status}
-• تطبيق قانون الفتيلة: [نعم/لا] - نسبة الذيل: [٪]
-• حالة الهيكل: (صاعد/هابط) + (توافق 4/4 إطارات: نعم / لا )
-• خريطة السيولة: (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
-• الفجوات السعرية: (المناطق التي سيعود السعر لتغطيتها)
-
-🎯 الإشارة التنفيذية:
-• مقارنة مع التحليل السابق: [✅ مطابق تماماً / ⚡ محسن / ❌ مصحح]، درجة التشابه: [0–100]%
-• السعر الحالي: [ السعر الدقيق من الشارت ]
-• حالة الشمعة: [مفتوحة / مغلقة] - الوقت المتبقي: [{seconds_remaining} ثانية]
-• القرار الفني: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡)
-• قوة الإشارة: (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
-• نقطة الدخول: [السعر الدقيق بناءً على OB + شرط الإغلاق]
-• الأهداف الربحية:
-🎯 TP1: [سحب أول سيولة داخلية], [احتمالية الوصول]
-🎯 TP2: [الهدف الرئيسي - منطقة عرض/طلب قوية]
-🎯 TP3: [سيولة خارجية أو سد فجوة سعرية]
-• وقف الخسارة: [السعر مع 3 طبقات حماية]
-• المدة المتوقعة: [عدد الدقائق] (بناءً على معادلة الزخم السعري)
-• وقت الذروة المتوقع: [مثلاً: خلال الـ 3 شموع القادمة]
-• الحالة النفسية: [خوف 🥺 / جشع 🤑 / تردد 🤌 / استسلام 👎]
-• علامات التلاعب: [موجودة ✔️ / غير موجودة ❎]
-
-⚠️ إدارة المخاطر:
-• مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
-• نقطة الإلغاء: [السعر الذي يفسد التحليل]
-
-الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط، بدون أي نص إضافي أو تفسيرات خارج الهيكل.
-"""
-        
-        payload_2 = {
-            "model": MISTRAL_MODEL_AUDIT,
-            "messages": [
-                {
-                    "role": "user", 
-                    "content": [
-                        {"type": "text", "text": AUDIT_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
-                    ]
-                }
-            ],
-            "max_tokens": 950,
-            "temperature": 0.2,
-            "top_p": 1.0,
-            "random_seed": 42
-        }
-        
-        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
-        
-        if response_2.status_code == 200:
-            audit_result = response_2.json()['choices'][0]['message']['content'].strip()
-        else:
-            print(f"Obeida Vision Warning (Model 2): {response_2.status_code} - استخدام التحليل الأول")
-            audit_result = f"📋 **ملاحظة:** تعذر التدقيق - استخدام التحليل الأولي مباشرة\n\n{initial_analysis}"
-        
-        # تنظيف النصوص من التكرار
-        audit_result = clean_repeated_text(audit_result)
-        
-        # حفظ سياق التحليل في قاعدة البيانات
-        save_analysis_context(user_id, audit_result)
+        # ⬅️ استخدام الدالة الموحدة للتحليل
+        analysis_result = await analyze_chart_image_single_call(
+            compressed_path, 
+            candle, 
+            trade_time, 
+            "شارت المستخدم",
+            user_id
+        )
         
         keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
-        # تنسيق وقت الصفقة للعرض
-        time_display = format_trade_time_for_prompt(trade_time)
-        
-        # إعداد النص النهائي
-        full_result = (
-            f"✅ **تم التحليل  صفقتك بنجاح** ✅\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"{audit_result}\n\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"🔧 **الإعدادات المستخدمة:**\n"
-            f"•🕧 فريم التحقق للكسر: {verification_timeframe}\n"
-            f"•🕧 جلسة السوق: {session_name} ({session_time})\n"
-            f"━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Powered by - Obeida Trading**"
-        )
-        
-        # تنظيف النهائي من التكرارات
-        full_result = clean_repeated_text(full_result)
-        
         # تقسيم النتيجة إذا كانت طويلة
-        if len(full_result) > 4000:
-            parts = split_message(full_result, max_length=4000)
+        if len(analysis_result) > 4000:
+            parts = split_message(analysis_result, max_length=4000)
             
             # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
             await wait_msg.edit_text(
@@ -2268,7 +1290,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
                 await update.message.reply_text(part, parse_mode="Markdown")
         else:
             await wait_msg.edit_text(
-                full_result,
+                analysis_result,
                 parse_mode="Markdown"
             )
         
@@ -2286,7 +1308,7 @@ LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/4
         await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
     finally:
         # تنظيف الملفات المؤقتة
-        for filepath in [original_path, compressed_path]:
+        for filepath in [original_path]:
             if os.path.exists(filepath):
                 try:
                     os.remove(filepath)
@@ -2651,4 +1673,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-  
