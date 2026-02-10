@@ -570,7 +570,7 @@ async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAUL
     await update.message.reply_text(
         "🚀 **نظام التوصيات**\n\n"
         "اختر القسم المطلوب من الأزرار:",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
     )
     return RECOMMENDATION_MODE
 
@@ -673,7 +673,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
                     
                     await update.message.reply_text(
                         "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-                        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+                        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
                     )
                     return RECOMMENDATION_MODE
                 
@@ -734,7 +734,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
         
         await update.message.reply_text(
             "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         return RECOMMENDATION_MODE
     
@@ -745,7 +745,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
         
         await update.message.reply_text(
             "🔙 **العودة للقائمة الرئيسية للتوصيات**\nاختر القسم المطلوب:",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         return RECOMMENDATION_MODE
     
@@ -753,7 +753,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     await update.message.reply_text(
         "❌ خيار غير موجود. يرجى اختيار عملة من القائمة الظاهرة في الأزرار.\n\n"
         "اضغط 'الرجوع للقائمة الرئيسية' للعودة.",
-        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True)
+        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True, one_time_keyboard=False)
     )
     return RECOMMENDATION_MODE
 
@@ -1224,7 +1224,7 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
     
     await update.message.reply_text(
         "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
     )
     return RECOMMENDATION_MODE
 
@@ -2845,3 +2845,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+    
