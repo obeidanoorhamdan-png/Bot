@@ -160,20 +160,104 @@ def download_chart_image(symbol="BTCUSDT"):
         API_KEY = "c94425"
         
         # تحويل اسم الرمز إلى تنسيق TradingView
-        if symbol == "BTC (OTC)":
-            chart_symbol = "BINANCE:BTCUSDT"
-        elif symbol == "EUR/USD (OTC)":
+        if symbol == "EUR/USD (OTC)":
             chart_symbol = "FX:EURUSD"
+        elif symbol == "GBP/USD (OTC)":
+            chart_symbol = "FX:GBPUSD"
+        elif symbol == "USD/JPY (OTC)":
+            chart_symbol = "FX:USDJPY"
+        elif symbol == "USD/CHF (OTC)":
+            chart_symbol = "FX:USDCHF"
+        elif symbol == "AUD/USD (OTC)":
+            chart_symbol = "FX:AUDUSD"
+        elif symbol == "USD/CAD (OTC)":
+            chart_symbol = "FX:USDCAD"
+        elif symbol == "NZD/USD (OTC)":
+            chart_symbol = "FX:NZDUSD"
+        elif symbol == "EUR/GBP (OTC)":
+            chart_symbol = "FX:EURGBP"
+        elif symbol == "EUR/JPY (OTC)":
+            chart_symbol = "FX:EURJPY"
+        elif symbol == "GBP/JPY (OTC)":
+            chart_symbol = "FX:GBPJPY"
+        elif symbol == "EUR/CHF (OTC)":
+            chart_symbol = "FX:EURCHF"
+        elif symbol == "AUD/JPY (OTC)":
+            chart_symbol = "FX:AUDJPY"
+        elif symbol == "EUR/AUD (OTC)":
+            chart_symbol = "FX:EURAUD"
+        elif symbol == "EUR/CAD (OTC)":
+            chart_symbol = "FX:EURCAD"
+        elif symbol == "GBP/AUD (OTC)":
+            chart_symbol = "FX:GBPAUD"
+        elif symbol == "CAD/JPY (OTC)":
+            chart_symbol = "FX:CADJPY"
+        elif symbol == "CHF/JPY (OTC)":
+            chart_symbol = "FX:CHFJPY"
+        elif symbol == "NZD/JPY (OTC)":
+            chart_symbol = "FX:NZDJPY"
+        elif symbol == "GBP/CHF (OTC)":
+            chart_symbol = "FX:GBPCHF"
+        elif symbol == "AUD/CAD (OTC)":
+            chart_symbol = "FX:AUDCAD"
+        elif symbol == "S&P 500 (OTC)":
+            chart_symbol = "SP:SPX"
+        elif symbol == "Dow Jones (OTC)":
+            chart_symbol = "DJ:DJI"
+        elif symbol == "Nasdaq 100 (OTC)":
+            chart_symbol = "NASDAQ:NDX"
+        elif symbol == "DAX 40 (OTC)":
+            chart_symbol = "GER30"
+        elif symbol == "CAC 40 (OTC)":
+            chart_symbol = "FRA40"
+        elif symbol == "FTSE 100 (OTC)":
+            chart_symbol = "UK100"
+        elif symbol == "Hang Seng (OTC)":
+            chart_symbol = "HK50"
+        elif symbol == "Nikkei 225 (OTC)":
+            chart_symbol = "JPN225"
         elif symbol == "Gold (OTC)":
             chart_symbol = "TVC:GOLD"
+        elif symbol == "Silver (OTC)":
+            chart_symbol = "TVC:SILVER"
+        elif symbol == "UKOIL (OTC)":
+            chart_symbol = "TVC:UKOIL"
         elif symbol == "USOIL (OTC)":
             chart_symbol = "TVC:USOIL"
-        elif "S&P 500 (OTC)" in symbol:
-            chart_symbol = "SP:SPX"
-        elif "Apple (OTC)" in symbol:
+        elif symbol == "Natural Gas (OTC)":
+            chart_symbol = "TVC:NATGAS"
+        elif symbol == "Apple (OTC)":
             chart_symbol = "NASDAQ:AAPL"
-        else:
-            chart_symbol = "BINANCE:BTCUSDT"
+        elif symbol == "Amazon (OTC)":
+            chart_symbol = "NASDAQ:AMZN"
+        elif symbol == "Google (OTC)":
+            chart_symbol = "NASDAQ:GOOGL"
+        elif symbol == "Facebook (OTC)":
+            chart_symbol = "NASDAQ:META"
+        elif symbol == "Microsoft (OTC)":
+            chart_symbol = "NASDAQ:MSFT"
+        elif symbol == "Tesla (OTC)":
+            chart_symbol = "NASDAQ:TSLA"
+        elif symbol == "Netflix (OTC)":
+            chart_symbol = "NASDAQ:NFLX"
+        elif symbol == "Intel (OTC)":
+            chart_symbol = "NASDAQ:INTC"
+        elif symbol == "Boeing (OTC)":
+            chart_symbol = "NYSE:BA"
+        elif symbol == "Visa (OTC)":
+            chart_symbol = "NYSE:V"
+        elif symbol == "McDonald's (OTC)":
+            chart_symbol = "NYSE:MCD"
+        elif symbol == "Pfizer (OTC)":
+            chart_symbol = "NYSE:PFE"
+        elif symbol == "Coca-Cola (OTC)":
+            chart_symbol = "NYSE:KO"
+        elif symbol == "Disney (OTC)":
+            chart_symbol = "NYSE:DIS"
+        elif symbol == "Alibaba (OTC)":
+            chart_symbol = "NYSE:BABA"
+        elif symbol == "Walmart (OTC)":
+            chart_symbol = "NYSE:WMT"
         
         CHART_URL = f"https://www.tradingview.com/chart/?symbol={chart_symbol}&interval=5"
         
