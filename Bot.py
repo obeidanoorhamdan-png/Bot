@@ -70,7 +70,7 @@ IMAGE_QUALITY = 85  # جودة الصورة بعد الضغط (من 0-100)
 if not os.path.exists(IMAGE_CACHE_DIR):
     os.makedirs(IMAGE_CACHE_DIR)
 
-# حالات المحادثة
+# حالات المحادثة - تم إضافة CATEGORY_SELECTION
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
 
 # --- Flask Server ---
@@ -564,19 +564,27 @@ def get_mistral_analysis(symbol):
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء وضع التوصية"""
-    reply_keyboard = [[key] for key in CATEGORIES.keys()]
+    reply_keyboard = []
+    
+    # إنشاء الأزرار بشكل صحيح - صفين في كل صف
+    categories_keys = list(CATEGORIES.keys())
+    for i in range(0, len(categories_keys), 2):
+        row = categories_keys[i:i+2]
+        reply_keyboard.append(row)
+    
     reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
     
     await update.message.reply_text(
         "🚀 **نظام التوصيات**\n\n"
         "اختر القسم المطلوب من الأزرار:",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
     )
     return RECOMMENDATION_MODE
 
 async def handle_recommendation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة اختيارات نظام التوصية مع سحب الصور"""
     user_text = update.message.text.strip()
+    user_id = update.effective_user.id
     
     # العودة للقائمة الرئيسية
     if user_text == "الرجوع للقائمة الرئيسية":
@@ -587,6 +595,21 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
         )
         return MAIN_MENU
     
+    # العودة لقائمة التوصيات الرئيسية
+    elif user_text == "🔙 العودة للقائمة":
+        reply_keyboard = []
+        categories_keys = list(CATEGORIES.keys())
+        for i in range(0, len(categories_keys), 2):
+            row = categories_keys[i:i+2]
+            reply_keyboard.append(row)
+        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "🔙 **العودة للقائمة الرئيسية للتوصيات**\nاختر القسم المطلوب:",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        return RECOMMENDATION_MODE
+    
     # التحقق من الأقسام الرئيسية
     if user_text in CATEGORIES:
         keyboard = [[asset] for asset in CATEGORIES[user_text]]
@@ -596,9 +619,10 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
             f"📍 قسم: {user_text}\nاختر العملة الآن:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         )
+        # تغيير الحالة إلى CATEGORY_SELECTION
         return CATEGORY_SELECTION
     
-    # التحقق من العملة المختارة
+    # التحقق من العملة المختارة (في حالة CATEGORY_SELECTION)
     symbol_to_analyze = None
     for category_list in CATEGORIES.values():
         if user_text in category_list:
@@ -623,43 +647,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
             
             # استخدام الصورة للتحليل الفني
             try:
-                # استدعاء تحليل الصورة
                 await wait_msg.edit_text(f"استنى شويه قاعد أحلل {symbol_to_analyze} 🤌...")
-                
-                # إنشاء كائن تحديث مؤقت للصورة
-                from telegram import PhotoSize
-                
-                # تحميل الصورة ككائن PhotoSize
-                photo_file = await context.bot.get_file(chart_image_path)
-                
-                # إنشاء تحديث مؤقت
-                class TempUpdate:
-                    def __init__(self, original_update, photo_path):
-                        self.effective_user = original_update.effective_user
-                        self.effective_chat = original_update.effective_chat
-                        self.message = TempMessage(photo_path)
-                
-                class TempMessage:
-                    def __init__(self, photo_path):
-                        self.photo = [TempPhotoSize(photo_path)]
-                        self.text = ""
-                
-                class TempPhotoSize:
-                    def __init__(self, file_path):
-                        self.file_path = file_path
-                    
-                    async def get_file(self):
-                        class TempFile:
-                            def __init__(self, path):
-                                self.path = path
-                            
-                            async def download_to_drive(self, destination):
-                                shutil.copy2(self.path, destination)
-                                return destination
-                        
-                        return TempFile(self.file_path)
-                
-                temp_update = TempUpdate(update, chart_image_path)
                 
                 # الحصول على إعدادات المستخدم
                 user_id = update.effective_user.id
@@ -668,18 +656,22 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
                 if not candle or not trade_time:
                     await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
                     
-                    reply_keyboard = [[key] for key in CATEGORIES.keys()]
+                    reply_keyboard = []
+                    categories_keys = list(CATEGORIES.keys())
+                    for i in range(0, len(categories_keys), 2):
+                        row = categories_keys[i:i+2]
+                        reply_keyboard.append(row)
                     reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
                     
                     await update.message.reply_text(
                         "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-                        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
+                        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
                     )
                     return RECOMMENDATION_MODE
                 
                 # تحليل الصورة
                 analysis_result = await analyze_chart_image(
-                    temp_update, 
+                    update, 
                     context, 
                     chart_image_path, 
                     candle, 
@@ -729,23 +721,16 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
             await wait_msg.edit_text(final_msg, parse_mode="Markdown")
         
         # عرض الأزرار للاستمرار
-        reply_keyboard = [[key] for key in CATEGORIES.keys()]
+        reply_keyboard = []
+        categories_keys = list(CATEGORIES.keys())
+        for i in range(0, len(categories_keys), 2):
+            row = categories_keys[i:i+2]
+            reply_keyboard.append(row)
         reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
         
         await update.message.reply_text(
             "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return RECOMMENDATION_MODE
-    
-    # إذا كان النص "🔙 العودة للقائمة"
-    if user_text == "🔙 العودة للقائمة":
-        reply_keyboard = [[key] for key in CATEGORIES.keys()]
-        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            "🔙 **العودة للقائمة الرئيسية للتوصيات**\nاختر القسم المطلوب:",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
         )
         return RECOMMENDATION_MODE
     
@@ -753,7 +738,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     await update.message.reply_text(
         "❌ خيار غير موجود. يرجى اختيار عملة من القائمة الظاهرة في الأزرار.\n\n"
         "اضغط 'الرجوع للقائمة الرئيسية' للعودة.",
-        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True, one_time_keyboard=False)
+        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True)
     )
     return RECOMMENDATION_MODE
 
@@ -1219,12 +1204,16 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
         await wait_msg.edit_text("❌ حدث خطأ في معالجة الصورة. يرجى المحاولة مرة أخرى.")
     
     # عرض خيارات المتابعة
-    reply_keyboard = [[key] for key in CATEGORIES.keys()]
+    reply_keyboard = []
+    categories_keys = list(CATEGORIES.keys())
+    for i in range(0, len(categories_keys), 2):
+        row = categories_keys[i:i+2]
+        reply_keyboard.append(row)
     reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
     
     await update.message.reply_text(
         "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
     )
     return RECOMMENDATION_MODE
 
@@ -1660,7 +1649,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
 🔍 **المرحلة 2: الاستخراج الدقيق (Precision Extraction):**
 1. **الأسعار:** استخدم تقنية التكبير البصري (Zoom-In) لقراءة الأسعار بدقة:
-   - قارن كل ذيل شمعة مع الرقم المقابل على المحور اليميني
+   - قارن كل ذيل شمعة مع الرقم المقابل له على المحور اليميني
    - سجل الأسعار بجميع المنازل العشرية المرئية
    - مثال: إذا كان الذيل يلمس 0.18925، اكتب 0.18925 وليس 0.18930
 
@@ -2045,7 +2034,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 2. **مدة كل شمعة:** {{
     'S5': '5 ثواني',
     'S10': '10 ثواني', 
-    'S15': '15 ثواني',
+    'S15': '15 ثانية',
     'S30': '30 ثانية',
     'M1': '1 دقيقة',
     'M2': '2 دقيقة',
@@ -2204,7 +2193,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 📊 القوانين الجديدة الإلزامية (نسخة شاملة):
 1. قانون "سيادة الزخم على الهيكل" (Momentum Supremacy): إذا رصدت 3 شموع متتالية أو أكثر بنفس اللون، وبأجسام ممتلئة (Marubozu) تزيد مساحتها عن 80% من طولها الإجمالي، يُمنع منعاً باتاً إصدار إشارة انعكاس (Reverse). الزخم المؤسسي يعتبر "قطاراً سريعاً"؛ أي منطقة دعم أو مقاومة سيتم اختراقها كأنها غير موجودة. القرار الإلزامي: "اللحاق بالمغناطيس السعري" حتى يلمس السعر أقرب هدف سيولة خارجي.
 2. قانون الفتيلة: ذيل >60% = انعكاس قوي.
-3. قانون الأرقام المستديرة (Round Number Magnet): الأرقام المستديرة في الـ OTC هي "أهداف" وليست "عوائق". إذا كان السعر يتحرك بزخم عالٍ باتجاه رقم مستدير، تُلغى جميع إشارات الانعكاس قبل ملامسة الرقم فعلياً. الانتظار الإلزامي: لا تدخل عكس الاتجاه إلا بعد أن "يخترق" السعر الرقم المستدير ثم يعود للإغلاق خلفه بفتيلة واضحة (SFP).
+3. قانون الأرقام المستديرة (Round Number Magnet): الأرقام مستديرة في الـ OTC هي "أهداف" وليست "عوائق". إذا كان السعر يتحرك بزخم عالٍ باتجاه رقم مستدير، تُلغى جميع إشارات الانعكاس قبل ملامسة الرقم فعلياً. الانتظار الإلزامي: لا تدخل عكس الاتجاه إلا بعد أن "يخترق" السعر الرقم المستدير ثم يعود للإغلاق خلفه بفتيلة واضحة (SFP).
 4. قانون الفجوات: سعر → فجوة → فجوة → ارتداد.
 5. ميزان القوى الزمني (Time-Based Volatility): في الدقائق الأولى من الساعة الجديدة أو عند إغلاقات الشموع الكبيرة، السعر يبحث عن "توازن جديد". إذا تعارضت إشارة فنية مع بداية ساعة جديدة، الأولوية دائماً لـ "شمعة الغدر" التي تمسح السيولة قبل تحديد الاتجاه الحقيقي.
 6. قاعدة "السكين الساقط": أي هبوط حاد يتم استرداده فوراً بنسبة أقل من 50% من طول الموجة الهابطة يعتبر "تصحيحاً ضعيفاً" يتبعه انهيار أقوى. لا تقترح الشراء (أو البيع في الاتجاه الصاعد) إلا بعد رؤية "تغير في السلوك" (CHoCh) حقيقي.
@@ -2224,7 +2213,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 ل. "ثبات الحجم البصري" (Visual Volume Stability): إذا كانت الشمعة الصاعدة تفتقر للذيل العلوي (Flat Top)، فهذا يعني أن ضغط الشراء لم ينتهِ بعد، ولا يوجد بائعون تجرأوا على الدخول. ممنوع البيع حتى تظهر أول شمعة بـ 'ذيل علوي' يمثل 30% من حجمها.
 م. "قفل الأمان للزخم" (The Momentum Deadlock): إذا رصدت 3 شموع متتالية بنفس اللون بجسم يمثل >80% من حجم الشمعة، يُحظر تماماً إصدار إشارة عكسية. في هذه الحالة، تتحول المهمة من 'توقع الانعكاس' إلى 'تحديد أقرب هدف مغناطيسي (Liquidity/Round Number)' والمطالبة باللحاق بالاتجاه.
 ن. "كشف كسر الحقيقة" (The Truth-Break Detection): عند حدوث هبوط ثم صعود مفاجئ (V-Shape)، قارن حجم شمعة الارتداد بآخر شموع الهبوط. إذا ابتلعت الشمعة الخضراء آخر شمعتين حمراوين، اعتبر الهبوط السابق 'Stop Hunt' (فخ سيولة) وألغِ جميع مستويات المقاومة القريبة؛ السعر الآن في وضع اندفاع مؤسسي.
-س. "قاعدة الرقم المستدير كهدف" (Round Number Target Logic): في سوق الـ OTC، الأرقام المستديرة (مثل 0.18900) هي أهداف وليست مقاومات. لا تعطي إشارة ارتداد من الرقم المستدير إلا بعد أن يتم اختراقه بـ 'ذيل' (Wick) ثم العودة للإغلاق دونه. قبل ذلك، الهدف هو لمس الرقم.
+س. "قاعدة الرقم المستدير كهدف" (Round Number Target Logic): في سوق الـ OTC، الأرقام مستديرة (مثل 0.18900) هي أهداف وليست مقاومات. لا تعطي إشارة ارتداد من الرقم مستدير إلا بعد أن يتم اختراقه بـ 'ذيل' (Wick) ثم العودة للإغلاق دونه. قبل ذلك، الهدف هو لمس الرقم.
 ع. قواعد المعايرة الذاتية (Self-Calibration):
  1. تفضيل الزخم: في حال التعارض بين 'منطقة عرض' (SMC) و 'اندفاع قوي' (OTC Momentum)، يفوز الزخم دائماً. لا تقترح البيع إلا بعد ظهور CHoCh واضح على فريم أصغر.
  2. قاعدة الـ V-Shape: أي هبوط يتم استرداده فوراً بنسبة >100% يعتبر فخاً. الهدف القادم هو القمة التي تليها مباشرة.
@@ -2334,7 +2323,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 1. تحقق من كل سعر ومستوى مذكور في التحليل مع الصورة بدقة بكسلية
 2. تأكد من تطبيق جميع القواعد التالية:
  - فلتر المسافة الذهبية: إذا كان السعر قريب من رقم مستدير (<0.00010)، فالقرار يجب أن يكون متابعة الزخم
- - فلتر الأرقام المستديرة: فريم التحقق = {verification_timeframe}
+ - فلتر الأرقام مستديرة: فريم التحقق = {verification_timeframe}
  - قاعدة المغناطيس للفجوات
  - ميزان القوى (الهيكل vs الزخم)
  - قاعدة التنبيه من الفجوات السعرية
@@ -2822,6 +2811,7 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection),
                 MessageHandler(filters.PHOTO, handle_recommendation_photo)
             ],
+            # أضف هذه الحالة الجديدة
             CATEGORY_SELECTION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection)
             ],
@@ -2845,5 +2835,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
     
