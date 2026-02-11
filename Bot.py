@@ -413,7 +413,7 @@ def encode_image(image_path):
         print(f"Error encoding image: {e}")
         return None
 
-# --- دوال المساعدة للتعامل مع النصوص ---
+# --- دوال المساعدة للتعامل مع النصوص وتحسين النسخ ---
 def clean_repeated_text(text):
     """تنظيف النص من التكرارات وتحسين التنسيق - الإصدار المحسّن"""
     if not text:
@@ -445,8 +445,51 @@ def clean_repeated_text(text):
     
     return text
 
+def format_as_copyable_code(text, language="markdown"):
+    """تنسيق النص على شكل Code Block قابل للنسخ بنقرة واحدة"""
+    # تنظيف النص من أي تنسيق Markdown زائد
+    text = clean_repeated_text(text)
+    
+    # إزالة أي محاولات سابقة لتنسيق code block
+    text = re.sub(r'```[\w]*\n?', '', text)
+    text = re.sub(r'```\n?', '', text)
+    
+    # إضافة الهيكل الصحيح للنسخ السريع في تيليجرام
+    formatted_text = f"```{language}\n{text}\n```"
+    
+    return formatted_text
+
+def split_message_with_copy_support(text, max_length=3500):
+    """تقسيم الرسالة الطويلة مع الحفاظ على دعم النسخ"""
+    if len(text) <= max_length:
+        return [text]
+    
+    parts = []
+    current_part = ""
+    
+    for line in text.split('\n'):
+        if len(current_part) + len(line) + 1 > max_length - 50:  # مسافة أمان للفواصل
+            # إغلاق الجزء الحالي
+            if current_part:
+                parts.append(current_part)
+                current_part = ""
+        
+        current_part += line + '\n'
+    
+    if current_part:
+        parts.append(current_part)
+    
+    # إضافة فواصل واضحة بين الأجزاء
+    formatted_parts = []
+    for i, part in enumerate(parts):
+        if i < len(parts) - 1:
+            part += "\n━━━━━━━━━━━━━━━━\n[يتبع في الجزء التالي...]"
+        formatted_parts.append(format_as_copyable_code(part, "text"))
+    
+    return formatted_parts
+
 def split_message(text, max_length=4000):
-    """تقسيم الرسالة الطويلة إلى أجزاء"""
+    """تقسيم الرسالة الطويلة إلى أجزاء (للتوافق مع الكود القديم)"""
     if len(text) <= max_length:
         return [text]
     
@@ -687,10 +730,9 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
                     symbol_to_analyze
                 )
                 
-                await wait_msg.edit_text(
-                    analysis_result,
-                    parse_mode="Markdown"
-                )
+                # تنسيق النتيجة مع دعم النسخ السريع
+                formatted_result = format_as_copyable_code(analysis_result, "text")
+                await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
                 
             except Exception as e:
                 print(f"❌ خطأ في تحليل الصورة التلقائية: {e}")
@@ -706,7 +748,8 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
                 )
                 
                 final_msg = clean_repeated_text(final_msg)
-                await wait_msg.edit_text(final_msg, parse_mode="Markdown")
+                formatted_result = format_as_copyable_code(final_msg, "text")
+                await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
             
             # حذف الصورة المؤقتة
             try:
@@ -726,7 +769,8 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
             )
             
             final_msg = clean_repeated_text(final_msg)
-            await wait_msg.edit_text(final_msg, parse_mode="Markdown")
+            formatted_result = format_as_copyable_code(final_msg, "text")
+            await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
         
         # عرض الأزرار للاستمرار
         reply_keyboard = [[key] for key in CATEGORIES.keys()]
@@ -1212,7 +1256,9 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
             last_symbol
         )
         
-        await wait_msg.edit_text(analysis_result, parse_mode="Markdown")
+        # تنسيق النتيجة مع دعم النسخ السريع
+        formatted_result = format_as_copyable_code(analysis_result, "text")
+        await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
                 
     except Exception as e:
         print(f"❌ خطأ في تحليل صورة التوصية: {e}")
@@ -1427,20 +1473,23 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
             ]
             
+            # تنسيق النتيجة مع دعم النسخ السريع
+            formatted_result = format_as_copyable_code(result, "text")
+            
             # تقسيم الرسالة الطويلة
-            if len(result) > 4000:
-                parts = split_message(result, max_length=4000)
+            if len(formatted_result) > 4000:
+                parts = split_message_with_copy_support(result, max_length=3500)
                 for i, part in enumerate(parts):
                     if i == 0:
                         await wait_msg.edit_text(
-                            f"Obeida Trading 💬\n\n{part}",
+                            part,
                             parse_mode="Markdown"
                         )
                     else:
                         await update.message.reply_text(part, parse_mode="Markdown")
             else:
                 await wait_msg.edit_text(
-                    f"Obeida Trading 💬\n\n{result}",
+                    formatted_result,
                     parse_mode="Markdown"
                 )
             
@@ -2518,12 +2567,9 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # إعداد النص النهائي
         full_result = (
-            f"✅ **تم التحليل صفقتك بنجاح** ✅\n"
+            f"✅ **تم التحليل  صفقتك بنجاح** ✅\n"
             f"━━━━━━━━━━━━━━━━\n"
-            f"👇 **اضغط على النص أدناه للنسخ المباشر:**\n"
-            f"```\n"  # بداية منطقة النسخ
-            f"{audit_result}\n"
-            f"```\n"  # نهاية منطقة النسخ
+            f"{audit_result}\n\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"🔧 **الإعدادات المستخدمة:**\n"
             f"•🕧 فريم التحقق للكسر: {verification_timeframe}\n"
@@ -2535,9 +2581,12 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         # تنظيف النهائي من التكرارات
         full_result = clean_repeated_text(full_result)
         
+        # تنسيق النتيجة مع دعم النسخ السريع
+        formatted_result = format_as_copyable_code(full_result, "text")
+        
         # تقسيم النتيجة إذا كانت طويلة
-        if len(full_result) > 4000:
-            parts = split_message(full_result, max_length=4000)
+        if len(formatted_result) > 4000:
+            parts = split_message_with_copy_support(full_result, max_length=3500)
             
             # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
             await wait_msg.edit_text(
@@ -2550,7 +2599,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 await update.message.reply_text(part, parse_mode="Markdown")
         else:
             await wait_msg.edit_text(
-                full_result,
+                formatted_result,
                 parse_mode="Markdown"
             )
         
@@ -2641,7 +2690,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         "🚀 *أهلاً بك في Obeida Trading*\n\n"
-        "🤖 *⬇️ نقدم لكم الخدمات التالية ⬇️*"
+        "🤖 *⬇️ نقدم لكم الخدمات التالية ⬇️*\n"
         "• 📊 نظام تحليل شارت \n"
         "• 📈 نظام توصيات الجاهزة \n"
         "• 💬 نظام دردشة الذكية \n"
@@ -2850,8 +2899,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • ⚙️ حفظ إعداداتك الشخصية
     • 🔹 واجهة سهلة بالأزرار
     • 🗑️ نظام تنظيف تلقائي للذاكرة
+    • 📋 **نصوص قابلة للنسخ بنقرة واحدة** (جميع التحليلات والتوصيات)
     """
-    await update.message.reply_text(help_text, parse_mode="Markdown")
+    
+    formatted_help = format_as_copyable_code(help_text, "markdown")
+    await update.message.reply_text(formatted_help, parse_mode="Markdown")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """إلغاء المحادثة"""
@@ -2873,6 +2925,7 @@ def run_flask_server():
 def main():
     """الدالة الرئيسية - النسخة السهلة"""
     print("🤖 Starting Powered by - Obeida Trading ...")
+    print("📋 تم تفعيل نظام النسخ السريع - جميع التحليلات قابلة للنسخ بنقرة واحدة")
     
     # تشغيل Flask
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
@@ -2927,6 +2980,7 @@ def main():
     
     print("✅ Telegram Bot  safe mode ...")
     print("📡 Bot Obeida Trading online...")
+    print("📋 ميزة النسخ السريع: جميع الردود الطويلة ستكون داخل ```code blocks``` قابلة للنسخ بنقرة واحدة")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
