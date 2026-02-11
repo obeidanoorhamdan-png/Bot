@@ -23,10 +23,11 @@ import pytz
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "8583903565:AAFveu3KYGkPsC8L6WyermoaZ1tI_EtFHHs")
 
-
-MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "AIzaSyBJKpUZ2AhI_KVPkNDQVPmRgZL_06rsEGY")
-MISTRAL_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
-MISTRAL_MODEL = "gemini-2.5-flash"          # للرؤية والاستخراج البصري
+MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "ilTmowlfzkP2gVFPWAKKLqQcmmlEf1N8")
+MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
+MISTRAL_MODEL = "pixtral-large-latest"          # للرؤية والاستخراج البصري
+MISTRAL_MODEL_AUDIT = "mistral-large-latest"        # للتحليل المنطقي
+MODEL_SUMMARY = "mistral-medium-latest"        # للتلخيص السريع
 
 DB_NAME = "abood-gpt.db"
 
@@ -100,7 +101,7 @@ def home():
 
 @app.route('/health')
 def health():
-    return {"status": "active", "ai_provider": "Mistral AI", "model": f"{MISTRAL_MODEL} + {MISTRAL_MODEL}", "timestamp": time.time()}
+    return {"status": "active", "ai_provider": "Mistral AI", "model": f"{MISTRAL_MODEL} + {MISTRAL_MODEL_AUDIT}", "timestamp": time.time()}
 
 @app.route('/ping')
 def ping():
@@ -1155,7 +1156,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         """
         
         payload_2 = {
-            "model": MISTRAL_MODEL,
+            "model": MISTRAL_MODEL_AUDIT,
             "messages": [
                 {
                     "role": "user", 
@@ -1436,7 +1437,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         # استدعاء واجهة Mistral AI
         payload = {
-            "model": MISTRAL_MODEL,
+            "model": MODEL_SUMMARY,
             "messages": [
                 {"role": "system", "content": selected_prompt},
                 {"role": "user", "content": user_message}
@@ -2722,7 +2723,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 """
         
         payload_2 = {
-            "model": MISTRAL_MODEL,
+            "model": MISTRAL_MODEL_AUDIT,
             "messages": [
                 {
                     "role": "user", 
