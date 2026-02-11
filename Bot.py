@@ -2518,9 +2518,12 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # إعداد النص النهائي
         full_result = (
-            f"✅ **تم التحليل  صفقتك بنجاح** ✅\n"
+            f"✅ **تم التحليل صفقتك بنجاح** ✅\n"
             f"━━━━━━━━━━━━━━━━\n"
-            f"{audit_result}\n\n"
+            f"👇 **اضغط على النص أدناه للنسخ المباشر:**\n"
+            f"```\n"  # بداية منطقة النسخ
+            f"{audit_result}\n"
+            f"```\n"  # نهاية منطقة النسخ
             f"━━━━━━━━━━━━━━━━\n"
             f"🔧 **الإعدادات المستخدمة:**\n"
             f"•🕧 فريم التحقق للكسر: {verification_timeframe}\n"
