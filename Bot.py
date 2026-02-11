@@ -26,8 +26,8 @@ TOKEN = os.environ.get('TOKEN', "8583903565:AAFveu3KYGkPsC8L6WyermoaZ1tI_EtFHHs"
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "dwwcerrElpgYHDmOrQLnjAG9B85BhHUR")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "pixtral-large-latest"          # للرؤية والاستخراج البصري
-MISTRAL_MODEL_AUDIT = "mistral-large-latest"    # للتدقيق والتحليل المنطقي
-MODEL_SUMMARY = "mistral-medium-latest"         # للتلخيص والتحسين
+MISTRAL_MODEL_AUDIT = "mistral-large-latest"        # للتحليل المنطقي
+MODEL_SUMMARY = "mistral-medium-latest"        # للتلخيص السريع
 
 DB_NAME = "abood-gpt.db"
 
@@ -94,439 +94,34 @@ def home():
         <p>Chat & Technical Analysis Bot</p>
         <div class="status">✅ Obeida Trading Running</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>Obeida Trading - (Triple Model System)</p>
+        <p>Obeida Trading - (Dual Model System)</p>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "ai_provider": "Mistral AI", "model": f"{MISTRAL_MODEL} + {MISTRAL_MODEL_AUDIT} + {MODEL_SUMMARY}", "timestamp": time.time()}
+    return {"status": "active", "ai_provider": "Mistral AI", "model": f"{MISTRAL_MODEL} + {MISTRAL_MODEL_AUDIT}", "timestamp": time.time()}
 
 @app.route('/ping')
 def ping():
     return "PONG"
 
-# =====================================================================
-# ================ دوال المساعدة الجديدة - الإصدار المحسن =============
-# =====================================================================
-
-def get_kill_zone_status():
-    """تحديد منطقة القتل السعري (Kill Zone) بناءً على توقيت غزة"""
-    try:
-        gaza_time = datetime.now(GAZA_TIMEZONE)
-        hour = gaza_time.hour
-        
-        if 8 <= hour < 10:
-            return "🔵 جلسة آسيا/لندن المتداخلة - بداية السيولة"
-        elif 10 <= hour < 13:
-            return "🔴 منطقة القتل السعري (لندن 10-13) - سيولة مرتفعة"
-        elif 13 <= hour < 15:
-            return "🟡 جلسة لندن/نيويورك المتداخلة - تذبذب عالي"
-        elif 15 <= hour < 18:
-            return "🔴 منطقة القتل السعري (نيويورك 15-18) - سيولة قصوى"
-        elif 18 <= hour < 20:
-            return "🟠 جلسة نيويورك المتأخرة - تصفية مراكز"
-        elif 20 <= hour < 22:
-            return "🟣 جلسة ما بعد نيويورك - هدوء نسبي"
-        elif 22 <= hour < 24 or 0 <= hour < 8:
-            return "🟢 جلسة آسيا/المحيط الهادئ - سيولة منخفضة"
-        else:
-            return "⚪ خارج مناطق القتل الرئيسية"
-    except Exception as e:
-        print(f"⚠️ خطأ في تحديد kill zone: {e}")
-        return "⚪ غير محدد"
-
-def check_last_minute_status():
-    """كشف دقائق الغدر والتلاعب (14, 29, 44, 59)"""
-    try:
-        gaza_time = datetime.now(GAZA_TIMEZONE)
-        minute = gaza_time.minute
-        second = gaza_time.second
-        
-        if minute in [14, 29, 44, 59]:
-            if second > 45:
-                return f"🔥 حرجة - دقيقة غدر ({minute}:{second}) - تلاعب سيولة"
-            else:
-                return f"⚠️ تحذير - دقيقة غدر ({minute}) - استعد لتذبذب"
-        
-        return f"✅ عادية - الدقيقة {minute}"
-    except Exception as e:
-        print(f"⚠️ خطأ في كشف دقيقة الغدر: {e}")
-        return "✅ عادية"
-
-def calculate_seconds_remaining(candle):
-    """حساب الثواني المتبقية لإغلاق الشمعة"""
-    try:
-        gaza_time = datetime.now(GAZA_TIMEZONE)
-        current_second = gaza_time.second
-        current_minute = gaza_time.minute
-        current_hour = gaza_time.hour
-        
-        seconds_remaining = 60 - current_second
-        
-        if candle.startswith('S'):
-            candle_seconds = int(candle[1:]) if candle[1:].isdigit() else 5
-            seconds_remaining = candle_seconds - (current_second % candle_seconds)
-            if seconds_remaining == candle_seconds:
-                seconds_remaining = 0
-                
-        elif candle.startswith('M'):
-            candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
-            total_seconds_passed = (current_minute % candle_minutes) * 60 + current_second
-            seconds_remaining = (candle_minutes * 60) - total_seconds_passed
-            
-        elif candle.startswith('H'):
-            candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
-            total_minutes_passed = (current_hour % candle_hours) * 60 + current_minute
-            seconds_remaining = (candle_hours * 3600) - (total_minutes_passed * 60 + current_second)
-            
-        elif candle.startswith('D'):
-            seconds_remaining = (24 * 3600) - (current_hour * 3600 + current_minute * 60 + current_second)
-        
-        return max(0, seconds_remaining)
-    except Exception as e:
-        print(f"⚠️ خطأ في حساب الوقت المتبقي: {e}")
-        return 60
-
-def get_candle_closing_status(candle):
-    """توليد وصف لحالة إغلاق الشمعة"""
-    try:
-        seconds_remaining = calculate_seconds_remaining(candle)
-        percentage_passed = 0
-        
-        if candle.startswith('S'):
-            total = int(candle[1:]) if candle[1:].isdigit() else 5
-            percentage_passed = ((total - seconds_remaining) / total) * 100
-        elif candle.startswith('M'):
-            total = int(candle[1:]) * 60 if candle[1:].isdigit() else 60
-            percentage_passed = ((total - seconds_remaining) / total) * 100
-        elif candle.startswith('H'):
-            total = int(candle[1:]) * 3600 if candle[1:].isdigit() else 3600
-            percentage_passed = ((total - seconds_remaining) / total) * 100
-        elif candle.startswith('D'):
-            total = 24 * 3600
-            percentage_passed = ((total - seconds_remaining) / total) * 100
-        
-        if seconds_remaining < 10:
-            return f"⚠️ حرجة جداً - إغلاق وشيك! {seconds_remaining} ثانية متبقية ({percentage_passed:.0f}% اكتمل)"
-        elif seconds_remaining < 30:
-            return f"⚠️ حرجة - اقتراب الإغلاق: {seconds_remaining} ثانية ({percentage_passed:.0f}% اكتمل)"
-        elif seconds_remaining < 60:
-            return f"⚡ قريبة من الإغلاق: {seconds_remaining} ثانية ({percentage_passed:.0f}% اكتمل)"
-        elif percentage_passed < 20:
-            return f"🟢 بداية الشمعة: {seconds_remaining} ثانية متبقية ({percentage_passed:.0f}% اكتمل)"
-        else:
-            return f"🟡 جارية: {seconds_remaining} ثانية متبقية ({percentage_passed:.0f}% اكتمل)"
-    except Exception as e:
-        print(f"⚠️ خطأ في حالة إغلاق الشمعة: {e}")
-        return f"🟡 جارية: {calculate_seconds_remaining(candle)} ثانية متبقية"
-
-def get_news_impact():
-    """تقييم تأثير الأخبار الاقتصادية"""
-    try:
-        gaza_time = datetime.now(GAZA_TIMEZONE)
-        current_hour = gaza_time.hour
-        current_minute = gaza_time.minute
-        current_time_minutes = current_hour * 60 + current_minute
-        
-        # أوقات الأخبار عالية التأثير (بتوقيت غزة)
-        high_impact_news = [
-            (14, 30), (16, 0), (20, 0),  # الفوركس
-            (8, 0), (9, 0), (10, 0),      # آسيا
-            (2, 30), (4, 0),              # استراليا/نيوزيلندا
-            (17, 30),                     # النفط
-            (15, 30),                     # مؤشرات أمريكية
-        ]
-        
-        medium_impact_news = [
-            (11, 0), (12, 0), (13, 0),    # أوروبا
-            (18, 0), (19, 0),             # أمريكا المتأخرة
-            (3, 0), (5, 0),               # آسيا
-        ]
-        
-        # فحص الأخبار عالية التأثير
-        for news_hour, news_minute in high_impact_news:
-            news_time = news_hour * 60 + news_minute
-            time_diff = abs(current_time_minutes - news_time)
-            
-            if time_diff <= 15:
-                return {
-                    "impact": "🔴 عالي جداً",
-                    "multiplier": 3.0,
-                    "warning": "⚠️ **تحذير قصوى:** خبر اقتصادي قوي جداً خلال ±15 دقيقة",
-                    "status": "خبر نشط - حظر تام"
-                }
-            elif time_diff <= 30:
-                return {
-                    "impact": "🔴 عالي",
-                    "multiplier": 2.5,
-                    "warning": "⚠️ **تحذير:** خبر اقتصادي قوي خلال ±30 دقيقة",
-                    "status": "اقتراب خبر - تخفيف الحجم"
-                }
-            elif time_diff <= 60:
-                return {
-                    "impact": "🟡 متوسط",
-                    "multiplier": 1.8,
-                    "warning": "📢 **تنبيه:** خبر اقتصادي خلال ±60 دقيقة",
-                    "status": "خبر وشيك - استعداد"
-                }
-        
-        # فحص الأخبار متوسطة التأثير
-        for news_hour, news_minute in medium_impact_news:
-            news_time = news_hour * 60 + news_minute
-            time_diff = abs(current_time_minutes - news_time)
-            
-            if time_diff <= 30:
-                return {
-                    "impact": "🟡 متوسط",
-                    "multiplier": 1.5,
-                    "warning": "📢 **تنبيه:** خبر اقتصادي متوسط التأثير",
-                    "status": "خبر قريب - حذر"
-                }
-            elif time_diff <= 60:
-                return {
-                    "impact": "🟢 منخفض",
-                    "multiplier": 1.2,
-                    "warning": "ℹ️ **معلومة:** خبر اقتصادي خفيف",
-                    "status": "خبر بعيد - طبيعي"
-                }
-        
-        return {
-            "impact": "🟢 منخفض جداً",
-            "multiplier": 1.0,
-            "warning": "✅ الوضع هادئ - لا أخبار مؤثرة",
-            "status": "آمن للتداول"
-        }
-    except Exception as e:
-        print(f"⚠️ خطأ في تقييم الأخبار: {e}")
-        return {
-            "impact": "🟢 منخفض",
-            "multiplier": 1.0,
-            "warning": "✅ الوضع آمن",
-            "status": "طبيعي"
-        }
-
-def calculate_verification_timeframe(candle):
-    """حساب فريم التحقق الديناميكي بناءً على فريم التداول"""
-    try:
-        if not candle:
-            return "M15"
-        
-        if candle.startswith('S'):
-            if candle in ['S5', 'S10', 'S15']:
-                return "S30"
-            else:
-                return "M1"
-                
-        elif candle.startswith('M'):
-            candle_value = int(candle[1:]) if candle[1:].isdigit() else 1
-            if candle_value <= 5:
-                return "M15"
-            elif candle_value <= 15:
-                return "M30"
-            elif candle_value <= 30:
-                return "H1"
-            else:
-                return "H4"
-                
-        elif candle.startswith('H'):
-            candle_value = int(candle[1:]) if candle[1:].isdigit() else 1
-            if candle_value <= 1:
-                return "H4"
-            elif candle_value <= 4:
-                return "D1"
-            else:
-                return "D1"
-                
-        elif candle.startswith('D'):
-            return "D1"
-            
-        return "M15"
-    except Exception as e:
-        print(f"⚠️ خطأ في حساب فريم التحقق: {e}")
-        return "M15"
-
-def get_candle_category(candle):
-    """تصنيف الفريم الزمني"""
-    try:
-        if candle.startswith('S'):
-            seconds = int(candle[1:]) if candle[1:].isdigit() else 5
-            return f"فائق السرعة ({seconds} ثانية) - سكالبينج حاد"
-        elif candle.startswith('M'):
-            minutes = int(candle[1:]) if candle[1:].isdigit() else 1
-            if minutes <= 5:
-                return f"سريع ({minutes} دقائق) - سكالبينج"
-            elif minutes <= 15:
-                return f"متوسط سريع ({minutes} دقائق) - إنتراداي"
-            else:
-                return f"متوسط بطيء ({minutes} دقائق) - سوينج قصير"
-        elif candle.startswith('H'):
-            hours = int(candle[1:]) if candle[1:].isdigit() else 1
-            return f"بطيء ({hours} ساعات) - سوينج"
-        elif candle.startswith('D'):
-            return "طويل الأمد (يومي) - بوزيشن"
-        else:
-            return f"غير معروف ({candle})"
-    except Exception as e:
-        print(f"⚠️ خطأ في تصنيف الفريم: {e}")
-        return f"فريم {candle}"
-
-def get_trading_strategy(trade_time):
-    """تحديد استراتيجية التداول بناءً على مدة الصفقة"""
-    if trade_time == "قصير (1m-15m)":
-        return "سكالبينج - Scalping"
-    elif trade_time == "متوسط (4h-Daily)":
-        return "سوينج - Swing Trading"
-    elif trade_time == "طويل (Weekly-Monthly)":
-        return "بوزيشن - Position Trading"
-    else:
-        return f"استراتيجية {trade_time}"
-
-def get_position_sizing(trade_time, news_multiplier=1.0):
-    """تحديد حجم الصفقة المناسب"""
-    base_size = 1.0
-    
-    if trade_time == "قصير (1m-15m)":
-        base_size = 2.0  # حجم كبير نسبياً
-    elif trade_time == "متوسط (4h-Daily)":
-        base_size = 1.0  # حجم معتدل
-    elif trade_time == "طويل (Weekly-Monthly)":
-        base_size = 0.5  # حجم صغير
-    
-    # تعديل حسب الأخبار
-    adjusted_size = base_size / news_multiplier
-    
-    if adjusted_size >= 1.5:
-        return f"كبير (x{adjusted_size:.1f})"
-    elif adjusted_size >= 0.8:
-        return f"معتدل (x{adjusted_size:.1f})"
-    else:
-        return f"صغير (x{adjusted_size:.1f})"
-
-def get_spread_estimate(symbol=None):
-    """تقدير السبريد للأصل المالي"""
-    try:
-        if not symbol:
-            return 1  # افتراضي
-        
-        symbol_lower = symbol.lower()
-        
-        # الفوركس - سبريد منخفض
-        if any(x in symbol_lower for x in ['eur', 'usd', 'gbp', 'jpy', 'chf', 'aud', 'cad', 'nzd']):
-            if 'otc' in symbol_lower:
-                return 1.5  # OTC سبريد أعلى قليلاً
-            return 0.8
-        
-        # المؤشرات - سبريد متوسط
-        elif any(x in symbol_lower for x in ['spx', 'dow', 'nasdaq', 'dax', 'cac', 'ftse', 'hang seng', 'nikkei']):
-            return 2.0
-        
-        # السلع - سبريد مرتفع
-        elif any(x in symbol_lower for x in ['gold', 'silver', 'oil', 'natural gas']):
-            return 3.0
-        
-        # الأسهم - سبريد متغير
-        elif any(x in symbol_lower for x in ['apple', 'amazon', 'google', 'microsoft', 'tesla']):
-            return 2.5
-        
-        return 1.0
-    except Exception as e:
-        print(f"⚠️ خطأ في تقدير السبريد: {e}")
-        return 1.0
-
-def format_trade_time_for_prompt(trade_time):
-    """تنسيق وقت الصفقة للبرومبت"""
-    if trade_time == "قصير (1m-15m)":
-        return "مدة الصفقة المتوقعة: قصير الأجل (1 دقيقة إلى 15 دقيقة) - تنفيذ سريع، مخاطر منخفضة"
-    elif trade_time == "متوسط (4h-Daily)":
-        return "مدة الصفقة المتوقعة: متوسط الأجل (4 ساعات إلى يومي) - انتظار أيام، مخاطر متوسطة"
-    elif trade_time == "طويل (Weekly-Monthly)":
-        return "مدة الصفقة المتوقعة: طويل الأجل (أسبوعي إلى شهري) - استثمار طويل، مخاطر مرتفعة"
-    else:
-        return f"مدة الصفقة المتوقعة: {trade_time}"
-
-async def extract_platform_time_from_image(base64_img):
-    """استخراج وقت المنصة من الصورة باستخدام Pixtral"""
-    try:
-        prompt = """
-        أنت خبير في قراءة الوقت من صور الشارتات.
-        
-        مهمتك: استخرج الوقت الظاهر في الصورة بدقة متناهية.
-        
-        🔍 **تعليمات الاستخراج:**
-        1. ابحث عن الوقت في الزاوية السفلية اليسرى أو اليمنى من الشارت
-        2. اقرأ الساعة والدقيقة والثانية بدقة
-        3. إذا كان الوقت غير ظاهر أو غير واضح، قدره بناءً على الشموع
-        
-        🎯 **التنسيق المطلوب:**
-        الوقت: [HH:MM:SS]
-        المصدر: [منصة التداول]
-        وضوح: [واضح / غير واضح / مقدر]
-        
-        أعد فقط الوقت بالتنسيق المطلوب، بدون أي نص إضافي.
-        """
-        
-        headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
-        
-        payload = {
-            "model": MISTRAL_MODEL,
-            "messages": [
-                {
-                    "role": "user", 
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
-                    ]
-                }
-            ],
-            "max_tokens": 100,
-            "temperature": 0.0
-        }
-        
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=15)
-        
-        if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content'].strip()
-            
-            # استخراج الوقت باستخدام regex
-            time_pattern = r'(\d{1,2}):(\d{2}):(\d{2})'
-            match = re.search(time_pattern, result)
-            
-            if match:
-                return match.group(0), result
-            else:
-                return "غير محدد", result
-        else:
-            return "غير محدد", "غير ظاهر"
-            
-    except Exception as e:
-        print(f"⚠️ خطأ في استخراج وقت المنصة: {e}")
-        return "غير محدد", "فشل الاستخراج"
-
-# =====================================================================
-# ================ دوال التنظيف وإدارة الذاكرة =======================
-# =====================================================================
-
+# --- دوال المساعدة الجديدة ---
 def cleanup_old_images():
     """تنظيف الصور القديمة التي مضى عليها أكثر من 30 دقيقة"""
     try:
         current_time = time.time()
-        deleted_count = 0
-        
         for filename in os.listdir(IMAGE_CACHE_DIR):
             filepath = os.path.join(IMAGE_CACHE_DIR, filename)
             if os.path.isfile(filepath):
                 file_age = current_time - os.path.getmtime(filepath)
-                if file_age > 1800:  # 30 دقيقة
+                if file_age > 1800:
                     try:
                         os.remove(filepath)
-                        deleted_count += 1
+                        print(f"🧹 تم حذف الملف القديم: {filename}")
                     except Exception as e:
                         print(f"⚠️ خطأ في حذف الملف {filename}: {e}")
-        
-        if deleted_count > 0:
-            print(f"🧹 تم حذف {deleted_count} ملف صورة قديم")
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الصور القديمة: {e}")
 
@@ -534,7 +129,6 @@ def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
     """ضغط الصورة لتقليل الحجم مع الحفاظ على الجودة"""
     try:
         with Image.open(image_path) as img:
-            # تحويل إلى RGB إذا كان RGBA
             if img.mode in ('RGBA', 'LA', 'P'):
                 background = Image.new('RGB', img.size, (255, 255, 255))
                 if img.mode == 'P':
@@ -545,19 +139,13 @@ def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
                 else:
                     img = img.convert('RGB')
             
-            # تغيير الحجم مع الحفاظ على النسبة
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
             
-            # حفظ الصورة المضغوطة
             compressed_path = image_path.replace('.jpg', '_compressed.jpg')
-            if not compressed_path.endswith('.jpg'):
-                compressed_path = compressed_path + '_compressed.jpg'
-            
             img.save(compressed_path, 'JPEG', quality=quality, optimize=True)
             
             original_size = os.path.getsize(image_path) / 1024
             compressed_size = os.path.getsize(compressed_path) / 1024
-            
             print(f"📦 تم ضغط الصورة: {original_size:.1f}KB → {compressed_size:.1f}KB")
             
             return compressed_path
@@ -565,110 +153,206 @@ def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
         print(f"⚠️ خطأ في ضغط الصورة: {e}")
         return image_path
 
-def encode_image(image_path):
-    """تحويل الصورة إلى base64 بشكل صحيح"""
+# --- سحب الصور من TradingView ---
+def download_chart_image(symbol="BTCUSDT"):
+    """سحب صورة شارت من TradingView"""
     try:
-        with open(image_path, "rb") as image_file:
-            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
-        return encoded_string
+        API_KEY = "c94425"
+        
+        # تحويل اسم الرمز إلى تنسيق TradingView
+        if symbol == "EUR/USD (OTC)":
+            chart_symbol = "FX:EURUSD"
+        elif symbol == "GBP/USD (OTC)":
+            chart_symbol = "FX:GBPUSD"
+        elif symbol == "USD/JPY (OTC)":
+            chart_symbol = "FX:USDJPY"
+        elif symbol == "USD/CHF (OTC)":
+            chart_symbol = "FX:USDCHF"
+        elif symbol == "AUD/USD (OTC)":
+            chart_symbol = "FX:AUDUSD"
+        elif symbol == "USD/CAD (OTC)":
+            chart_symbol = "FX:USDCAD"
+        elif symbol == "NZD/USD (OTC)":
+            chart_symbol = "FX:NZDUSD"
+        elif symbol == "EUR/GBP (OTC)":
+            chart_symbol = "FX:EURGBP"
+        elif symbol == "EUR/JPY (OTC)":
+            chart_symbol = "FX:EURJPY"
+        elif symbol == "GBP/JPY (OTC)":
+            chart_symbol = "FX:GBPJPY"
+        elif symbol == "EUR/CHF (OTC)":
+            chart_symbol = "FX:EURCHF"
+        elif symbol == "AUD/JPY (OTC)":
+            chart_symbol = "FX:AUDJPY"
+        elif symbol == "EUR/AUD (OTC)":
+            chart_symbol = "FX:EURAUD"
+        elif symbol == "EUR/CAD (OTC)":
+            chart_symbol = "FX:EURCAD"
+        elif symbol == "GBP/AUD (OTC)":
+            chart_symbol = "FX:GBPAUD"
+        elif symbol == "CAD/JPY (OTC)":
+            chart_symbol = "FX:CADJPY"
+        elif symbol == "CHF/JPY (OTC)":
+            chart_symbol = "FX:CHFJPY"
+        elif symbol == "NZD/JPY (OTC)":
+            chart_symbol = "FX:NZDJPY"
+        elif symbol == "GBP/CHF (OTC)":
+            chart_symbol = "FX:GBPCHF"
+        elif symbol == "AUD/CAD (OTC)":
+            chart_symbol = "FX:AUDCAD"
+        elif symbol == "S&P 500 (OTC)":
+            chart_symbol = "SP:SPX"
+        elif symbol == "Dow Jones (OTC)":
+            chart_symbol = "DJ:DJI"
+        elif symbol == "Nasdaq 100 (OTC)":
+            chart_symbol = "NASDAQ:NDX"
+        elif symbol == "DAX 40 (OTC)":
+            chart_symbol = "GER30"
+        elif symbol == "CAC 40 (OTC)":
+            chart_symbol = "FRA40"
+        elif symbol == "FTSE 100 (OTC)":
+            chart_symbol = "UK100"
+        elif symbol == "Hang Seng (OTC)":
+            chart_symbol = "HK50"
+        elif symbol == "Nikkei 225 (OTC)":
+            chart_symbol = "JPN225"
+        elif symbol == "Gold (OTC)":
+            chart_symbol = "TVC:GOLD"
+        elif symbol == "Silver (OTC)":
+            chart_symbol = "TVC:SILVER"
+        elif symbol == "UKOIL (OTC)":
+            chart_symbol = "TVC:UKOIL"
+        elif symbol == "USOIL (OTC)":
+            chart_symbol = "TVC:USOIL"
+        elif symbol == "Natural Gas (OTC)":
+            chart_symbol = "TVC:NATGAS"
+        elif symbol == "Apple (OTC)":
+            chart_symbol = "NASDAQ:AAPL"
+        elif symbol == "Amazon (OTC)":
+            chart_symbol = "NASDAQ:AMZN"
+        elif symbol == "Google (OTC)":
+            chart_symbol = "NASDAQ:GOOGL"
+        elif symbol == "Facebook (OTC)":
+            chart_symbol = "NASDAQ:META"
+        elif symbol == "Microsoft (OTC)":
+            chart_symbol = "NASDAQ:MSFT"
+        elif symbol == "Tesla (OTC)":
+            chart_symbol = "NASDAQ:TSLA"
+        elif symbol == "Netflix (OTC)":
+            chart_symbol = "NASDAQ:NFLX"
+        elif symbol == "Intel (OTC)":
+            chart_symbol = "NASDAQ:INTC"
+        elif symbol == "Boeing (OTC)":
+            chart_symbol = "NYSE:BA"
+        elif symbol == "Visa (OTC)":
+            chart_symbol = "NYSE:V"
+        elif symbol == "McDonald's (OTC)":
+            chart_symbol = "NYSE:MCD"
+        elif symbol == "Pfizer (OTC)":
+            chart_symbol = "NYSE:PFE"
+        elif symbol == "Coca-Cola (OTC)":
+            chart_symbol = "NYSE:KO"
+        elif symbol == "Disney (OTC)":
+            chart_symbol = "NYSE:DIS"
+        elif symbol == "Alibaba (OTC)":
+            chart_symbol = "NYSE:BABA"
+        elif symbol == "Walmart (OTC)":
+            chart_symbol = "NYSE:WMT"
+        
+        CHART_URL = f"https://www.tradingview.com/chart/?symbol={chart_symbol}&interval=5"
+        
+        api_url = f"https://api.screenshotmachine.com/?key={API_KEY}&url={CHART_URL}&dimension=800x600&device=desktop&delay=2000&format=png"
+        
+        print(f"📥 جاري سحب صورة لـ {symbol}...")
+        
+        response = requests.get(api_url, timeout=30)
+        
+        if response.status_code == 200:
+            timestamp = int(time.time())
+            image_path = os.path.join(IMAGE_CACHE_DIR, f"chart_{symbol.replace(' ', '_')}_{timestamp}.png")
+            
+            with open(image_path, "wb") as f:
+                f.write(response.content)
+            
+            print(f"✅ تم سحب صورة {symbol} بنجاح!")
+            return image_path
+        else:
+            print(f"❌ خطأ في سحب الصورة: {response.status_code}")
+            return None
+            
     except Exception as e:
-        print(f"❌ خطأ في تشفير الصورة: {e}")
+        print(f"⚠️ خطأ في سحب الصورة: {e}")
         return None
 
-def clean_repeated_text(text):
-    """تنظيف النص من التكرارات وتحسين التنسيق - الإصدار المحسّن"""
-    if not text:
-        return ""
-    
-    # إزالة الأسطر المكررة
-    lines = text.split('\n')
-    unique_lines = []
-    seen_lines = set()
-    
-    for line in lines:
-        line_strip = line.strip()
-        if line_strip and line_strip not in seen_lines:
-            unique_lines.append(line)
-            seen_lines.add(line_strip)
-        elif not line_strip:
-            unique_lines.append(line)
-    
-    text = '\n'.join(unique_lines)
-    
-    # إزالة الأقسام المكررة
-    patterns = [
-        "📊 **التحليل الفني المتقدم**:", "📊 التحليل الفني المتقدم:",
-        "🎯 **الإشارة التنفيذية**:", "🎯 الإشارة التنفيذية:",
-        "⚠️ **إدارة المخاطر**:", "⚠️ إدارة المخاطر:",
-        "📊 **نتائج الفحص الفني**:", "📊 نتائج الفحص الفني:",
-        "🎯 **التوصية والتوقعات**:", "🎯 التوصية والتوقعات:",
-        "📝 **ملاحظات التحليل**:", "📝 ملاحظات التحليل:"
-    ]
-    
-    for pattern in patterns:
-        if text.count(pattern) > 1:
-            parts = text.split(pattern)
-            text = parts[0] + pattern + parts[-1]
-    
-    # إزالة التكرارات في التحليل المزدوج
-    if "📊 **التحليل الفني المتقدم**:" in text and "📊 التحليل الفني المتقدم:" in text:
-        text = text.replace("📊 التحليل الفني المتقدم:", "")
-    
-    return text
+# --- قاعدة البيانات ---
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY, 
+            candle TEXT DEFAULT 'M1', 
+            trade_time TEXT DEFAULT 'قصير (1m-15m)',
+            chat_context TEXT DEFAULT '',
+            last_analysis_context TEXT DEFAULT '',
+            last_analysis_time DATETIME DEFAULT NULL
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            role TEXT,
+            content TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    print("✅ Database initialized")
 
-def split_message(text, max_length=4000):
-    """تقسيم الرسالة الطويلة إلى أجزاء"""
-    if len(text) <= max_length:
-        return [text]
-    
-    parts = []
-    while len(text) > max_length:
-        # محاولة القطع عند نهاية سطر
-        split_point = text[:max_length].rfind('\n\n')
-        if split_point == -1:
-            split_point = text[:max_length].rfind('\n')
-        if split_point == -1:
-            split_point = text[:max_length].rfind('. ')
-        if split_point == -1:
-            split_point = max_length - 100
-        
-        parts.append(text[:split_point])
-        text = text[split_point:].lstrip()
-    
-    if text:
-        parts.append(text)
-    
-    return parts
+def save_user_setting(user_id, col, val):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute(f"INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+    cursor.execute(f"UPDATE users SET {col} = ? WHERE user_id = ?", (val, user_id))
+    conn.commit()
+    conn.close()
 
-def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None):
-    """تنظيف البيانات المؤقتة للمستخدم - الإصدار المحسّن"""
-    try:
-        if user_id and os.path.exists(IMAGE_CACHE_DIR):
-            try:
-                for filename in os.listdir(IMAGE_CACHE_DIR):
-                    if f"_{user_id}_" in filename:
-                        filepath = os.path.join(IMAGE_CACHE_DIR, filename)
-                        if os.path.exists(filepath):
-                            os.remove(filepath)
-                            print(f"🧹 تم حذف ملف المستخدم: {filename}")
-            except Exception as e:
-                print(f"⚠️ خطأ في تنظيف ملفات المستخدم {user_id}: {e}")
-        
-        # تنظيف user_data
-        keys_to_remove = [
-            'dual_images', 'dual_image_paths', 'dual_analysis_mode',
-            'last_analysis', 'dual_analysis_start', 'original_paths',
-            'last_recommendation_symbol', 'vision_extracted_data',
-            'audit_corrections', 'optimized_result'
-        ]
-        
-        for key in keys_to_remove:
-            if key in context.user_data:
-                del context.user_data[key]
-                
-        print(f"✅ تم تنظيف الذاكرة والملفات للمستخدم {user_id}")
-    except Exception as e:
-        print(f"⚠️ خطأ في تنظيف الذاكرة: {e}")
+def get_user_setting(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT candle, trade_time, last_analysis_context, last_analysis_time FROM users WHERE user_id = ?", (user_id,))
+    res = cursor.fetchone()
+    conn.close()
+    if res:
+        return res
+    return ("M1", "قصير (1m-15m)", "", None)
+
+def save_analysis_context(user_id, analysis_text):
+    """حفظ تحليل الصورة الأخيرة كسياق للتحليل التالي"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    summary = analysis_text[:500]
+    cursor.execute("UPDATE users SET last_analysis_context = ?, last_analysis_time = CURRENT_TIMESTAMP WHERE user_id = ?", (summary, user_id))
+    conn.commit()
+    conn.close()
+
+def get_analysis_context(user_id):
+    """الحصول على سياق التحليل السابق"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT last_analysis_context, last_analysis_time FROM users WHERE user_id = ?", (user_id,))
+    res = cursor.fetchone()
+    conn.close()
+    if res:
+        context, context_time = res
+        if context_time:
+            time_diff = (datetime.now() - datetime.fromisoformat(context_time)).total_seconds() / 60
+            if time_diff > 10:
+                return "", None
+        return context, context_time
+    return "", None
 
 def cleanup_old_database_records():
     """تنظيف سجلات قاعدة البيانات القديمة"""
@@ -687,118 +371,129 @@ def cleanup_old_database_records():
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف قاعدة البيانات: {e}")
 
-async def periodic_cleanup():
-    """تنظيف دوري للملفات المؤقتة"""
-    while True:
-        try:
-            await asyncio.sleep(1800)  # كل 30 دقيقة
-            cleanup_old_images()
-            cleanup_old_database_records()
-            print("🧹 تم التنظيف الدوري للملفات المؤقتة")
-        except Exception as e:
-            print(f"⚠️ خطأ في التنظيف الدوري: {e}")
+def get_market_session():
+    """الحصول على جلسة السوق باستخدام توقيت غزة الصحيح"""
+    try:
+        gaza_time = datetime.now(GAZA_TIMEZONE)
+        current_hour = gaza_time.hour
+        
+        if 2 <= current_hour < 8:
+            return "الجلسة الآسيوية", "02:00-08:00 بتوقيت غزة", "منخفضة"
+        elif 8 <= current_hour < 14:
+            return "جلسة لندن/أوروبا", "08:00-14:00 بتوقيت غزة", "مرتفعة"
+        elif 14 <= current_hour < 20:
+            return "جلسة نيويورك", "14:00-20:00 بتوقيت غزة", "عالية جداً"
+        elif 20 <= current_hour < 24 or 0 <= current_hour < 2:
+            return "جلسة المحيط الهادئ", "20:00-02:00 بتوقيت غزة", "منخفضة"
+        else:
+            return "جلسة عالمية", "متداخلة", "متوسطة"
+    except Exception as e:
+        print(f"⚠️ خطأ في تحديد جلسة السوق: {e}")
+        return "جلسة عالمية", "غير محددة", "متوسطة"
+        
+def format_trade_time_for_prompt(trade_time):
+    """تنسيق وقت الصفقة للبرومبت"""
+    if trade_time == "قصير (1m-15m)":
+        return "مدة الصفقة المتوقعة: قصير الأجل (1 دقيقة إلى 15 دقيقة) - تنفيذ سريع، مخاطر منخفضة"
+    elif trade_time == "متوسط (4h-Daily)":
+        return "مدة الصفقة المتوقعة: متوسط الأجل (4 ساعات إلى يومي) - انتظار أيام، مخاطر متوسطة"
+    elif trade_time == "طويل (Weekly-Monthly)":
+        return "مدة الصفقة المتوقعة: طويل الأجل (أسبوعي إلى شهري) - استثمار طويل، مخاطر مرتفعة"
+    else:
+        return f"مدة الصفقة المتوقعة: {trade_time}"
 
-# =====================================================================
-# ================ قاعدة البيانات ====================================
-# =====================================================================
+# --- معالجة الصور بشكل صحيح ---
+def encode_image(image_path):
+    """تحويل الصورة إلى base64 بشكل صحيح"""
+    try:
+        with open(image_path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+        return encoded_string
+    except Exception as e:
+        print(f"Error encoding image: {e}")
+        return None
 
-def init_db():
-    """تهيئة قاعدة البيانات"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+# --- دوال المساعدة للتعامل مع النصوص ---
+def clean_repeated_text(text):
+    """تنظيف النص من التكرارات وتحسين التنسيق - الإصدار المحسّن"""
+    if not text:
+        return ""
     
-    # جدول المستخدمين
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY, 
-            candle TEXT DEFAULT 'M1', 
-            trade_time TEXT DEFAULT 'قصير (1m-15m)',
-            chat_context TEXT DEFAULT '',
-            last_analysis_context TEXT DEFAULT '',
-            last_analysis_time DATETIME DEFAULT NULL,
-            preferred_symbols TEXT DEFAULT ''
-        )
-    ''')
+    lines = text.split('\n')
+    unique_lines = []
+    for line in lines:
+        if line.strip() not in [ul.strip() for ul in unique_lines] or line.strip() == "":
+            unique_lines.append(line)
+    text = '\n'.join(unique_lines)
     
-    # جدول سجل الدردشة
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS chat_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            role TEXT,
-            content TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    patterns = ["📊 التحليل الفني المتقدم:", "🎯 الإشارة التنفيذية:", "⚠️ إدارة المخاطر:",
+                "📊 **نتائج الفحص الفني**:", "🎯 **التوصية والتوقعات**:", 
+                "⚠️ **إدارة المخاطر**:", "📝 **ملاحظات التحليل**:"]
     
-    # جدول سجل التحليلات
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS analysis_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            symbol TEXT,
-            candle TEXT,
-            trade_time TEXT,
-            analysis TEXT,
-            confidence INTEGER,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    for p in patterns:
+        if text.count(p) > 1:
+            parts = text.split(p)
+            text = parts[0] + p + parts[-1]
     
-    conn.commit()
-    conn.close()
-    print("✅ Database initialized")
+    if "📊 **نتائج الفحص الفني**:" in text:
+        text = re.sub(r'(📊 \*\*نتائج الفحص الفني\*\*:[\s\S]*?)(?=📊 \*\*نتائج الفحص الفني\*\*:)', '', text, flags=re.DOTALL)
+    
+    if "### تحليل الشارت المرفق" in text:
+        sections = text.split("### تحليل الشارت المرفق")
+        if len(sections) > 1:
+            text = "### تحليل الشارت المرفق" + sections[1]
+    
+    return text
 
-def save_user_setting(user_id, col, val):
-    """حفظ إعدادات المستخدم"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute(f"INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
-    cursor.execute(f"UPDATE users SET {col} = ? WHERE user_id = ?", (val, user_id))
-    conn.commit()
-    conn.close()
-
-def get_user_setting(user_id):
-    """الحصول على إعدادات المستخدم"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT candle, trade_time, last_analysis_context, last_analysis_time FROM users WHERE user_id = ?", (user_id,))
-    res = cursor.fetchone()
-    conn.close()
+def split_message(text, max_length=4000):
+    """تقسيم الرسالة الطويلة إلى أجزاء"""
+    if len(text) <= max_length:
+        return [text]
     
-    if res:
-        return res
-    return ("M1", "قصير (1m-15m)", "", None)
-
-def save_analysis_context(user_id, analysis_text):
-    """حفظ تحليل الصورة الأخيرة كسياق للتحليل التالي"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    summary = analysis_text[:500]  # حفظ أول 500 حرف فقط
-    cursor.execute("UPDATE users SET last_analysis_context = ?, last_analysis_time = CURRENT_TIMESTAMP WHERE user_id = ?", (summary, user_id))
-    conn.commit()
-    conn.close()
-
-def get_analysis_context(user_id):
-    """الحصول على سياق التحليل السابق"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT last_analysis_context, last_analysis_time FROM users WHERE user_id = ?", (user_id,))
-    res = cursor.fetchone()
-    conn.close()
+    parts = []
+    while len(text) > max_length:
+        split_point = text[:max_length].rfind('\n\n')
+        if split_point == -1:
+            split_point = text[:max_length].rfind('\n')
+        if split_point == -1:
+            split_point = max_length - 100
+        
+        parts.append(text[:split_point])
+        text = text[split_point:].lstrip()
     
-    if res:
-        context, context_time = res
-        if context_time:
+    if text:
+        parts.append(text)
+    
+    return parts
+
+# --- وظائف إدارة الذاكرة ---
+def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None):
+    """تنظيف البيانات المؤقتة للمستخدم - الإصدار المحسّن"""
+    try:
+        if user_id and os.path.exists(IMAGE_CACHE_DIR):
             try:
-                time_diff = (datetime.now() - datetime.fromisoformat(context_time)).total_seconds() / 60
-                if time_diff > 10:  # أقدم من 10 دقائق
-                    return "", None
-            except:
-                pass
-        return context, context_time
-    
-    return "", None
+                for filename in os.listdir(IMAGE_CACHE_DIR):
+                    if f"_{user_id}_" in filename:
+                        filepath = os.path.join(IMAGE_CACHE_DIR, filename)
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
+                            print(f"🧹 تم حذف ملف المستخدم: {filename}")
+            except Exception as e:
+                print(f"⚠️ خطأ في تنظيف ملفات المستخدم {user_id}: {e}")
+        
+        keys_to_remove = [
+            'dual_images', 'dual_image_paths', 'dual_analysis_mode',
+            'last_analysis', 'dual_analysis_start', 'original_paths',
+            'last_recommendation_symbol'
+        ]
+        
+        for key in keys_to_remove:
+            if key in context.user_data:
+                del context.user_data[key]
+                
+        print(f"✅ تم تنظيف الذاكرة والملفات للمستخدم {user_id}")
+    except Exception as e:
+        print(f"⚠️ خطأ في تنظيف الذاكرة: {e}")
 
 def save_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE, symbol: str):
     """حفظ آخر رمز تم اختياره في التوصيات"""
@@ -806,132 +501,264 @@ def save_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE, symbol: 
 
 def get_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE):
     """الحصول على آخر رمز تم اختياره في التوصيات"""
-    return context.user_data.get('last_recommendation_symbol', 'EUR/USD (OTC)')
+    return context.user_data.get('last_recommendation_symbol', 'BTC (OTC)')
 
-def save_analysis_history(user_id, symbol, candle, trade_time, analysis, confidence):
-    """حفظ سجل التحليل"""
+# --- وظائف نظام التوصية الجديد ---
+def get_mistral_analysis(symbol):
+    """الحصول على تحليل من Mistral AI API للعملة"""
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    prompt = f"""
+    بصفتك خبير تداول كمي، حلل {symbol} بناءً على "تلاقي الأدلة" (Confluence Analysis). 
+    
+    🛑 *شروط الفلترة الصارمة (إلغاء الصفقة فوراً إذا لم تتحقق):*
+    1. حتمية الاستنفاذ: فشل آخر موجة جهد في كسر الهيكل.
+    2. توافق الفركتلات: تطابق الاتجاه على فريمات (H4, H1, M15).
+    3. سحب السيولة (Sweep): يجب حدوث كسر وهمي للسيولة قبل الدخول.
+    4. منطقة التوازن (OTE): الدخول حصراً بين مستويات فيبوناتشي 0.618 و 0.886.
+
+    🔍 *المطلوب تحليل (SMC + Wyckoff + Volume Profile):*
+    - رصد الـ Order Block النشط و الـ FVG غير المغطى.
+    - تحديد منطقة الفخ (Inducement) والسيولة المستهدفة (BSL/SSL).
+    - حساب قوة الاتجاه باستخدام (RSI Divergence) وحجم التداول.
+
+    قدم التقرير باللغة العربية بهذا التنسيق حصراً:
+    
+    📊 *ملخص فحص {symbol}*:
+    - الهيكل: (صاعد/هابط/تجميع) 
+    - السيولة: (أقرب فخ + الهدف القادم)
+    - الفجوات: (أهم منطقة FVG نشطة)
+    
+    🎯 *خطة التنفيذ*:
+    - القرار: (شراء 🟢 / بيع 🔴) 
+    - القوة: (عالية/متوسطة/ضعيفة)
+    - الدخول: [السعر الدقيق] 
+    - الهدف (TP1/TP2): [مستويات السيولة]
+    - الوقف (SL): [خلف منطقة الحماية] 
+    - الزمن: [الوقت المتوقع بالدقائق]
+    
+    ⚠️ *المخاطرة*:
+    - الثقة: [%] 
+    - نقطة الإلغاء: [السعر الذي يفسد السيناريو]
+    """
+    
+    body = {
+        "model": MISTRAL_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 910,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "random_seed": 42
+    }
+
     try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO analysis_history (user_id, symbol, candle, trade_time, analysis, confidence) VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, symbol, candle, trade_time, analysis[:1000], confidence)
+        response = requests.post(MISTRAL_URL, json=body, headers=headers, timeout=30)
+        response.raise_for_status()
+        return response.json()['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        print(f"Error in get_mistral_analysis: {e}")
+        return "⚠️ حدث خطأ في الاتصال بالمحلل."
+
+async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء وضع التوصية"""
+    reply_keyboard = [[key] for key in CATEGORIES.keys()]
+    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+    
+    await update.message.reply_text(
+        "🚀 **نظام التوصيات**\n\n"
+        "اختر القسم المطلوب من الأزرار:",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return RECOMMENDATION_MODE
+
+async def handle_recommendation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيارات نظام التوصية مع سحب الصور"""
+    user_text = update.message.text.strip()
+    
+    # العودة للقائمة الرئيسية
+    if user_text == "الرجوع للقائمة الرئيسية":
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        print(f"⚠️ خطأ في حفظ سجل التحليل: {e}")
-
-# =====================================================================
-# ================ سحب الصور من TradingView ==========================
-# =====================================================================
-
-def download_chart_image(symbol="BTCUSDT"):
-    """سحب صورة شارت من TradingView"""
-    try:
-        API_KEY = "c94425"  # مفتاح ScreenshotMachine
+        return MAIN_MENU
+    
+    # التحقق من الأقسام الرئيسية
+    if user_text in CATEGORIES:
+        keyboard = [[asset] for asset in CATEGORIES[user_text]]
+        keyboard.append(["🔙 العودة للقائمة", "الرجوع للقائمة الرئيسية"])
         
-        # تحويل اسم الرمز إلى تنسيق TradingView
-        symbol_map = {
-            # أزواج العملات
-            "EUR/USD (OTC)": "FX:EURUSD",
-            "GBP/USD (OTC)": "FX:GBPUSD",
-            "USD/JPY (OTC)": "FX:USDJPY",
-            "USD/CHF (OTC)": "FX:USDCHF",
-            "AUD/USD (OTC)": "FX:AUDUSD",
-            "USD/CAD (OTC)": "FX:USDCAD",
-            "NZD/USD (OTC)": "FX:NZDUSD",
-            "EUR/GBP (OTC)": "FX:EURGBP",
-            "EUR/JPY (OTC)": "FX:EURJPY",
-            "GBP/JPY (OTC)": "FX:GBPJPY",
-            "EUR/CHF (OTC)": "FX:EURCHF",
-            "AUD/JPY (OTC)": "FX:AUDJPY",
-            "EUR/AUD (OTC)": "FX:EURAUD",
-            "EUR/CAD (OTC)": "FX:EURCAD",
-            "GBP/AUD (OTC)": "FX:GBPAUD",
-            "CAD/JPY (OTC)": "FX:CADJPY",
-            "CHF/JPY (OTC)": "FX:CHFJPY",
-            "NZD/JPY (OTC)": "FX:NZDJPY",
-            "GBP/CHF (OTC)": "FX:GBPCHF",
-            "AUD/CAD (OTC)": "FX:AUDCAD",
+        await update.message.reply_text(
+            f"📍 قسم: {user_text}\nاختر العملة الآن:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        )
+        return CATEGORY_SELECTION
+    
+    # التحقق من العملة المختارة
+    symbol_to_analyze = None
+    for category_list in CATEGORIES.values():
+        if user_text in category_list:
+            symbol_to_analyze = user_text
+            break
+    
+    # إذا وجدت العملة، ابدأ التحليل مع سحب الصورة
+    if symbol_to_analyze:
+        save_last_recommendation_symbol(context, symbol_to_analyze)
+        wait_msg = await update.message.reply_text(f"⏳ استنى شويه بسحب صورة `{symbol_to_analyze}`🤌...")
+        
+        # سحب صورة الشارت أولاً
+        chart_image_path = download_chart_image(symbol_to_analyze)
+        
+        if chart_image_path and os.path.exists(chart_image_path):
+            # إرسال الصورة للمستخدم
+            with open(chart_image_path, 'rb') as photo:
+                await update.message.reply_photo(
+                    photo=photo,
+                    caption=f"📈 شارت {symbol_to_analyze} المباشر"
+                )
             
-            # المؤشرات
-            "S&P 500 (OTC)": "SP:SPX",
-            "Dow Jones (OTC)": "DJ:DJI",
-            "Nasdaq 100 (OTC)": "NASDAQ:NDX",
-            "DAX 40 (OTC)": "GER40",
-            "CAC 40 (OTC)": "FRA40",
-            "FTSE 100 (OTC)": "UK100",
-            "Hang Seng (OTC)": "HK50",
-            "Nikkei 225 (OTC)": "JPN225",
+            # استخدام الصورة للتحليل الفني
+            try:
+                # استدعاء تحليل الصورة
+                await wait_msg.edit_text(f"استنى شويه قاعد أحلل {symbol_to_analyze} 🤌...")
+                
+                # إنشاء كائن تحديث مؤقت للصورة
+                from telegram import PhotoSize
+                
+                # تحميل الصورة ككائن PhotoSize
+                photo_file = await context.bot.get_file(chart_image_path)
+                
+                # إنشاء تحديث مؤقت
+                class TempUpdate:
+                    def __init__(self, original_update, photo_path):
+                        self.effective_user = original_update.effective_user
+                        self.effective_chat = original_update.effective_chat
+                        self.message = TempMessage(photo_path)
+                
+                class TempMessage:
+                    def __init__(self, photo_path):
+                        self.photo = [TempPhotoSize(photo_path)]
+                        self.text = ""
+                
+                class TempPhotoSize:
+                    def __init__(self, file_path):
+                        self.file_path = file_path
+                    
+                    async def get_file(self):
+                        class TempFile:
+                            def __init__(self, path):
+                                self.path = path
+                            
+                            async def download_to_drive(self, destination):
+                                shutil.copy2(self.path, destination)
+                                return destination
+                        
+                        return TempFile(self.file_path)
+                
+                temp_update = TempUpdate(update, chart_image_path)
+                
+                # الحصول على إعدادات المستخدم
+                user_id = update.effective_user.id
+                candle, trade_time, _, _ = get_user_setting(user_id)
+                
+                if not candle or not trade_time:
+                    await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
+                    
+                    reply_keyboard = [[key] for key in CATEGORIES.keys()]
+                    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+                    
+                    await update.message.reply_text(
+                        "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+                        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+                    )
+                    return RECOMMENDATION_MODE
+                
+                # تحليل الصورة
+                analysis_result = await analyze_chart_image(
+                    temp_update, 
+                    context, 
+                    chart_image_path, 
+                    candle, 
+                    trade_time, 
+                    symbol_to_analyze
+                )
+                
+                await wait_msg.edit_text(
+                    analysis_result,
+                    parse_mode="Markdown"
+                )
+                
+            except Exception as e:
+                print(f"❌ خطأ في تحليل الصورة التلقائية: {e}")
+                # التحليل النصي الاحتياطي
+                analysis = get_mistral_analysis(symbol_to_analyze)
+                
+                final_msg = (
+                    f"📈 **نتائج توصية {symbol_to_analyze}**\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"{analysis}\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"🤖 **Powered by - Obeida Trading**"
+                )
+                
+                final_msg = clean_repeated_text(final_msg)
+                await wait_msg.edit_text(final_msg, parse_mode="Markdown")
             
-            # السلع
-            "Gold (OTC)": "TVC:GOLD",
-            "Silver (OTC)": "TVC:SILVER",
-            "UKOIL (OTC)": "TVC:UKOIL",
-            "USOIL (OTC)": "TVC:USOIL",
-            "Natural Gas (OTC)": "TVC:NATGAS",
-            
-            # الأسهم
-            "Apple (OTC)": "NASDAQ:AAPL",
-            "Amazon (OTC)": "NASDAQ:AMZN",
-            "Google (OTC)": "NASDAQ:GOOGL",
-            "Facebook (OTC)": "NASDAQ:META",
-            "Microsoft (OTC)": "NASDAQ:MSFT",
-            "Tesla (OTC)": "NASDAQ:TSLA",
-            "Netflix (OTC)": "NASDAQ:NFLX",
-            "Intel (OTC)": "NASDAQ:INTC",
-            "Boeing (OTC)": "NYSE:BA",
-            "Visa (OTC)": "NYSE:V",
-            "McDonald's (OTC)": "NYSE:MCD",
-            "Pfizer (OTC)": "NYSE:PFE",
-            "Coca-Cola (OTC)": "NYSE:KO",
-            "Disney (OTC)": "NYSE:DIS",
-            "Alibaba (OTC)": "NYSE:BABA",
-            "Walmart (OTC)": "NYSE:WMT"
-        }
-        
-        chart_symbol = symbol_map.get(symbol, symbol.replace(" (OTC)", ""))
-        
-        # بناء URL الشارت
-        CHART_URL = f"https://www.tradingview.com/chart/?symbol={chart_symbol}&interval=5"
-        
-        # URL API سكرين شوت
-        api_url = f"https://api.screenshotmachine.com/?key={API_KEY}&url={CHART_URL}&dimension=800x600&device=desktop&delay=3000&format=jpg"
-        
-        print(f"📥 جاري سحب صورة لـ {symbol}...")
-        
-        response = requests.get(api_url, timeout=30)
-        
-        if response.status_code == 200:
-            timestamp = int(time.time())
-            safe_symbol = symbol.replace(" ", "_").replace("/", "_").replace("(", "").replace(")", "")
-            image_path = os.path.join(IMAGE_CACHE_DIR, f"chart_{safe_symbol}_{timestamp}.jpg")
-            
-            with open(image_path, "wb") as f:
-                f.write(response.content)
-            
-            print(f"✅ تم سحب صورة {symbol} بنجاح!")
-            return image_path
+            # حذف الصورة المؤقتة
+            try:
+                os.remove(chart_image_path)
+            except:
+                pass
         else:
-            print(f"❌ خطأ في سحب الصورة: {response.status_code}")
-            return None
+            # إذا فشل سحب الصورة، استخدم التحليل النصي
+            analysis = get_mistral_analysis(symbol_to_analyze)
             
-    except Exception as e:
-        print(f"⚠️ خطأ في سحب الصورة: {e}")
-        return None
+            final_msg = (
+                f"📈 **نتائج توصية {symbol_to_analyze}**\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"{analysis}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🤖 **Powered by - Obeida Trading**"
+            )
+            
+            final_msg = clean_repeated_text(final_msg)
+            await wait_msg.edit_text(final_msg, parse_mode="Markdown")
+        
+        # عرض الأزرار للاستمرار
+        reply_keyboard = [[key] for key in CATEGORIES.keys()]
+        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        return RECOMMENDATION_MODE
+    
+    # إذا كان النص "🔙 العودة للقائمة"
+    if user_text == "🔙 العودة للقائمة":
+        reply_keyboard = [[key] for key in CATEGORIES.keys()]
+        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "🔙 **العودة للقائمة الرئيسية للتوصيات**\nاختر القسم المطلوب:",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+        )
+        return RECOMMENDATION_MODE
+    
+    # إذا لم يطابق النص أي شيء
+    await update.message.reply_text(
+        "❌ خيار غير موجود. يرجى اختيار عملة من القائمة الظاهرة في الأزرار.\n\n"
+        "اضغط 'الرجوع للقائمة الرئيسية' للعودة.",
+        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True)
+    )
+    return RECOMMENDATION_MODE
 
-# =====================================================================
-# ================ نظام التوصية وتحليل الشارت ========================
-# =====================================================================
-
-async def analyze_chart_image_triple_model(update, context, image_path, candle, trade_time, symbol):
-    """
-    تحليل صورة الشارت باستخدام النظام الثلاثي:
-    1. Pixtral: استخراج البيانات البصرية
-    2. Mistral Large: تدقيق وتطبيق هرم السلطة
-    3. Mistral Medium: تحسين وتنسيق النتيجة
-    """
+async def analyze_chart_image(update, context, image_path, candle, trade_time, symbol):
+    """تحليل صورة الشارت"""
     try:
         user_id = update.effective_user.id
         prev_context, prev_time = get_analysis_context(user_id)
@@ -939,43 +766,130 @@ async def analyze_chart_image_triple_model(update, context, image_path, candle, 
         # ضغط الصورة
         compressed_path = compress_image(image_path)
         
-        # تشفير الصورة
+        # استخدام الصورة المضغوطة للتحليل
         base64_img = encode_image(compressed_path)
         
         if not base64_img:
             return "❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة."
         
-        # ============ المرحلة 1: استخراج البيانات البصرية ============
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=context.user_data.get('wait_msg_id'),
-            text="🔍 **المرحلة 1/3:** استخراج البيانات البصرية من الصورة..."
-        )
-        
-        # استخراج وقت المنصة
-        platform_time, platform_time_raw = await extract_platform_time_from_image(base64_img)
-        
-        # ============ جمع جميع المتغيرات للبرومبت ============
-        
-        # معلومات السوق
+        # الحصول على معلومات السيولة والتوقيت
+        session_name, session_time, session_vol = get_market_session()
         gaza_time = datetime.now(GAZA_TIMEZONE)
-        session_name = get_market_session()[0] if callable(get_market_session) else "جلسة عالمية"
-        session_time = get_market_session()[1] if callable(get_market_session) else "غير محددة"
-        session_vol = get_market_session()[2] if callable(get_market_session) else "متوسطة"
+        current_hour = gaza_time.hour
+        current_minute = gaza_time.minute
+        current_second = gaza_time.second
         
-        # المتغيرات الجديدة
-        kill_zone_status = get_kill_zone_status()
-        last_minute_status = check_last_minute_status()
-        seconds_remaining = calculate_seconds_remaining(candle)
-        candle_closing_status = get_candle_closing_status(candle)
-        news_data = get_news_impact()
-        verification_timeframe = calculate_verification_timeframe(candle)
-        candle_category = get_candle_category(candle)
-        trading_strategy = get_trading_strategy(trade_time)
-        position_sizing = get_position_sizing(trade_time, news_data['multiplier'])
-        spread_estimate = get_spread_estimate(symbol)
+        # حساب الثواني المتبقية لإغلاق الشمعة
+        seconds_remaining = 60 - current_second
+        if candle.startswith('M'):
+            candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
+            seconds_remaining = (candle_minutes * 60) - ((current_minute % candle_minutes) * 60 + current_second)
+        elif candle.startswith('H'):
+            candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
+            minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
+            seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
         
-        # سياق التحليل السابق
+        candle_closing_status = f"الوقت المتبقي لإغلاق الشمعة: {seconds_remaining} ثانية"
+        if seconds_remaining < 10:
+            candle_closing_status += " ⚠️ (الوقت حرج جداً - تجنب الدخول)"
+        elif seconds_remaining < 30:
+            candle_closing_status += " ⚠️ (الوقت قصير)"
+        
+        # تحديد أوقات الأخبار الخطيرة
+        news_impact = "🟢 منخفض"
+        news_warning = ""
+        news_risk_multiplier = 1.0
+        
+        high_impact_hours = [
+            (14, 30), (16, 0), (20, 0),
+            (8, 0), (9, 0), (10, 0),
+            (2, 30), (4, 0),
+            (17, 30),
+        ]
+        
+        for news_hour, news_minute in high_impact_hours:
+            time_diff = abs((current_hour * 60 + current_minute) - (news_hour * 60 + news_minute))
+            if time_diff <= 60:
+                news_impact = "🔴 عالي جداً"
+                news_risk_multiplier = 2.5
+                news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة"
+                break
+            elif time_diff <= 120:
+                news_impact = "🟡 متوسط"
+                news_risk_multiplier = 1.5
+                news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
+                break
+        
+        # الفلتر الزمني (Kill Zones)
+        kill_zone_status = ""
+        if 10 <= current_hour < 13:
+            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
+        elif 15 <= current_hour < 18:
+            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
+        elif 0 <= current_hour < 9 or current_hour >= 22:
+            kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
+        else:
+            kill_zone_status = "خارج مناطق القتل الرئيسية"
+        
+        # معالجة "دقيقة الغدر"
+        is_last_minute = 1 if current_minute in [29, 59, 14, 44] else 0
+        last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
+        
+        # ربط معطيات الإعدادات
+        candle_category = ""
+        if candle.startswith('S'):
+            candle_category = "فريمات سريعة جداً (ثواني) - حركات سريعة وانعكاسات مفاجئة"
+        elif candle.startswith('M'):
+            candle_category = "فريمات متوسطة (دقائق) - حركات متوسطة السرعة"
+        elif candle.startswith('H'):
+            candle_category = "فريمات بطيئة (ساعات) - حركات بطيئة وثابتة"
+        elif candle.startswith('D'):
+            candle_category = "فريمات طويلة (يومي) - اتجاهات طويلة الأمد"
+        
+        trading_strategy = ""
+        position_sizing = ""
+        
+        if trade_time == "قصير (1m-15m)":
+            trading_strategy = "تداول سكالبينج (Scalping) - دخول وخروج سريع"
+            position_sizing = "حجم كبير نسبياً مع وقف خسارة ضيق"
+        elif trade_time == "متوسط (4h-Daily)":
+            trading_strategy = "تداول سوينج (Swing) - متوسط الأجل"
+            position_sizing = "حجم معتدل مع وقف خسارة متوسط"
+        elif trade_time == "طويل (Weekly-Monthly)":
+            trading_strategy = "تداول موقف (Position) - طويل الأجل"
+            position_sizing = "حجم صغير مع وقف خسارة واسع"
+        
+        # تحديد فريم التحقق الديناميكي
+        verification_timeframe = ""
+        
+        candle_value = candle[1:] if candle.startswith(('S', 'M', 'H', 'D')) else candle
+        
+        if candle.startswith('S'):
+            if candle_value in ['5', '10', '15']:
+                verification_timeframe = "S15"
+            else:
+                verification_timeframe = "S30"
+        elif candle.startswith('M'):
+            if int(candle_value) <= 5:
+                verification_timeframe = "M1"
+            elif int(candle_value) <= 15:
+                verification_timeframe = "M5"
+            else:
+                verification_timeframe = "M15"
+        elif candle.startswith('H'):
+            verification_timeframe = "H1"
+        elif candle.startswith('D'):
+            verification_timeframe = "H4"
+        
+        # إعدادات ثابتة
+        GENERATION_CONFIG = {
+            "max_tokens": 910,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "random_seed": 42
+        }
+        
+        # تحضير سياق التحليل السابق
         previous_context_info = ""
         if prev_context and prev_time:
             try:
@@ -988,245 +902,1551 @@ async def analyze_chart_image_triple_model(update, context, image_path, candle, 
             except:
                 previous_context_info = ""
         
-        # ============ المرحلة 2: البرومبت الرئيسي (Pixtral) ============
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=context.user_data.get('wait_msg_id'),
-            text="🧠 **المرحلة 2/3:** تطبيق التحليل الفني المتقدم..."
-        )
-        
-        # برومبت الرؤية - استخراج البيانات البصرية
-        VISION_PROMPT = f"""
-        🚨 **مهمة الاستخراج البصري الدقيق (Visual Data Extraction):**
-        
-        أنت خبير في قراءة وتحليل الشارتات. مهمتك هي استخراج البيانات التالية من الصورة بدقة متناهية:
-        
-        📊 **البيانات المطلوبة من الصورة:**
-        
-        1. **الوقت على المنصة:** [HH:MM:SS] - ابحث في الزاوية السفلية
-        2. **السعر الحالي:** [رقم دقيق] - اقرأ من المحور Y مقابل آخر شمعة
-        3. **آخر 3 شموع:** 
-           - الشمعة -1: [فتح، إغلاق، أعلى، أدنى، حجم الجسم، حجم الذيل العلوي، حجم الذيل السفلي]
-           - الشمعة -2: [فتح، إغلاق، أعلى، أدنى، حجم الجسم، حجم الذيل العلوي، حجم الذيل السفلي]
-           - الشمعة -3: [فتح، إغلاق، أعلى، أدنى، حجم الجسم، حجم الذيل العلوي، حجم الذيل السفلي]
-        
-        4. **مستويات الدعم/المقاومة:** [أدخل المستويات المرئية]
-        5. **القمم والقيعان:** [آخر قمة، آخر قاع]
-        6. **الفجوات السعرية (FVG):** [إن وجدت]
-        7. **الوقت المتبقي للشمعة:** [احسب من وقت المنصة وفريم {candle}]
-        
-        🎯 **التنسيق المطلوب - JSON:**
-        {{
-          "platform_time": "HH:MM:SS",
-          "current_price": 0.00000,
-          "candles": {{
-            "candle_1": {{"open": 0.0, "close": 0.0, "high": 0.0, "low": 0.0, "body_percent": 0, "upper_wick": 0, "lower_wick": 0}},
-            "candle_2": {{...}},
-            "candle_3": {{...}}
-          }},
-          "support_levels": [0.0, 0.0],
-          "resistance_levels": [0.0, 0.0],
-          "last_high": 0.0,
-          "last_low": 0.0,
-          "fvgs": [],
-          "seconds_remaining": 0
-        }}
-        
-        ⚠️ **ملاحظة هامة:** أعد JSON فقط، بدون أي نص إضافي أو شرح.
-        """
+        # البرومبت الرئيسي المحدث مع جميع الإضافات الجديدة
+        MAIN_PROMPT = f"""
+أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
+مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
+
+🎯 **قاعدة فلتر المسافة الذهبية:** أنت ملزم باستخراج السعر من المحور الأيمن (Y-axis) ومقارنته بأقرب رقم مستدير (.000). إذا كانت المسافة أقل من 0.00010، تُلغى جميع أوامر البيع/الشراء العكسية ويتم تفعيل نظام 'اللحاق بالمغناطيس السعري' - أي متابعة الاتجاه حتى لمس الرقم المستدير.
+
+{previous_context_info}
+
+🔥 **قانون الفتيلة القاتلة (The Wick Law):**
+في الصورة الواحدة، الذيل (Wick) أهم من الجسم. أي ذيل طويل يخترق منطقة سيولة ثم يعود، يعتبر "أمر تنفيذ عكسي فوراً" مهما كان اتجاه الشموع السابقة.
+✅ **قاعدة التطبيق:** إذا كان ذيل الشمعة يمثل أكثر من 60% من حجمها الإجمالي عند منطقة دعم/مقاومة، فقم بإلغاء تحليل الهيكل واعتمد على الانعكاس.
+
+💰 **ميزة التصحيح السعري الرقمي (Price Action Calibration):**
+الراديكالية في تحديد الأسعار هي المفتاح. ابحث عن "الأرقام المستديرة" (مثل 1.68000) داخل الصورة واربطها بالزخم.
+✅ **القاعدة:** إذا كان السعر متجهاً لرقم مستدير بفتحات شموع واسعة، فمن الانتحار التداول عكسه.
+📌 **التعديل الجديد:** "الرقم المستدير مغناطيس؛ لا تعطي إشارة ارتداد إلا بعد ملامسته بـ 3 نقاط على الأقل."
+
+🚀 **دمج خوارزمية الزخم (Momentum vs Structure):**
+• في الأسواق الحقيقية (Real Market)، الهيكل (Structure) هو الملك.
+• في أسواق الـ OTC، الزخم (Momentum) هو الملك.
+✅ **الشرط الإلزامي:** إذا وجدت 3 شموع متتالية بنفس اللون وبأجسام ممتلئة (>80%)، يُحظر البيع حتى لو وصل السعر لقمة تاريخية. الزخم في هذه الحالة أقوى من أي تحليل فني.
+
+🎯 **كشف التلاعب بالسيولة (Liquidity Sweep Detection):**
+بدلاً من البحث عن نماذج مثل "الرأس والكتفين"، ابحث عن "القمم المتساوية" (Equal Highs). صناع السوق يضعون أوامرهم فوقها.
+✅ **المنطق العملي:** إذا رأيت قمتين متساويتين في الصورة، يجب أن تكون التوصية: "انتظر اختراق القمة ثم ادخل بيعاً مع العودة"، وليس البيع من القمة مباشرة.
+
+📊 المرحلة 1: الفحص الأولي والتحذيرات
+1.1 نظام الأمان ثلاثي الطبقات:
+• الدرع الأساسي
+• كشف وهم الزخم: 3 شموع كبيرة، فحص الاستدامة
+• التحقق الرقمي: استخراج الأسعار من المحور اليمني ومطابقتها مع الشارت
+• توقيت إغلاق الشمعة: {candle_closing_status}
+
+1.2 كشف مخاطر OTC:
+• إشارات التلاعب: اختراق ثم عودة، انعكاس لحظي، حركة بدون حجم
+• حماية: تجنب آخر 10 ثوانٍ، أوامر معلقة، SL +20%
+
+1.3 تحليل الارتباط السعري:
+• Forex: مؤشر الدولار، العملات المرتبطة، السندات
+• Stocks: المؤشر العام، القطاع، أرباح
+• Crypto: BTC، Altcoins، مؤشر الخوف والجشع
+
+💰 المرحلة 2: التحليل الهيكلي
+2.1 تحديد الهيكل: SMC + BOS/CHoCh بدقة
+2.2 استخراج الإحداثيات: High/Low، نسبة الحركة، دقة مطلقة
+2.3 مصفاة التسعير: Discount للشراء، Premium للبيع، مناطق الطوارئ <20%/>80%
+
+💰 المرحلة 3: السيولة والزخم
+3.1 كشف وهم الزخم: فجوات، شموع خبر، ذيول طويلة، V-Reversal
+3.2 خرائط السيولة: Equal Highs/Lows، Inducement، Liquidity Sweeps، FVG
+3.3 انعكاس الزخم المفاجئ: رفض بعد اندفاع، فشل اختراق، انخفاض حجم، دايفرجنس
+
+🎯 المرحلة 4: القرار الذكي
+• POI صالح + نموذج شموعي + سلوك سعري واضح + توافق الاتجاه
+• تعديل المخاطر حسب الأخبار: SL × {news_risk_multiplier}, الحجم ÷ {news_risk_multiplier}
+• حظر كامل: أخبار قوية ±30 دقيقة، زخم وهمي، فشل الفلاتر، V-Reversal، تضارب المؤشرات
+• حل التعارض: الأولوية: الزخم → السيولة → الفجوات → الهيكل → المؤشرات → السياق الزمني
+
+💡 قاعدة كسر العرض بالاندفاع:
+"إذا تعارضت منطقة العرض مع شمعة اندفاعية (Marubozu) تخترق مستويات السيولة، اعتبر المنطقة 'مكسورة' فوراً ولا تقترح البيع إلا بعد إعادة اختبار ناجحة أو فشل اختراق مؤكد (SFP) مع تأكيد من شمعتين."
+
+📊 المرحلة 5: سلوك الشموع
+• استجابة POI: رفض/امتصاص/جانبي، القوة: جسم/ذيول، الحجم
+• قانون 3 شموع: اختبار → تصحيح → اختراق
+• التتابع الزمني: شمعة 1 رد فعل، شمعة 2 تأكيد، شمعة 3 قرار
+
+📉 المرحلة 6: MACD المحسن
+• 1-5 دقائق: تجاهل التقاطعات البطيئة ودايفرجنس عند تعارضها مع زخم قوي
+• 15-60 دقائق: خط الصفر + دايفرجنس عند POI
+• حل التعارض: سلوك سعري واضح → تجاهل MACD
+
+⏰ المرحلة 7: تعدد الإطارات
+• HTF: الاتجاه العام، MTF1: العرض/الطلب، MTF2: OB نشطة، LTF: الدخول
+• توافق: 4/4=+40, 3/4=+30, 2/4=تقليل حجم 50%, 1/4=منع الدخول
+• استراتيجية: شراء = HTF صاعد → تصحيح → OB → إشارة، بيع = HTF هابط → ارتداد → OB → إشارة
+
+🎯 المرحلة 8: درجات الثقة (معدلة)
+• + نقاط: زخم قوي (9-10) ×2 = +40، POI +25، نموذج شموعي +20، سلوك واضح +25، توافق الإطارات +30، حجم أعلى +15، أخبار هادئة +20، BOS +30، تغطية فجوة +15، اختراق مع بداية ساعة جديدة +25
+• - خصومات: تعارض مؤشرات -20، أخبار قوية -25، زخم وهمي -15، V-Reversal قريب -30، سيولة OTC منخفضة -10، بيع فوق 50% من موجة صاعدة بدون دخول Premium -40
+• مستويات: 95-100 💥💥, 85-94 💥, 70-84 🔥, 55-69 ⚡, 40-54 ❄️, <40 🚫
+
+📊 المرحلة 9: الحجم المتقدم
+• اختراق >150%, امتصاص: حجم عالي + حركة محدودة
+• تصحيح <70%, انعكاس: حجم مرتفع مفاجئ
+• نقاط التحكم: POC = دعم/مقاومة, VA 70% توازن, EVA خارج VA = قوة
+
+🔄 المرحلة 10: إدارة الصفقات
+• Long: TP1 SL للتعادل +40%, TP2 أعلى شمعة +30%, TP3 30% بترايل
+• Short: نفس النمط
+• OTC حماية: SL +20%, بعد 3 شموع، حجم 33/33/34
+
+🧠 المرحلة 11: التحليل السلوكي والتلاعب
+• الخوف، الجشع، التردد، الاستسلام
+• التلاعب: Liquidity Sweep, Stop Hunt, False Breakout, Bait Pattern
+• سلوك OTC: نمط 3 مرات، اختراقات محددة، شمعة تغير السياق، أوامر معلقة
+• التمييز: ذيل + عودة = فخ, جسم كامل + إغلاق = BOS
+
+⚠️ المرحلة 12: تثبيت القرار النهائي
+1. قرار ثابت لكل صورة متطابقة
+2. لا تغيير إلا عند تغير واضح في الشارت
+3. تأكيد مزدوج: القرار صحيح عند ظهور مرتين بنفس المعطيات
+4. تحقق من كل الأسعار والمستويات في الصورة بدقة
+
+📊 **التحليل الفني المتقدم لـ {symbol}:**
+• الإطار الزمني: {candle} ({candle_category})
+• استراتيجية التداول: {trading_strategy}
+• جلسة السوق: {session_name} ({session_time})
+• حالة السيولة: {session_vol}
+
+🔍 **المطلوب تحليل (SMC + Wyckoff + Volume Profile):**
+- رصد الـ Order Block النشط و الـ FVG غير المغطى.
+- تحديد منطقة الفخ (Inducement) والسيولة المستهدفة (BSL/SSL).
+- حساب قوة الاتجاه باستخدام (RSI Divergence) وحجم التداول.
+- تطبيق قوانين الفتيلة والزخم والأرقام المستديرة.
+
+🎯 **التنسيق المطلوب للإجابة:**
+
+📊 **ملخص فحص {symbol}:**
+- الهيكل: (صاعد/هابط/تجميع) 
+- السيولة: (أقرب فخ + الهدف القادم)
+- الفجوات: (أهم منطقة FVG نشطة)
+- تطبيق قانون الفتيلة: [نعم/لا]
+- رقم مستدير قريب: [السعر مع المسافة]
+
+🎯 **خطة التنفيذ:**
+- القرار: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡) 
+- القوة: (عالية/متوسطة/ضعيفة)
+- الدخول: [السعر الدقيق] 
+- الهدف (TP1/TP2): [مستويات السيولة]
+- الوقف (SL): [خلف منطقة الحماية] 
+- الزمن: [الوقت المتوقع بالدقائق]
+
+⚠️ **المخاطرة:**
+- الثقة: [%] 
+- نقطة الإلغاء: [السعر الذي يفسد السيناريو]
+- تطبيق قوانين جديدة: [الفجوات ✓ / الزخم ✓ / الأرقام ✓ / الفتيلة ✓]
+
+💡 **ملاحظات التحليل:**
+- {kill_zone_status}
+- {last_minute_status}
+- {candle_closing_status}
+- تأثير الأخبار: {news_impact}
+"""
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
-        vision_payload = {
+        # التحليل الأولي
+        payload_1 = {
             "model": MISTRAL_MODEL,
             "messages": [
                 {
                     "role": "user", 
                     "content": [
-                        {"type": "text", "text": VISION_PROMPT},
+                        {"type": "text", "text": MAIN_PROMPT},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
                     ]
                 }
             ],
-            "max_tokens": 910,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "random_seed": 42
+            **GENERATION_CONFIG
         }
         
-        vision_response = requests.post(MISTRAL_URL, headers=headers, json=vision_payload, timeout=45)
+        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
         
-        if vision_response.status_code != 200:
-            print(f"❌ خطأ في الاستخراج البصري: {vision_response.status_code}")
-            vision_data = {}
-        else:
-            try:
-                vision_text = vision_response.json()['choices'][0]['message']['content'].strip()
-                # محاولة استخراج JSON من النص
-                json_match = re.search(r'\{.*\}', vision_text, re.DOTALL)
-                if json_match:
-                    vision_data = json.loads(json_match.group())
-                else:
-                    vision_data = {}
-            except Exception as e:
-                print(f"⚠️ خطأ في تحليل JSON: {e}")
-                vision_data = {}
+        if response_1.status_code != 200:
+            print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
+            raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
         
-        # ============ المرحلة 3: برومبت التدقيق والتحليل المنطقي ============
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=context.user_data.get('wait_msg_id'),
-            text="🔬 **المرحلة 3/3:** تدقيق وتطبيق هرم السلطة..."
-        )
+        initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
         
-        # برومبت التدقيق - Mistral Large
+        # التدقيق والتحسين
         AUDIT_PROMPT = f"""
-        🚀 **نظام التدقيق الذكي - تطبيق هرم السلطة (Power Hierarchy):**
+        أنت محلل فني خبير متخصص في التدقيق والتحسين. مهمتك مراجعة التحليل الأول لـ {symbol} وتطبيق القواعد الجديدة:
         
-        📊 **البيانات المستخرجة من الصورة:**
-        {json.dumps(vision_data, indent=2, ensure_ascii=False)}
+        1. **قانون الفتيلة القاتلة:** تحقق من الذيول الطوحة (>60%)
+        2. **قانون الزخم الثلاثي:** 3 شموع متتالية = استمرار الاتجاه
+        3. **قانون الأرقام المستديرة:** الرقم المستدير = مغناطيس
+        4. **قانون الفجوات:** السعر يتحرك من فجوة إلى فجوة
         
-        📋 **المتغيرات البرمجية المستلمة:**
-        • فريم التداول: {candle}
-        • فريم التحقق: {verification_timeframe}
-        • استراتيجية: {trading_strategy}
-        • حجم الصفقة: {position_sizing}
-        • جلسة السوق: {session_name}
-        • حالة السيولة: {session_vol}
-        • منطقة القتل: {kill_zone_status}
-        • دقيقة الغدر: {last_minute_status}
-        • الوقت المتبقي: {seconds_remaining} ثانية
-        • حالة الشمعة: {candle_closing_status}
-        • تأثير الأخبار: {news_data['impact']} (معامل ×{news_data['multiplier']})
-        • {news_data['warning']}
-        • السبريد التقديري: {spread_estimate} نقطة
+        *التحليل الأولي:* {initial_analysis}
         
-        {previous_context_info}
+        📊 **المعطيات:**
+        • الإطار: {candle} ({candle_category})
+        • الاستراتيجية: {trading_strategy}
+        • الجلسة: {session_name} ({session_time})
+        • السيولة: {session_vol}
+        • الأخبار: {news_impact} (×{news_risk_multiplier})
         
-        🎯 **هرم السلطة النهائي (Priority Protocol):**
+        🔍 **أمر التدقيق:**
+        1. تحقق من كل سعر ومستوى مذكور في التحليل
+        2. تأكد من تطبيق جميع القواعد الجديدة
+        3. صحح أي أخطاء في الأسعار أو المستويات
+        4. أضف ملاحظات عن تطبيق القوانين الجديدة
         
-        **المستوى 1 - فلاتر الحظر المطلق:**
-        1. ✅ **فلتر المسافة الحقيقية:** إذا كانت المسافة بين السعر والهدف < 5 نقاط → القرار = احتفاظ 🟡
-        2. ✅ **فلتر السبريد:** إذا كانت المسافة الصافية < 3 نقاط → القرار = احتفاظ 🟡
-        3. ✅ **فلتر الأخبار:** إذا كانت شمعة الخبر > 300% من المتوسط → حظر لمدة 3 شموع
-        4. ✅ **فلتر الدقيقة الأخيرة:** إذا كانت الثواني المتبقية < 10 → حظر الدخول
+        🎯 **قدم تحسينك بالتنسيق التالي:**
         
-        **المستوى 2 - الزخم (Momentum):**
-        • **قاعدة 3 شموع:** إذا كانت آخر 3 شموع بنفس اللون وأجسام >80% → الزخم يلغي الهيكل
-        • **الاندفاع المؤسسي:** شمعة ماروبوزو بحجم >200% من المتوسط → استمرار الاتجاه
+        📊 **التحليل المحسن لـ {symbol}:**
+        [هنا التحليل المحسن مع التطبيق الكامل للقوانين الجديدة]
         
-        **المستوى 3 - السيولة (Liquidity):**
-        • **سحب السيولة:** هل حدث Sweep للقمة/القاع السابق؟
-        • **القمم المتساوية:** هل هناك Equal Highs/Lows؟
+        🔧 **التعديلات المطبقة:**
+        - [ ] قانون الفتيلة: [تم/غير مطلوب]
+        - [ ] قانون الزخم: [تم/غير مطلوب]
+        - [ ] قانون الأرقام: [تم/غير مطلوب]
+        - [ ] قانون الفجوات: [تم/غير مطلوب]
         
-        **المستوى 4 - الفتيلة (Wick):**
-        • **نسبة الذيل:** هل >60%؟
-        • **تأكيد الابتلاع:** هل الشمعة التالية ابتلعت 50% من الجسم؟
-        
-        **المستوى 5 - الهيكل (Structure):**
-        • BOS/CHoCh على فريم التحقق {verification_timeframe}
-        • مناطق العرض/الطلب
-        
-        **المستوى 6 - المؤشرات (Indicators):**
-        • تأتي في المرتبة الأخيرة عند التعارض
-        
-        🎯 **المطلوب - تحليل متكامل:**
-        
-        1. **تطبيق هرم السلطة** - ابدأ من المستوى 1 إلى 6
-        2. **حساب المسافة الحقيقية:** 
-           - السعر الحالي: {vision_data.get('current_price', 'غير محدد')}
-           - الهدف المقترح: [حدد الهدف]
-           - المسافة: X نقطة
-           - المسافة الصافية: X - ({spread_estimate} × 2) = Y نقطة
-           - قرار المسافة: [مقبول / غير مقبول]
-        
-        3. **تحديد سبب القرار الرئيسي** - بناءً على أعلى مستوى في الهرم
-        
-        4. **حساب الثقة:** 
-           - أساس 70 + نقاط القوة - نقاط الضعف
-           - نقاط القوة: زخم +15، سيولة +10، فتيلة +5، هيكل +5
-           - نقاط الضعف: تعارض -10، أخبار -15، مسافة صغيرة -20
-        
-        📊 **التنسيق المطلوب للإجابة:**
-        
-        📊 **التحليل الفني المتقدم لـ {symbol}:**
-        
-        **🛡️ فلاتر الحظر:**
-        • فلتر المسافة: [مقبول / غير مقبول] - المسافة: [X] نقطة
-        • فلتر السبريد: [مقبول / غير مقبول] - المسافة الصافية: [Y] نقطة
-        • فلتر الأخبار: {news_data['status']}
-        • فلتر الدقيقة الأخيرة: {last_minute_status}
-        
-        **⚡ هرم السلطة المطبق:**
-        • المستوى 1 (فلاتر): [تم التجاوز / سبب المنع]
-        • المستوى 2 (زخم): [قوي / متوسط / ضعيف]
-        • المستوى 3 (سيولة): [موجودة / غير موجودة]
-        • المستوى 4 (فتيلة): [نعم/لا - نسبة: X% - تأكيد: نعم/لا]
-        • المستوى 5 (هيكل): [صاعد/هابط/جانبي]
-        
-        **🎯 الإشارة التنفيذية:**
-        • القرار: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡)
-        • سبب القرار الرئيسي: [السبب حسب أعلى مستوى]
-        • قوة الإشارة: [عالية 💥 / متوسطة ⚡ / ضعيفة ❄️]
-        • نقطة الدخول: [السعر الدقيق]
-        • TP1: [الهدف الأول]
-        • TP2: [الهدف الثاني]
-        • SL: [وقف الخسارة]
-        
-        **⚠️ إدارة المخاطر:**
-        • الثقة: [0-100]%
-        • نقطة الإلغاء: [السعر]
-        • فريم التحقق: {verification_timeframe}
-        
-        **📝 ملاحظات التحليل:**
-        • {kill_zone_status}
-        • {candle_closing_status}
-        • وقت المنصة المستخرج: {platform_time}
-        • توقيت غزة: {gaza_time.strftime('%H:%M:%S')}
+        ⚡ **الخلاصة النهائية:**
+        [التوصية النهائية مع مستوى الثقة]
         """
         
-        audit_payload = {
+        payload_2 = {
             "model": MISTRAL_MODEL_AUDIT,
             "messages": [
                 {
                     "role": "user", 
                     "content": [
                         {"type": "text", "text": AUDIT_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "low"}}
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
                     ]
                 }
             ],
             "max_tokens": 910,
-            "temperature": 0.1,
+            "temperature": 0.2,
             "top_p": 1.0,
             "random_seed": 42
         }
         
-        audit_response = requests.post(MISTRAL_URL, headers=headers, json=audit_payload, timeout=45)
+        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
         
-        if audit_response.status_code == 200:
-            audit_result = audit_response.json()['choices'][0]['message']['content'].strip()
+        if response_2.status_code == 200:
+            audit_result = response_2.json()['choices'][0]['message']['content'].strip()
         else:
-            print(f"⚠️ خطأ في التدقيق: {audit_response.status_code}")
-            audit_result = "⚠️ تعذر إجراء التدقيق. استخدم التحليل الأساسي."
+            print(f"Obeida Vision Warning (Model 2): {response_2.status_code}")
+            audit_result = f"📋 **ملاحظة:** تعذر التدقيق - استخدام التحليل الأولي مباشرة\n\n{initial_analysis}"
         
-        # ============ المرحلة 4: التحسين والتنسيق النهائي ============
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=context.user_data.get('wait_msg_id'),
-            text="✨ **اللمسات النهائية:** تنسيق النتيجة..."
+        # تنظيف النصوص
+        audit_result = clean_repeated_text(audit_result)
+        
+        # حفظ سياق التحليل
+        save_analysis_context(user_id, audit_result)
+        
+        # إعداد النص النهائي
+        time_display = format_trade_time_for_prompt(trade_time)
+        
+        full_result = (
+            f"✅ **تم تحليل {symbol} بنجاح!**\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"{audit_result}\n\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"🔧 **الإعدادات المستخدمة:**\n"
+            f"• سرعة الشموع: {candle} ({candle_category})\n"
+            f"• استراتيجية التداول: {time_display}\n"
+            f"• فريم التحقق للكسر: {verification_timeframe}\n"
+            f"• الوقت المتبقي للإغلاق: {seconds_remaining} ثانية\n"
+            f"• جلسة السوق: {session_name} ({session_time})\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"🤖 **Powered by - Obeida Trading**"
         )
         
-        # برومبت التحسين - Mistral Medium
-        OPTIMIZE_PROMPT = f"""
-        أنت خبير في تنسيق وتحسين تقارير التحليل الفني.
+        # تنظيف النهائي
+        full_result = clean_repeated_text(full_result)
         
-        مهمتك: تحسين وتنسيق التحليل التالي ليكون واضحاً ومنظماً وجذاباً.
+        return full_result
         
-        **التحليل الأولي:**
-        {audit_result}
+    except requests.exceptions.Timeout:
+        return "⏱️ تجاوز الوقت المحدد. حاول مرة أخرى."
+    except Exception as e:
+        print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
+        return f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى."
+    finally:
+        # تنظيف الملفات المؤقتة
+        for filepath in [image_path, compressed_path]:
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except:
+                    pass
+
+async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور في وضع التوصية"""
+    user_id = update.effective_user.id
+    
+    # الحصول على آخر عملة تم اختيارها
+    last_symbol = get_last_recommendation_symbol(context)
+    
+    wait_msg = await update.message.reply_text(f"📊 استنى شوي العملة: {last_symbol} قيد تحليل 🤌...")
+    
+    try:
+        # حفظ الصورة مؤقتاً
+        photo = await update.message.photo[-1].get_file()
+        timestamp = int(time.time())
+        image_path = os.path.join(IMAGE_CACHE_DIR, f"recommendation_{user_id}_{timestamp}.jpg")
+        await photo.download_to_drive(image_path)
         
-        **تعليمات التنسيق:**
+        # الحصول على إعدادات المستخدم
+        candle, trade_time, _, _ = get_user_setting(user_id)
+        
+        if not candle or not trade_time:
+            await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
+            return RECOMMENDATION_MODE
+        
+        # تحليل الصورة
+        analysis_result = await analyze_chart_image(
+            update, 
+            context, 
+            image_path, 
+            candle, 
+            trade_time, 
+            last_symbol
+        )
+        
+        await wait_msg.edit_text(analysis_result, parse_mode="Markdown")
+                
+    except Exception as e:
+        print(f"❌ خطأ في تحليل صورة التوصية: {e}")
+        await wait_msg.edit_text("❌ حدث خطأ في معالجة الصورة. يرجى المحاولة مرة أخرى.")
+    
+    # عرض خيارات المتابعة
+    reply_keyboard = [[key] for key in CATEGORIES.keys()]
+    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+    
+    await update.message.reply_text(
+        "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return RECOMMENDATION_MODE
+
+# --- 🚀 برومبت قوي للدردشة ---
+async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء وضع الدردشة المتقدم"""
+    keyboard = [
+        ["🚀 مساعد شامل", "💼 استشارات احترافية"],
+        ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
+        ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
+        ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
+    ]
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="🚀 **وضع الدردشة مع Obeida Trading**\n\n"
+             "أنا مساعدك الذكي متعدد المجالات :\n"
+             "اختر مجال المساعدة أو أرسل سؤالك مباشرة:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+        parse_mode="Markdown"
+    )
+    return CHAT_MODE
+
+async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة رسائل الدردشة مع برومبت قوي"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    # التحقق من الأوامر الخاصة
+    if user_message == "ايقاف الدردشة":
+        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+        await update.message.reply_text(
+            "✅ تم إنهاء وضع الدردشة.",
+            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    elif user_message == "الرجوع للقائمة الرئيسية":
+        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    # برومبتات متخصصة حسب الاختيار
+    system_prompts = {
+        "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عميقة في:
+🎯 **التحليل الفني والمالي:** خبرة في أسواق المال، تحليل الشارتات، واستراتيجيات التداول
+💻 **البرمجة والتقنية:** إتقان Python، JavaScript، تطوير الويب، الذكاء الاصطناعي
+📊 **البيانات والتحليل:** تحليل البيانات، الإحصاء، وتقديم رؤى استراتيجية
+✍️ **الكتابة والإبداع:** صياغة المحتوى، التقارير، والمواد الإعلامية
+🧠 **التفكير النقدي:** حل المشكلات المعقدة، التحليل المنطقي، واتخاذ القرارات
+
+**مبادئك الأساسية:**
+1. **الدقة أولاً:** معلومات موثوقة ومدروسة
+2. **التنظيم:** هيكل واضح مع عناوين ونقاط
+3. **القيمة المضافة:** تقديم نصائح إضافية غير مطلوبة
+4. **الوضوح:** شرح المفاهيم المعقدة ببساطة
+5. **الإبداع:** حلول مبتكرة للمشكلات
+
+**تنسيق الإجابة المثالي:**
+🎯 **الجوهر:** (ملخص سريع)
+📋 **التفاصيل:** (نقاط مرتبة)
+💡 **الإثراء:** (معلومات إضافية مفيدة)
+🚀 **التطبيق:** (خطوات عملية)
+
+استخدم اللغة العربية بطلاقة مع لمسة عصرية وجذابة.""",
+
+        "💼 استشارات احترافية": """أنت Obeida Trading، مستشار احترافي في:
+📈 **الاستشارات المالية:** تحليل الأسواق، تقييم المخاطر، استراتيجيات الاستثمار
+👔 **التخطيط الاستراتيجي:** تحليل SWOT، وضع الأهداف، متابعة الأداء
+🤝 **العلاقات المهنية:** التواصل الفعال، التفاوض، بناء الشبكات
+📋 **إدارة المشاريع:** التخطيط، التنفيذ، المتابعة، التقييم
+
+**التزاماتك المهنية:**
+• الموضوعية والشفافية
+• احترام السرية المهنية
+• التطوير المستمر
+• الالتزام بالأخلاقيات المهنية
+• التركيز على النتائج العملية""",
+
+        "📈 تحليل استثماري": """أنت Obeida Trading، محلل استثماري متخصص في:
+📊 **التحليل الفني:** قراءة الشارتات، المؤشرات الفنية، أنماط التداول
+📉 **التحليل الأساسي:** الأرباح، القوائم المالية، المؤشرات الاقتصادية
+🎯 **إدارة المخاطر:** تحديد المخاطر، التحوط، موازنة المحفظة
+🔍 **البحث والتنقيب:** فرص الاستثمار، اتجاهات السوق، التنبؤات
+
+**قواعد التحليل:**
+• اعتماد البيانات الرسمية والموثوقة
+• تحليل متعدد الأبعاد
+• مراعاة السياق الاقتصادي
+• التوازن بين العائد والمخاطرة
+• الشفافية في الافتراضات""",
+
+        "👨‍💻 دعم برمجي": """أنت Obeida Trading، مبرمج خبير ودعم تقني في:
+🐍 **Python:** تطبيقات الويب، الذكاء الاصطناعي، تحليل البيانات
+🌐 **تطوير الويب:** Frontend, Backend, APIs, Databases
+🤖 **الذكاء الاصطناعي:** Machine Learning, NLP, Computer Vision
+🛠️ **حل المشكلات:** Debugging, Optimization, Best Practices
+
+**أسلوب العمل:**
+• كتابة أكواد نظيفة وموثوقة
+• شرح المفاهيم البرمجية بوضوح
+• تقديم حلول عملية وفعالة
+• تعليم أفضل الممارسات
+• دعم التعلم المستمر""",
+
+        "📝 كتابة إبداعية": """أنت Obeida Trading، كاتب إبداعي محترف في:
+📄 **المحتوى التقني:** تقارير، أبحاث، مستندات فنية
+🎨 **المحتوى التسويقي:** إعلانات، حملات، محتوى وسائل التواصل
+📚 **المحتوى التعليمي:** شروحات، دورات، مواد تعليمية
+✒️ **الكتابة الإبداعية:** قصص، مقالات، محتوى ممتع
+
+**مبادئ الكتابة:**
+• لغة عربية سليمة وجذابة
+• تنظيم منطقي وسهل المتابعة
+• تكييف الأسلوب حسب الجمهور
+• الإبداع مع الحفاظ على الدقة
+• جذب الانتباه والإقناع"""
+    }
+    
+    # تحديد البرومبت المناسب
+    selected_prompt = system_prompts.get(user_message, """أنت Obeida Trading، مساعد ذكي شامل يمتلك مزيجاً فريداً من:
+🧠 **الذكاء العميق:** فهم شامل لمجالات متعددة
+🎯 **الدقة الشديدة:** معلومات موثوقة ومدروسة بدقة
+🚀 **الإبداع العملي:** حلول مبتكرة وقابلة للتطبيق
+💡 **البصيرة الاستراتيجية:** رؤية أعمق من السؤال المطروح
+
+**شخصيتك المميزة:**
+- ذكي، صبور، ومتحمس للمعرفة
+- تتحدث بلغة عربية فصيحة مع لمسة عصرية
+- تحب التفاصيل ولكن تقدمها بشكل منظم
+- دائماً تبحث عن "القيمة المخفية" في كل سؤال
+
+**قواعدك الأساسية:**
+1. **لا تقل أبداً "لا أعرف"** - ابحث عن أفضل إجابة ممكنة
+2. **كن منظماً بشكل ممتاز** - استخدم التبويب والعناوين المناسبة
+3. **فكر في ما وراء السؤال** - قدم نصائح إضافية غير متوقعة
+4. **ادعم بأمثلة عملية** - اجعل الإجابة قابلة للتطبيق
+5. **حفز الفضول** - أضف معلومة تشجع على البحث أكثر
+
+**هيكل الإجابة الأمثل:**
+🎯 **اللب:** (تلخيص مركز في جملة واحدة)
+📊 **التفاصيل المنظمة:** (نقاط مرتبة ومنطقية)
+💎 **القيمة المضافة:** (معلومات إضافية ذكية)
+🚀 **الخطوة التالية:** (اقتراح عملي للتنفيذ)
+
+**تذكر جيداً:** أنت Obeida Trading، المساعد الذكي الذي يحول التعقيد إلى بساطة، ويمنحك دائماً أكثر مما تطلب!""")
+    
+    # إذا كان اختياراً من القائمة، اطلب التفاصيل
+    if user_message in system_prompts:
+        await update.message.reply_text(
+            f"✅ **تم اختيار: {user_message}**\n\n"
+            f"🎯 **جاهز لخدمتك في اي وقت **\n"
+            f"💬  أرسل سؤالك الآن 💬:",
+            parse_mode="Markdown"
+        )
+        return CHAT_MODE
+    
+    # إظهار حالة المعالجة
+    wait_msg = await update.message.reply_text("قاعد افكر استنى شوي 🤌...")
+    
+    try:
+        # استدعاء واجهة Mistral AI
+        payload = {
+            "model": MODEL_SUMMARY,
+            "messages": [
+                {"role": "system", "content": selected_prompt},
+                {"role": "user", "content": user_message}
+            ],
+            "max_tokens": 2500,
+            "temperature": 0.10,
+            "top_p": 1.0,
+            "random_seed": 42
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()['choices'][0]['message']['content']
+            
+            # تنظيف النص من التكرارات
+            result = clean_repeated_text(result)
+            
+            # إضافة تذييل مميز
+            footer = "\n\n━━━━━━━━━━━━\n🤖 **Powered by - Obeida Trading ** 🤖"
+            result = result + footer
+            
+            # أزرار الدردشة المتقدمة
+            chat_keyboard = [
+                ["🚀 مساعد شامل", "💼 استشارات احترافية"],
+                ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
+                ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
+                ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
+            ]
+            
+            # تقسيم الرسالة الطويلة
+            if len(result) > 4000:
+                parts = split_message(result, max_length=4000)
+                for i, part in enumerate(parts):
+                    if i == 0:
+                        await wait_msg.edit_text(
+                            f"Obeida Trading 💬\n\n{part}",
+                            parse_mode="Markdown"
+                        )
+                    else:
+                        await update.message.reply_text(part, parse_mode="Markdown")
+            else:
+                await wait_msg.edit_text(
+                    f"Obeida Trading 💬\n\n{result}",
+                    parse_mode="Markdown"
+                )
+            
+            # إرسال الأزرار بعد الرد
+            await update.message.reply_text(
+                "🔽 **اختر مجالاً آخر أو اطرح سؤالاً جديداً:**",
+                reply_markup=ReplyKeyboardMarkup(chat_keyboard, resize_keyboard=True, one_time_keyboard=False)
+            )
+            
+        else:
+            print(f"Obeida Trading Error: {response.status_code} - {response.text}")
+            await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
+    
+    except requests.exceptions.Timeout:
+        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد. السؤال يحتاج تفكيراً أعمق!\nيمكنك إعادة صياغة السؤال بشكل أوضح.")
+    except requests.exceptions.RequestException as e:
+        print(f"Network error in chat: {e}")
+        await wait_msg.edit_text("🌐 خطأ في الاتصال. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.")
+    except Exception as e:
+        print(f"خطأ في الدردشة: {e}")
+        await wait_msg.edit_text("❌ حدث خطأ غير متوقع. النظام يعمل على الإصلاح تلقائياً...")
+    
+    return CHAT_MODE
+
+# --- دالة تحليل الصورة مع جميع الإضافات الجديدة ---
+async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور للتحليل الفني المتقدم"""
+    user_id = update.effective_user.id
+    candle, trade_time, prev_context, prev_time = get_user_setting(user_id)
+    
+    if not candle or not trade_time:
+        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
+        await update.message.reply_text(
+            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
+            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
+
+    wait_msg = await update.message.reply_text(" ثواني وساقوم بتحليل 🤌...")
+    photo = await update.message.photo[-1].get_file()
+    
+    timestamp = int(time.time())
+    original_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_original.jpg")
+    compressed_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_compressed.jpg")
+    
+    try:
+        await photo.download_to_drive(original_path)
+        compressed_path = compress_image(original_path)
+        base64_img = encode_image(compressed_path)
+        
+        if not base64_img:
+            await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
+            if os.path.exists(original_path):
+                os.remove(original_path)
+            if os.path.exists(compressed_path) and compressed_path != original_path:
+                os.remove(compressed_path)
+            return MAIN_MENU
+        
+        # الحصول على معلومات السيولة والتوقيت
+        session_name, session_time, session_vol = get_market_session()
+        gaza_time = datetime.now(GAZA_TIMEZONE)
+        current_hour = gaza_time.hour
+        current_minute = gaza_time.minute
+        current_second = gaza_time.second
+        
+        # حساب الثواني المتبقية لإغلاق الشمعة
+        seconds_remaining = 60 - current_second
+        if candle.startswith('M'):
+            candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
+            seconds_remaining = (candle_minutes * 60) - ((current_minute % candle_minutes) * 60 + current_second)
+        elif candle.startswith('H'):
+            candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
+            minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
+            seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
+        
+        candle_closing_status = f"الوقت المتبقي الشمعة: {seconds_remaining} ثانية"
+        if seconds_remaining < 10:
+            candle_closing_status += " ⚠️ (الوقت حرج جداً - تجنب الدخول)"
+        elif seconds_remaining < 30:
+            candle_closing_status += " ⚠️ (الوقت قصير)"
+        
+        # نظام الدرع الأساسي (Fundamental Shield)
+        news_impact = "🟢 منخفض"
+        news_warning = ""
+        news_risk_multiplier = 1.0
+        
+        high_impact_hours = [
+            (14, 30), (16, 0), (20, 0),
+            (8, 0), (9, 0), (10, 0),
+            (2, 30), (4, 0),
+            (17, 30),
+        ]
+        
+        for news_hour, news_minute in high_impact_hours:
+            time_diff = abs((current_hour * 60 + current_minute) - (news_hour * 60 + news_minute))
+            if time_diff <= 60:
+                news_impact = "🔴 عالي جداً"
+                news_risk_multiplier = 2.5
+                news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة"
+                break
+            elif time_diff <= 120:
+                news_impact = "🟡 متوسط"
+                news_risk_multiplier = 1.5
+                news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
+                break
+        
+        # الفلتر الزمني (Kill Zones)
+        kill_zone_status = ""
+        if 10 <= current_hour < 13:
+            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
+        elif 15 <= current_hour < 18:
+            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
+        elif 0 <= current_hour < 9 or current_hour >= 22:
+            kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
+        else:
+            kill_zone_status = "خارج مناطق القتل الرئيسية"
+        
+        # معالجة "دقيقة الغدر"
+        is_last_minute = 1 if current_minute in [29, 59, 14, 44] else 0
+        last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
+        
+        # ربط معطيات الإعدادات
+        candle_category = ""
+        if candle.startswith('S'):
+            candle_category = "فريمات سريعة جداً (ثواني) - حركات سريعة وانعكاسات مفاجئة"
+        elif candle.startswith('M'):
+            candle_category = "فريمات متوسطة (دقائق) - حركات متوسطة السرعة"
+        elif candle.startswith('H'):
+            candle_category = "فريمات بطيئة (ساعات) - حركات بطيئة وثابتة"
+        elif candle.startswith('D'):
+            candle_category = "فريمات طويلة (يومي) - اتجاهات طويلة الأمد"
+        
+        trading_strategy = ""
+        position_sizing = ""
+        
+        if trade_time == "قصير (1m-15m)":
+            trading_strategy = "تداول سكالبينج (Scalping) - دخول وخروج سريع"
+            position_sizing = "حجم كبير نسبياً مع وقف خسارة ضيق"
+        elif trade_time == "متوسط (4h-Daily)":
+            trading_strategy = "تداول سوينج (Swing) - متوسط الأجل"
+            position_sizing = "حجم معتدل مع وقف خسارة متوسط"
+        elif trade_time == "طويل (Weekly-Monthly)":
+            trading_strategy = "تداول موقف (Position) - طويل الأجل"
+            position_sizing = "حجم صغير مع وقف خسارة واسع"
+        
+        # تحديد فريم التحقق الديناميكي
+        verification_timeframe = ""
+        
+        candle_value = candle[1:] if candle.startswith(('S', 'M', 'H', 'D')) else candle
+        
+        if candle.startswith('S'):
+            if candle_value in ['5', '10', '15']:
+                verification_timeframe = "S15"
+            else:
+                verification_timeframe = "S30"
+        elif candle.startswith('M'):
+            if int(candle_value) <= 5:
+                verification_timeframe = "M1"
+            elif int(candle_value) <= 15:
+                verification_timeframe = "M5"
+            else:
+                verification_timeframe = "M15"
+        elif candle.startswith('H'):
+            verification_timeframe = "H1"
+        elif candle.startswith('D'):
+            verification_timeframe = "H4"
+        
+        # إعدادات ثابتة
+        GENERATION_CONFIG = {
+            "max_tokens": 950,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "random_seed": 42
+        }
+        
+        # تحضير سياق التحليل السابق
+        previous_context_info = ""
+        if prev_context and prev_time:
+            try:
+                prev_time_obj = datetime.fromisoformat(prev_time)
+                minutes_ago = int((datetime.now() - prev_time_obj).total_seconds() / 60)
+                previous_context_info = f"""
+                📋 **ذاكرة السياق (منذ {minutes_ago} دقيقة):**
+                {prev_context}
+                """
+            except:
+                previous_context_info = ""
+        
+        # البرومبت الرئيسي المحدث مع جميع الإضافات
+        MAIN_PROMPT = f"""
+أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
+مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
+
+🎯 **التوجيه الأساسي: التركيز الكامل على استخراج البيانات وتحليل الصورة**
+أنت ملزم بالتركيز التام على الصورة المرفقة فقط. يجب أن تستخرج كل البيانات والأرقام من الصورة بكامل قدراتك البصرية. لا تتشتت بأي معلومات خارجية أو افتراضات. كل ما تحتاجه موجود في الصورة:
+
+1. **استخراج الأسعار بدقة مطلقة:** اقرأ الأسعار من المحور اليميني (Y-axis) بدقة بكسلية
+2. **تحديد الزمن الحالي:** ابحث عن ساعة المنصة في الزاوية اليسرى/اليمنى السفلية
+3. **تحليل الشموع:** افحص آخر 5-7 شموع (الأجسام، الذيول، الألوان، الأحجام)
+4. **رسم المستويات:** حدد الدعم/المقاومة، الفجوات، مناطق السيولة
+5. **التطبيق العملي:** طبق كل القواعد أدناه على البيانات المستخرجة من الصورة فقط
+
+{previous_context_info}
+
+🎯 **نظام الاستخراج البصري المتقدم (Advanced Visual Extraction System):**
+
+🔍 **المرحلة 1: مسح الصورة الشامل (Full Image Scan):**
+1. ابدأ بمسح شامل للصورة من الأعلى إلى الأسفل، ومن اليسار إلى اليمين
+2. حدد العناصر الأساسية: محور الأسعار (Y-axis)، محور الزمن (X-axis)، منطقة الشموع، ساعة المنصة
+3. استخرج البيانات التالية بالترتيب:
+   - **الأسعار:** السعر الحالي، أعلى سعر، أدنى سعر، مستويات الدعم/المقاومة
+   - **الزمن:** الوقت الحالي على الشارت، إطار الشموع ({candle})
+   - **الشموع:** آخر 5 شموع (فتحة، إغلاق، أعلى، أدنى، الجسم، الذيول)
+   - **المؤشرات:** أي مؤشرات مرئية (إن وجدت)
+
+🔍 **المرحلة 2: التحليل الاستبعادي البصري (Visual Rejection Analysis):**
+1. **الوصف الإلزامي قبل التحليل:** ابدأ بوصف الشموع الثلاث الأخيرة بدقة:
+   • **الشمعة -1:** [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]
+   • **الشمعة -2:** [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]
+   • **الشمعة -3:** [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]
+
+2. **تحليل الاتجاه الحجمي:** 
+   • إذا كانت أحجام الأجسام في ازدياد: ↝ منع أي إشارة عكسية
+   • إذا كانت أحجام الأجسام في تناقص: ↝ احتمالية انعكاس
+
+3. **الفحص الرياضي الدقيق (Anti-Visual Bias):**
+   • **السعر الحالي الملاحظ:** [قراءة مباشرة من المحور Y]
+   • **سعر الهدف الملاحظ:** [قراءة مباشرة من المستوى المستهدف]
+   • **المعادلة الحسابية:** |السعر الحالي - سعر الهدف| = [النقاط]
+   • **التأكيد:** يجب أن تتطابق الحسابات مع المسافات البصرية
+
+4. **كشف التناقضات البصرية:**
+   • إذا كانت المسافة المحسوبة ≠ المسافة المقدرة بالعين → أعد المسح
+   • تأكد من تطابق كل ذيل مع رقمه على المحور اليميني
+   • تحقق من مقياس الرسم (Scale) بوحدات متساوية
+
+🔍 **المرحلة 3: التحقق المتعدد (Multi-Layer Verification):**
+1. **التحقق المزدوج:** كل رقم يتم استخراجه يجب التحقق منه مرتين
+2. **الربط المنطقي:** تأكد من تطابق الأسعار مع مواقع الشموع
+3. **الكشف عن التناقضات:** إذا وجدت تناقضاً، أعد المسح من البداية
+
+🔥 **قانون الفتيلة المؤكدة (The Confirmed Wick Law):**
+الذيل (Wick) الطويل ليس إشارة دخول فورية بل "تحذير" يحتاج تأكيداً صارماً.
+
+✅ **قاعدة التأكيد الإلزامي الصارم:**
+1. **لا تثق في الذيل الطويل (الفتيلة) إلا إذا بدأت الشمعة التالية بالتحرك عكس اتجاه الذيل لمسافة تغطي 50% على الأقل من جسم الشمعة السابقة.**
+2. إذا لم يحدث هذا التأكيد خلال الشمعة التالية، اعتبر الذيل "فراغاً سعرياً" (Price Void) سيتم ملؤه، واستمر مع الاتجاه الأصلي بقوة.
+3. نسبة الذيل >60% تعطي أولوية للمراقبة فقط، وليس للدخول المباشر.
+4. **ممنوع إصدار إشارة انعكاس بناءً على الذيل وحده تحت أي ظرف.**
+
+❌ **سيناريو الرفض الإلزامي:**
+إذا ظهر ذيل طويل ثم أغلقت الشمعة التالية دون ابتلاع 50% من الجسم السابق:
+• تجاهل إشارة الانعكاس فوراً
+• استمر مع اتجاه الزخم السابق
+• انتظر امتلاء الفراغ السعري
+• القرار الإلزامي: "احتفاظ 🟡" حتى اكتمال التأكيد
+
+💰 **ميزة التصحيح السعري الرقمي (Price Action Calibration):**
+الراديكالية في تحديد الأسعار هي المفتاح. ابحث عن "الأرقام المستديرة" (مثل 1.68000) داخل الصورة واربطها بالزخم.
+✅ **القاعدة:** إذا كان السعر متجهاً لرقم مستدير بفتحات شموع واسعة، فمن الانتحار التداول عكسه.
+📌 **التعديل الجديد:** "الرقم مستدير مغناطيس؛ لا تعطي إشارة ارتداد إلا بعد ملامسته بـ 'ذيل' (Wick) ثم العودة للإغلاق دونه. قبل ذلك، الهدف هو لمس الرقم."
+
+🚀 **دمج خوارزمية الزخم (Momentum vs Structure):**
+• في الأسواق الحقيقية (Real Market)، الهيكل (Structure) هو الملك.
+• في أسواق الـ OTC، الزخم (Momentum) هو الملك.
+✅ **الشرط الإلزامي:** إذا وجدت 3 شموع متتالية بنفس اللون وبأجسام ممتلئة (>80%)، يُحظر البيع حتى لو وصل السعر لقمة تاريخية. الزخم في هذه الحالة أقوى من أي تحليل فني.
+
+🎯 **كشف التلاعب بالسيولة (Liquidity Sweep Detection):**
+بدلاً من البحث عن نماذج مثل "الرأس والكتفين"، ابحث عن "القمم المتساوية" (Equal Highs). صناع السوق يضعون أوامرهم فوقها.
+✅ **المنطق العملي:** إذا رأيت قمتين متساويتين في الصورة، يجب أن تكون التوصية: "انتظر اختراق القمة ثم ادخل بيعاً مع العودة"، وليس البيع من القمة مباشرة.
+
+🔄 **قفل الأمان للزخم (The Momentum Deadlock):**
+إذا رصدت 3 شموع متتالية بنفس اللون بجسم يمثل >80% من حجم الشمعة، يُحظر تماماً إصدار إشارة عكسية. في هذه الحالة، تتحول المهمة من 'توقع الانعكاس' إلى 'تحديد أقرب هدف مغناطيسي (Liquidity/Round Number)' والمطالبة باللحاق بالاتجاه.
+
+🔍 **ميزة "كشف كسر الحقيقة" (The Truth-Break Detection):**
+عند حدوث هبوط ثم صعود مفاجئ (V-Shape)، قارن حجم شمعة الارتداد بآخر شموع الهبوط. إذا ابتلعت الشمعة الخضراء آخر شمعتين حمراوين، اعتبر الهبوط السابق 'Stop Hunt' (فخ سيولة) وألغِ جميع مستويات المقاومة القريبة؛ السعر الآن في وضع اندفاع مؤسسي.
+
+🎯 **تعديل "قاعدة الرقم المستدير كهدف" (Round Number Target Logic):**
+في سوق الـ OTC، الأرقام المستديرة (مثل 0.18900) هي أهداف وليست مقاومات. لا تعطي إشارة ارتداد من الرقم مستدير إلا بعد أن يتم اختراقه بـ 'ذيل' (Wick) ثم العودة للإغلاق دونه. قبل ذلك، الهدف هو لمس الرقم.
+
+🎯 **نظام "مضاد للخسارة" - الإضافات النهائية:**
+
+🔄 **قاعدة "إعادة اختبار الفراغ" (FVG Rejection):**
+عندما يعود السعر لفجوة (FVG) هابطة بشمعة اندفاعية خضراء ولا يحترمها (لا يرتد منها للأسفل)، فهذا يسمى **Inversion FVG**.
+✅ **القاعدة التنفيذية:** بمجرد إغلاق شمعة دقيقة **فوق منتصف الفجوة الهابطة**، تتحول وظيفة هذه المنطقة من "مقاومة للبيع" إلى "منصة إطلاق للشراء". يتم إلغاء جميع أوامر البيع وإصدار إشارة شراء فورية مع جعل قاع الفجوة نقطة وقف.
+
+⏰ **ميزة "تزامن الوقت مع الرقم المستدير" (Kill-Zone Timing):**
+في الـ OTC، الدقائق التي تنتهي بـ **(5، 10، 15، 30، 45)** هي دقائق "تعديل المراكز".
+✅ **القاعدة الإلزامية:** إذا كان السعر قريباً من رقم مستدير (مثل 0.18900) عند الدقيقة **44 أو 59 أو 14 أو 29**، فإنه سيقوم بـ **"قفزة انتحارية" للمس الرقم قبل إغلاق الشمعة الكبيرة**. يُحظر إصدار إشارة انعكاس قبل هذه اللحظة، والمطلوب هو متابعة الاتجاه حتى يلمس الرقم.
+
+📊 **فلتر "ثبات الحجم البصري" (Visual Volume Stability):**
+إذا كانت الشمعة الصاعدة **تفتقر للذيل العلوي (Flat Top)**، فهذا يعني أن ضغط الشراء لم ينتهِ بعد، ولا يوجد بائعون تجرأوا على الدخول.
+✅ **قاعدة الحظر:** **ممنوع البيع حتى تظهر أول شمعة بـ 'ذيل علوي' يمثل 30% على الأقل من حجمها الكلي.** الشموع المسطحة القمة هي علامة على اندفاع مؤسسي مستمر.
+
+🛡️ **نظام "الخوارزمية لا تقهر" - الإضافات النهائية:**
+
+🎯 **قاعدة "فخ القمة المزدوجة في الـ OTC":**
+في الـ OTC، القمم المتساوية (Equal Highs) ليست مقاومات، بل هي "بنزين" للصعود.
+✅ **المنطق التنفيذي:** "إذا رأيت قمتين متساويتين والسعر يقترب منهما بـ 3 شموع خضراء، احذر البيع. السعر سيقوم بـ **'Stop Hunt' (اختراق سريع) لضرب الستوب لوز ثم يكمل صعوده أو يرتد لاحقاً**. الدخول يكون مع الاختراق وليس ضده."
+
+🎯 **ميزة "التدقيق البكسلي للمحور Y" (Precision Y-Axis):**
+أنت ملزم بمطابقة ذيل الشمعة مع الرقم المقابل له على المسطرة اليمنى بدقة.
+✅ **القاعدة الإلزامية:** "إذا كان الذيل يلمس 0.18877، فلا تقرب الهدف لـ 0.18880؛ استخدم الرقم الفعلي لحساب الفجوة السعرية (FVG) بدقة."
+
+🎯 **قانون "السيولة المغناطيسية" (Magnet Liquidity):**
+السعر يتحرك دائماً من "سيولة داخلية" (فجوة) إلى "سيولة خارجية" (قمة/قاع).
+✅ **القاعدة التنفيذية:** "عندما يغلق السعر فوق فجوة (FVG) هابطة، تصبح هذه الفجوة 'دفعاً' (Propulsion). الهدف القادم حتماً هو القمة السابقة (Old High). **لا تقترح أي صفقة بيع طالما لم يتم لمس القمة الخارجية**."
+
+🛡️ **لمسات النظام المكتمل بنسبة 100%:**
+
+🎯 **قاعدة "إغلاق الثغرة الأمنية" (The Safety Gap Rule):**
+إذا تم تغطية مسار هابط استغرق 10 دقائق بصعود استغرق دقيقتين فقط، فهذا ليس مجرد صعود، بل هو **'اندفاع مؤسسي' (Institutional Drive)**.
+✅ **قاعدة الحظر:** "في هذه الحالة، **يُمنع البيع حتى لو ظهرت شمعة حمراء صغيرة**، لأنها ستكون مجرد 'توقف مؤقت' (Rest Point) قبل انفجار ثانٍ."
+
+🎯 **ميزة "كشف الفتيلة الكاذبة" (False Wick Detection):**
+أحياناً يترك السعر ذيلاً طويلاً بالأعلى يوهمك بالهبوط، لكنه في الحقيقة "جس نبض" للسيولة.
+✅ **المنطق التنفيذي:** "إذا ترك السعر ذيلاً طويلاً (Wick) ثم أغلقت الشمعة التالية **فوق منتصف هذا الذيل**، فهذا يعني أن الذيل كان 'سحباً للسيولة' وليس رفضاً. **القرار: استمرار مع الاتجاه وليس الانعكاس**."
+
+🎯 **فلتر "وقت انتهاء الصلاحية" (The 5-Minute Fatigue):**
+في الـ OTC، الزخم غالباً ما يتعب بعد 5 شموع متتالية من نفس اللون.
+✅ **القاعدة:** "عند عد 5 شموع خضراء ممتلئة متتالية، ابدأ بالبحث عن **'شمعة المنهك' (Exhaustion Candle)** وهي شمعة كبيرة جداً بشكل مبالغ فيه (أكبر بـ 3 مرات من سابقاتها). **هذه هي اللحظة الوحيدة التي يُسمح فيها بتوقع ارتداد قصير**."
+
+⚡ **قواعد المعايرة الذاتية (Self-Calibration):**
+1. **تفضيل الزخم:** في حال التعارض بين 'منطقة عرض' (SMC) و 'اندفاع قوي' (OTC Momentum)، **يفوز الزخم دائماً**. لا تقترح البيع إلا بعد ظهور **CHoCh واضح على فريم أصغر**.
+2. **قاعدة الـ V-Shape:** أي هبوط يتم استرداده فوراً بنسبة **>100%** يعتبر فخاً. **الهدف القادم هو القمة التي تليها مباشرة**.
+3. **ميزان القوى:** قارن حجم الشموع الخضراء بالحمراء في آخر 10 دقائق؛ **اللون المسيطر حجماً هو الذي يحدد اتجاه صفقاتك** حتى لو كان الهيكل عكس ذلك.
+
+🔥 **اللمسات النهائية للخوارزمية المتكاملة:**
+
+🎯 **قاعدة "الاندفاع الانتحاري" (The Climax Rule):**
+في الـ OTC، عندما تقترب الشمعة من هدفها النهائي (مثل رقم مستدير أو قمة تاريخية)، يزداد حجمها بشكل جنوني في آخر 10 ثوانٍ.
+✅ **قاعدة الحظر:** "إذا زاد حجم جسم الشمعة الحالية عن **200% من متوسط حجم آخر 5 شموع** وهي تقترب من مستوى سيولة، فهذا يسمى **'اندفاع الذروة'**. **لا تدخل عكسه أبداً حتى يكتمل المسح بالكامل (Full Sweep) وتظهر شمعة رفض واضحة**."
+
+🎯 **ميزة "التوقيت الصفري" (The Zero-Second Filter):**
+السعر يغير سلوكه عند بدايات ونهايات الدقائق بسبب تذبذب الخوارزمية.
+✅ **القاعدة الإلزامية:** "**يُحظر إصدار إشارة دخول في الثواني (00-05) من بداية الدقيقة الجديدة، أو الثواني (55-59) من نهاية الدقيقة**، بسبب تذبذب الخوارزمية لتعديل السعر عند هذه النقاط."
+
+🎯 **قاعدة "الفجوة المكسورة" (The Inversion Logic):**
+أي منطقة عرض (Supply) يتم اختراقها بشمعة اندفاعية (Marubozu) تتحول فوراً إلى منطقة طلب (Demand).
+✅ **القاعدة التنفيذية:** "إذا عاد السعر ليلمس منطقة عرض تم اختراقها سابقاً، فالقرار هو **شراء مع الاتجاه الجديد، وليس البيع منها مرة أخرى**."
+
+🧠 **التحديث المنطقي - القواعد المدمجة حديثاً:**
+
+1. **فلتر الإنهاك (التعامل مع الانفجار السعري):**
+"قاعدة الزخم المنهك: إذا كانت الشمعة الأخيرة ضخمة جداً وبدون ذيول مقارنة بما قبلها، يُمنع الاستمرار. انتظر ذيل رفض عكسي؛ فالانفجار السعري OTC غالباً ما يتبعه انهيار مفاجئ."
+
+2. **الفراغ المغناطيسي (الأرقام المستديرة):**
+"منطق الفراغ السعري: لا تتوقع انعكاساً قبل لمس الرقم المستدير فعلياً. إذا وجد فراغ بصري بين السعر والرقم، اعتبر السعر منجذباً للرقم لإكمال السيولة قبل أي ارتداد."
+
+3. **تناقص العزم (حجم الشموع):**
+"تلاشي القوة: إذا صغر حجم أجسام الشموع المتتالية رغم ثبات اللون، تُلغى إشارة (قوي) وتتحول لـ (توقع انعكاس وشيك)؛ لأن هذا يعني انسحاب السيولة تدريجياً."
+
+4. **حماية الدقيقة الأخيرة:**
+"فلتر التلاعب الزمني: إذا حدثت حركة عنيفة في آخر 10 ثوانٍ من الشمعة، صنفها (تلاعب سيولة). اطلب الانتظار للشمعة الجديدة ولا تدخل مع الاندفاع المتأخر."
+
+🛡️ **بروتوكول "درع الحماية من الانعكاس الوهمي" (The Anti-Fakeout Shield):**
+
+1. **قاعدة الابتلاع الإلزامي (The Mandatory Engulfing Rule):**
+يُحظر تماماً إصدار إشارة "عكس الاتجاه" بناءً على ذيل (Wick) فقط، مهما كان طوله.
+الشرط: لا يتم اعتماد الانعكاس إلا إذا ظهرت شمعة عكسية تبتلع 50% على الأقل من جسم الشمعة الاندفاعية السابقة وتغلق فوق/تحت منتصفها.
+إذا لم يتحقق شرط الابتلاع، اعتبر الذيل "فخ سيولة" (Stop Hunt) واستمر مع الاتجاه الأصلي بقوة.
+
+2. **فلتر "القطار المؤسسي" (Institutional Train Filter):**
+إذا رصدت شمعة (Marubozu) ممتلئة بنسبة >90% وبحجم ضخم (أكبر بـ 200% من الشموع السابقة)، يُمنع توقع القاع أو القمة.
+القاعدة: "الزخم الممتلئ يقتل الذيول"؛ استمر في البيع/الشراء مع اتجاه الشمعة الضخمة حتى تظهر 3 شموع عرضية صغيرة متتالية، فهي العلامة الوحيدة على توقف القطار.
+
+3. **قانون "كسر الرقم المستدير بالجسم":**
+إذا اخترق "ذيل" الشمعة الرقم المستدير، فهو مغناطيس.
+إذا اخترق "جسم" الشمعة الرقم مستدير وأغلق خلفه بمسافة تزيد عن 5 نقاط، فقد تحول الرقم من (هدف) إلى (نقطة انطلاق جديدة).
+القرار: اتبع الكسر بالجسم فوراً ولا تراهن على الارتداد من الرقم المكسور.
+
+4. **ميزان "الذيل كهدف" (Wick as a Target):**
+في سوق الـ OTC، إذا ظهر ذيل طويل ولم يتبعه ارتداد فوري في الشمعة التالية، فإن هذا الذيل يصبح "فراغاً سعرياً" (Price Void).
+المهمة: تحول وظيفة النظام من "توقع الارتداد من الذيل" إلى "استهداف كسر قمة/قاع الذيل".
+
+🛡️ **التعديلات الجوهرية المضافة لمنع تكرار سيناريو الخسارة:**
+
+🎯 **1. قاعدة تأكيد الابتلاع للذيول (The Wick-Fill Filter):**
+الخطأ الذي حدث هو أننا اعتبرنا الذيل الطويل في الشارت كافياً للارتداد، بينما في الـ OTC، الذيل غالباً ما يكون مجرد "إعادة تسعير" قبل الهبوط العنيف.
+✅ **القاعدة التنفيذية:** "إذا أعطيت إشارة شراء بناءً على 'فتيلة قاتلة'، يجب أن تغلق الشمعة التالية فوراً فوق 50% من جسم الشمعة الهابطة السابقة. إذا أغلقت الشمعة التالية حمراء أو بجسم صغير (Doji)، تُلغى إشارة الشراء فوراً ويتحول المركز إلى بيع لأن الذيل أصبح 'فراغ سيولة' سيتم ملؤه."
+
+🎯 **2. تعديل منطق الأرقام المستديرة (Round Number Magnet vs Support):**
+في التحليل الأخير، السعر كسر الرقم المستدير 1470.00 بجسم الشمعة.
+✅ **القاعدة التنفيذية:** "لا تعتبر الرقم مستدير دعماً إلا إذا ارتد السعر منه بمسافة تزيد عن 15 نقطة في أول 30 ثانية. إذا ظل السعر يتذبذب فوق الرقم مستدير مباشرة بذيول صغيرة، فهذا يعني أن الرقم لا يزال يعمل كمغناطيس وليس كدعم، والهدف هو كسر الرقم والإغلاق دونه."
+
+🎯 **3. فلتر أحجام الشموع المتتالية (Volume Diminishing Filter):**
+في الشارت، لاحظنا أن الشموع الخضراء كانت أصغر بكثير من الشموع الحمراء.
+✅ **القاعدة التنفيذية:** "قاعدة ميزان القوى: إذا كانت الشموع الارتدادية (الخضراء) أصغر حجماً بنسبة 50% أو أكثر من الشموع الاندفاعية (الحمراء)، فهذا صعود وهمي (Dead Cat Bounce). يُمنع الشراء في هذه الحالة، والأولوية للدخول مع أول شمعة حمراء تبتلع الشمعة الخضراء الصغيرة."
+
+🎯 **4. قاعدة الثواني الـ 30 الأولى (The 30-Second Confirmation):**
+✅ **القاعدة التنفيذية:** "إذا لم يتحرك السعر في اتجاه التوقيت (TP1) خلال أول 30 ثانية من عمر الشمعة، فاعتبر أن التحليل قد فشل بسبب تدخل خوارزمية الـ OTC. قم بتفعيل (نظام التحوط) أو الخروج المبكر إذا أغلقت الشمعة عكس الاتجاه المتوقع بـ 5 نقاط."
+
+⚠️ **بروتوكول فض التعارض - هرم السلطة النهائي (Priority Protocol):**
+في حال وجود تعارض بين القواعد، يتم الاعتماد حسب الترتيب التالي:
+
+1. **الزخم (Momentum) - الرتبة الأعلى:**
+   ✅ **إذا كانت آخر 3 شموع ممتلئة (Marubozu) بنسبة >85%، تُلغى فوراً قاعدة الفتيلة ويُحظر الشراء عكس الاتجاه. الزخم هو الرتبة الأعلى.**
+
+2. **السيولة (Liquidity):** سحب السيولة (Stop Hunt/Liquidity Sweep) يغلب الهيكل الكلاسيكي ومستويات الدعم/المقاومة التقليدية.
+
+3. **الفتيلة (Wick):** تُستخدم كإشارة دخول فقط إذا كان الزخم ضعيفاً والأجسام صغيرة (<40% من حجم الشمعة).
+
+4. **الهيكل (Structure):** يُطبق فقط في غياب الزخم القوي والسيولة النشطة.
+
+5. **المؤشرات الفنية:** تأتي في المرتبة الأخيرة عند التعارض مع السلوك السعري.
+
+🛡️ **فلتر الرفض الإلزامي - المسافة الحقيقية (The Mandatory Rejection Filter):**
+قبل إصدار الإشارة، قم بتطبيق الفلترين التاليين:
+
+✅ **1. فلتر المسافة الحقيقية (Real Distance Filter):**
+   • **قبل إصدار الإشارة، قم بطرح السعر الحالي من الهدف يدوياً.**
+   • **إذا كانت المسافة أقل من 5 نقاط، اعتبر الصفقة غير مجدية والقرار (احتفاظ 🟡).**
+   • **الاستثناء الوحيد:** إذا كان السعر على وشك لمس رقم مستدير بدقة، يمكن الانتظار حتى اللمس.
+
+✅ **2. قائمة أسباب المنع (7 أسباب):**
+1. **زخم معاكس قوي:** آخر 3 شموع ممتلئة (>80%) في الاتجاه المعاكس
+2. **رقم مستدير غير ملموس:** السعر لم يلمس الرقم المستدير (.000/.500) بمسافة 3 نقاط على الأقل
+3. **دقيقة الغدر:** داخل الدقائق (55-59) أو (25-29) أو (40-44) أو (10-14)
+4. **زخم منهك:** الشمعة الحالية أكبر بضعفين من متوسط آخر 3 شموع
+5. **غياب التأكيد:** عدم وجود شمعة ابتلاع للجسم السابق
+6. **تضارب الإطارات:** تعارض بين {candle} و {verification_timeframe}
+7. **أخبار نشطة:** داخل نطاق ±30 دقيقة من خبر قوي
+
+🔍 **الخوارزمية:**
+1. افحص المسافة بين السعر والهدف (أقل من 5 نقاط → احتفاظ فوري)
+2. افحص الشارت لجميع أسباب المنع السبعة
+3. إذا وُجد سبب واحد → "احتفاظ 🟡"
+4. إذا لم توجد أسباب منع → تابع التحليل
+5. سجل سبب المنع في القرار النهائي بوضوح
+
+🛑 **فلتر الإنهاك والذروة (Exhaustion & Climax Filter):**
+لمنع الدخول في نهاية الموجة والوقوع في فخ الانفجار السعري:
+
+1. **كشف شمعة الإنهاك (Exhaustion Candle):**
+   • إذا كانت الشمعة الحالية أكبر بضعفين (200%) من متوسط حجم آخر 3 شموع
+   • وهي تقترب من مستوى سيولة (رقم مستدير، قمة، قاع)
+   • صنفها كـ "شمعة إنهاك" (Exhaustion Candle)
+
+2. **الإجراء الإلزامي:**
+   • **ممنوع الدخول** مع اتجاه الشمعة الإنهاكية
+   • **ممنوع الدخول** عكس اتجاهها فوراً
+   • **المطلوب:** الانتظار لشمعة تأكيد (تالية) تغلق عكس اتجاه الإنهاك
+
+3. **علامات الذروة (Climax Signs):**
+   • حجم متضخم مفاجئ (>300% من المتوسط)
+   • ذيول طويلة في نهاية موجة
+   • تسارع غير طبيعي في آخر 10 ثوانٍ
+   • اقتراب من رقم مستدير مع تسارع
+
+4. **قاعدة الحماية:**
+   "الاندفاع المتأخر هو الأكثر خطورة. إذا رأيت الشمعة تكبر وهي تقترب من الهدف، انتظر اكتمالها أولاً ثم قرر."
+
+📊 **نظام التحليل متعدد المستويات**
+
+📊 **المستوى 1: التحليل الاستراتيجي (الخريطة الكبرى) - الاستخراج من الصورة:**
+• الهيكل العام: تحليل موجات إيليوت + BOS/CHoCh - استخراجها من حركة السعر المرئية
+• مراحل Wyckoff: التحديد الدقيق لمرحلة (Accumulation/Markup/Distribution/Decline) - من سلوك الشموع
+• الحكم الزمني: توافق {verification_timeframe} مع {candle} للإشارات - التحقق من التكرارات
+• السياق السوقي: {session_name} - {session_vol} سيولة - تقدير من نشاط السعر
+
+⚡ **المستوى 2: التحليل التكتيكي (الخطة التنفيذية) - الاستخراج من الصورة:**
+• أنماط الشموع: تحليل 5 شموع سابقة + الشمعة الحالية - استخراج كل شمعة بشكل منفصل
+• Order Blocks: تحديد آخر 3 مناطق طلب/عرض نشطة - من مناطق الارتداد المرئية
+• FVG Tracking: تتبع الفجوات غير المغطاة في نطاق 50 نقطة - قياس المسافات بين الشموع
+• Liquidity Map: رسم خرائط Equal Highs/Lows + Inducement - من القمم والقيعان المرئية
+
+🎯 **المستوى 3: التحليل التنفيذي (الدخول الفوري) - الاستخراج من الصورة:**
+• Entry Triggers: شروط الدخول المباشرة (شمعة إغلاق + حجم) - من الشمعة الحالية
+• Risk Matrix: حساب RR ديناميكي حسب {news_risk_multiplier} - بناءً على المسافات المرئية
+• Position Sizing: حجم صفقة ذكي حسب {position_sizing} - من نسبة المخاطرة
+• Timing Precision: توقيت الدخول/الخروج بالثواني - من ساعة المنصة
+
+🛡️ **نظام القواعد المتقدمة (Hard-Coded Logic)**
+
+🛡️ **تحديثات الأمان البصري (Vision Updates):**
+1. **معايرة الإحداثيات:** قم برسم شبكة (X,Y) وهمية؛ المحور Y للسعر و X للزمن. طابق كل ذيل شمعة بالسعر المقابل له على المسطرة اليمنى بدقة بكسلية.
+2. **فلتر المصيدة (Retail Trap):** حدد مستويات الدعم/المقاومة "الواضحة جداً". إذا كان السعر يتذبذب عندها، لا تدخل؛ انتظر سحب السيولة (Stop Hunt) أولاً.
+3. **قاعدة الـ 50% (FVG Equilibrium):** عند رصد فجوة FVG، الهدف المغناطيسي ليس بدايتها فقط، بل خط المنتصف (0.50) منها.
+4. **قانون الزخم المؤسسي:** إذا زاد حجم جسم الشمعة عن 200% من متوسط آخر 5 شموع، تُلغى جميع إشارات الانعكاس (Counter-trend) ويتم الدخول مع الاتجاه حصراً.
+5. **التحقق من الكسر الكاذب (SFP):** لا تعتمد الكسر (BOS) إلا بإغلاق كامل للجسم. ملامسة السعر للقمة بالذيل ثم العودة تعني دخولاً عكسياً فورياً.
+
+🛡️ **طبقات الحماية الذكية:**
+1. **مصفاة الأخبار:** {news_warning if news_warning else "✅ الوضع آمن"}
+2. **فلتر التوقيت:** {kill_zone_status}
+3. **فلتر دقيقة الغدر:** {last_minute_status}
+4. **حاجز السيولة:** لا دخول مع FVG غير مغطاة في الاتجاه المعاكس
+5. **جدار الأرقام:** منع الدخول عند .000/.500 ±5 نقاط بدون CHoCh على {verification_timeframe}
+6. **توقيت إغلاق الشمعة:** {candle_closing_status}
+
+⚡ **نظام القرارات السريع:**
+• REJECTION ENTRY: ذيل طويل + إغلاق داخل النطاق = دخول عكسي فوري
+• MOMENTUM FOLLOW: 3 شموع قوية = استمرار مع الاتجاه حتى أقرب رقم مستدير
+• GAP FILLING: السعر يتحرك من فجوة إلى فجوة قبل الارتداد
+• LAST MINUTE RULE: تجاهل الانعكاسات في الدقيقة 59/29/14/44
+
+🛡️ **فلتر الاندفاع الانتحاري (Momentum Kill-Switch):**
+
+**قاعدة الحظر المطلق (The Momentum Kill-Switch):**
+1. منع الانعكاس المطلق: يُحظر تماماً إصدار إشارة (بيع) إذا كانت آخر 3 شموع خضراء ممتلئة بنسبة > 80%، حتى لو لمس السعر منطقة عرض. الاندفاع يغلب الهيكل في الـ OTC.
+2. منطقة المغناطيس العددي: إذا كان السعر ضمن نطاق 7 نقاط من رقم مستدير (.000 أو .500)، تُلغى جميع إشارات الانعكاس، وتُحول الإشارة إلى "متابعة الزخم" حتى لمس الرقم.
+3. شرط الـ Stop Hunt الإلزامي: لا تقبل دخولاً عكسياً إلا بعد حدوث "Liquidity Sweep" (ذيل طويل اخترق القمة وعاد للإغلاق تحتها) أو "شمعة رفض" واضحة. بدون هذا الدليل، استمر مع اتجاه الزخم الحالي.
+4. أولوية الاتجاه على النماذج: في فريمات الدقائق (1-5 دقائق)، يتم إلغاء جميع نماذج وايكوف والمؤشرات التقليدية إذا كان الزخم الحالي قوياً (>8 نقاط في 3 شموع).
+
+🧠 **نظام الذكاء التحليلي المتكامل**
+
+🎲 **مصفاة القرار الذكية (وزن الزخم 50% من القرار):**
+🚀 [ ] قوة الزخم الحالي: اندفاع قوي (9-10) | اندفاع متوسط (6-8) | توازن (4-5) | ضعف متوسط (2-3) | ضعف قوي (0-1)
+**وزن هذا البند: 50% من القرار النهائي** - إذا كانت آخر 3 شموع خضراء، لا يمكن كتابة كلمة "بيع" في القرار الفني
+
+[ ] اتجاه الهيكل الأساسي: صاعد قوي (9-10) | صاعد ضعيف (6-8) | جانبي (4-5) | هابط ضعيف (2-3) | هابط قوي (0-1) **وزن: 15%**
+[ ] حجم التداول النسبي: كبير جداً (9-10) | كبير (6-8) | متوسط (4-5) | صغير (2-3) | معدوم (0-1) **وزن: 10%**
+[ ] توافق الإطارات الزمنية: توافق كامل (9-10) | توافق جزئي (6-8) | تعادل (4-5) | تضارب جزئي (2-3) | تضارب كلي (0-1) **وزن: 10%**
+[ ] جودة نمط الشموع: نموذج مثالي (9-10) | نموذج جيد (6-8) | غير واضح (4-5) | نموذج ضعيف (2-3) | لا نموذج (0-1) **وزن: 5%**
+[ ] قوة مستويات S/R: مستويات قوية (9-10) | مستويات جيدة (6-8) | مستويات ضعيفة (4-5) | لا مستويات (2-3) | اختراق كامل (0-1) **وزن: 5%**
+[ ] تأثير السياق الزمني: توقيت مثالي (9-10) | توقيت جيد (6-8) | توقيت عادي (4-5) | توقيت سيء (2-3) | توقيت خطير (0-1) **وزن: 3%**
+[ ] عوامل خارجية مؤثرة: ظروف مثالية (9-10) | ظروف جيدة (6-8) | ظروف محايدة (4-5) | ظروف سيئة (2-3) | ظروف خطيرة (0-1) **وزن: 2%**
+
+📈 **حساب النتيجة النهائية:** (مجموع النقاط الموزونة / 100 × 100)%
+
+🔰 **القواعد الأساسية**
+• المدرسة: SMC + ICT + دعم كلاسيكي + فلاتر الأرقام المستديرة
+• الدرع الأساسي: {news_warning if news_warning else "✅ الوضع آمن من الأخبار"}
+• التصنيف الزمني: {candle_category}
+• استراتيجية التداول: {trading_strategy}
+• إدارة الحجم: {position_sizing}
+• أولوية الزخم: شموع ابتلاعية ≥80% + إغلاق فوق القمة السابقة = استمرار
+• منطق OTC: 3 شموع قوية → الشمعة الرابعة بنفس الاتجاه
+• تصحيح الفريم الصغير: تجاهل MACD ووايكوف عند التعارض مع السلوك السعري في فريمات الدقائق
+• كشف وهم الزخم: تحقق من استدامة الحركة
+• **استخراج البيانات:** **أسعار دقيقة من المحور اليمني - من الصورة فقط**
+• **فلتر المسافة الحقيقية:** **إذا كانت المسافة بين السعر والهدف أقل من 5 نقاط، القرار الإلزامي هو (احتفاظ 🟡)**
+• فلتر الجدوى: RR ≥ 1:2 بعد تعديل الأخبار
+• **المصداقية المطلقة:** **كن قاصياً في نقد الشارت؛ إذا لم تكن الإشارة واضحة بنسبة 90%، فالقرار الإلزامي هو (احتفاظ 🟡) ولا تخاطر بأموال المستخدم.**
+• **تقييد الوسطية:** قرار واضح فقط (شراء/بيع/احتفاظ) مع مستوى الثقة
+
+📌 **القواعد الجديدة المضافة:**
+
+⚡ **قاعدة الفتيلة القاتلة:**
+"إذا كان طول الذيل (Wick) يمثل أكثر من 60% من حجم الشمعة الكلي عند مستوى دعم أو مقاومة واضح، فهذا إشارة انعكاس قوية. تجاهل اتجاه الهيكل وادخل مع اتجاه الذيل."
+
+💰 **قاعدة الأرقام المستديرة المحسنة:**
+"السعر لا يرتد من الرقم مستدير (.000, .500) إلا بعد ملامسته بمسافة لا تقل عن 3 نقاط. قبل ذلك، يعتبر الرقم المستدير 'مغناطيس' يستهدف سحب السيولة."
+
+🚀 **قانون الزخم الثلاثي:**
+"3 شموع متتالية بنفس اللون وبأجسام ممتلئة (>80%) = قطار سريع لا تقف أمامه. محظور تماماً التداول عكسه حتى مع وجود مقاومة قوية."
+
+🎯 **فلسفة الفجوات:**
+"السعر في الـ OTC يتحرك من فجوة إلى فجوة قبل الارتداد. لا تعطي إشارة انعكاس رئيسية إلا بعد ملاحظة FVG غير مغطاة في الاتجاه المعاكس."
+
+📊 **المرحلة 1: الفحص الأولي والتحذيرات - الاستخراج من الصورة**
+1.1 **نظام الأمان ثلاثي الطبقات:**
+• الدرع الأساسي
+• كشف وهم الزخم: 3 شموع كبيرة، فحص الاستدامة - **من الشموع المرئية**
+• **التحقق الرقمي: استخراج الأسعار من المحور اليمني ومطابقتها مع الشارت - التركيز الكامل على الصورة**
+• توقيت إغلاق الشمعة: {candle_closing_status}
+
+1.2 **كشف مخاطر OTC:**
+• إشارات التلاعب: اختراق ثم عودة، انعكاس لحظي، حركة بدون حجم - **من سلوك الشموع**
+• حماية: تجنب آخر 10 ثوانٍ، أوامر معلقة، SL +20%
+
+1.3 **تحليل الارتباط السعري:**
+• Forex: مؤشر الدولار، العملات المرتبطة، السندات
+• Stocks: المؤشر العام، القطاع، أرباح
+• Crypto: BTC، Altcoins، مؤشر الخوف والجشع
+
+💰 **المرحلة 2: التحليل الهيكلي - الاستخراج من الصورة**
+2.1 تحديد الهيكل: SMC + BOS/CHoCh بدقة - **من حركة السعر المرئية**
+2.2 استخراج الإحداثيات: High/Low، نسبة الحركة، دقة مطلقة - **من الصورة فقط**
+2.3 مصفاة التسعير: Discount للشراء، Premium للبيع، مناطق الطوارئ <20%/>80%
+
+💰 **المرحلة 3: السيولة والزخم - الاستخراج من الصورة**
+3.1 كشف وهم الزخم: فجوات، شموع خبر، ذيول طويلة، V-Reversal - **من الأنماط المرئية**
+3.2 خرائط السيولة: Equal Highs/Lows، Inducement، Liquidity Sweeps، FVG - **من القمم والقيعان**
+3.3 انعكاس الزخم المفاجئ: رفض بعد اندفاع، فشل اختراق، انخفاض حجم، دايفرجنس
+
+🎯 **المرحلة 4: القرار الذكي**
+• POI صالح + نموذج شموعي + سلوك سعري واضح + توافق الاتجاه
+• تعديل المخاطر حسب الأخبار: SL × {news_risk_multiplier}, الحجم ÷ {news_risk_multiplier}
+• حظر كامل: أخبار قوية ±30 دقيقة، زخم وهمي، فشل الفلاتر، V-Reversal، تضارب المؤشرات
+• حل التعارض: الأولوية: الزخم → السيولة → الفجوات → الهيكل → المؤشرات → السياق الزمني
+
+💡 **قاعدة كسر العرض بالاندفاع:**
+"إذا تعارضت منطقة العرض مع شمعة اندفاعية (Marubozu) تخترق مستويات السيولة، اعتبر المنطقة 'مكسورة' فوراً ولا تقترح البيع إلا بعد إعادة اختبار ناجحة أو فشل اختراق مؤكد (SFP) مع تأكيد من شمعتين."
+
+📊 **المرحلة 5: سلوك الشموع - الاستخراج من الصورة**
+• استجابة POI: رفض/امتصاص/جانبي، القوة: جسم/ذيول، الحجم - **من الشموع المرئية**
+• قانون 3 شموع: اختبار → تصحيح → اختراق
+• التتابع الزمني: شمعة 1 رد فعل، شمعة 2 تأكيد، شمعة 3 قرار
+
+📉 **المرحلة 6: MACD المحسن**
+• 1-5 دقائق: تجاهل التقاطعات البطيئة ودايفرجنس عند تعارضها مع زخم قوي
+• 15-60 دقائق: خط الصفر + دايفرجنس عند POI
+• حل التعارض: سلوك سعري واضح → تجاهل MACD
+
+⏰ **المرحلة 7: تعدد الإطارات**
+• HTF: الاتجاه العام، MTF1: العرض/الطلب، MTF2: OB نشطة، LTF: الدخول
+• توافق: 4/4=+40, 3/4=+30, 2/4=تقليل حجم 50%, 1/4=منع الدخول
+• استراتيجية: شراء = HTF صاعد → تصحيح → OB → إشارة، بيع = HTF هابط → ارتداد → OB → إشارة
+
+🎯 **المرحلة 8: درجات الثقة (معدلة)**
+• + نقاط: زخم قوي (9-10) ×2 = +40، POI +25، نموذج شموعي +20، سلوك واضح +25، توافق الإطارات +30، حجم أعلى +15، أخبار هادئة +20، BOS +30، تغطية فجوة +15، اختراق مع بداية ساعة جديدة +25
+• - خصومات: تعارض مؤشرات -20، أخبار قوية -25، زخم وهمي -15، V-Reversal قريب -30، سيولة OTC منخفضة -10، بيع فوق 50% من موجة صاعدة بدون دخول Premium -40
+• مستويات: 95-100 💥💥, 85-94 💥, 70-84 🔥, 55-69 ⚡, 40-54 ❄️, <40 🚫
+
+📊 **المرحلة 9: الحجم المتقدم**
+• اختراق >150%, امتصاص: حجم عالي + حركة محدودة
+• تصحيح <70%, انعكاس: حجم مرتفع مفاجئ
+• نقاط التحكم: POC = دعم/مقاومة, VA 70% توازن, EVA خارج VA = قوة
+
+🔄 **المرحلة 10: إدارة الصفقات**
+• Long: TP1 SL للتعادل +40%, TP2 أعلى شمعة +30%, TP3 30% بترايل
+• Short: نفس النمط
+• OTC حماية: SL +20%, بعد 3 شموع، حجم 33/33/34
+
+🧠 **المرحلة 11: التحليل السلوكي والتلاعب**
+• الخوف، الجشع، التردد، الاستسلام
+• التلاعب: Liquidity Sweep, Stop Hunt, False Breakout, Bait Pattern
+• سلوك OTC: نمط 3 مرات، اختراقات محددة، شمعة تغير السياق، أوامر معلقة
+• التمييز: ذيل + عودة = فخ, جسم كامل + إغلاق = BOS
+
+⚠️ **المرحلة 12: تثبيت القرار النهائي**
+1. **قرار ثابت لكل صورة متطابقة**
+2. **لا تغيير إلا عند تغير واضح في الشارت**
+3. **تأكيد مزدوج:** القرار صحيح عند ظهور مرتين بنفس المعطيات
+4. **تحقق من كل الأسعار والمستويات في الصورة بدقة**
+
+🎯 **النظام الزمني الذكي - حساب وقت الوصول:**
+
+**🔧 إعدادات النظام الحالية:**
+• إطار الشموع: {candle} (تم ضبطه من قبل المستخدم)
+• استراتيجية التداول: {trading_strategy}
+• جلسة السوق: {session_name} ({session_time})
+• وقت التحليل الفعلي: {gaza_time.strftime('%H:%M:%S بتوقيت غزة')}
+
+**📊 المرحلة 1 - استخراج البيانات من الصورة:**
+1. **ابحث عن ساعة المنصة في الشارت (عادة في الزاوية اليسرى/اليمنى السفلى)**
+2. **سجل الوقت الحالي الذي تراه على الشارت: [ساعة:دقيقة:ثانية] - من الصورة فقط**
+3. **قدّر المسافة البصرية بين السعر الحالي والهدف (بعدد النقاط) - من الصورة فقط**
+4. **انظر إلى آخر 3 شموع واحسب متوسط حركتها (نقاط/شمعة) - من الصورة فقط**
+5. **عدد الشموع المطلوبة = المسافة ÷ متوسط حركة الشمعة**
+
+**📋 البيانات المطلوبة من الصورة:**
+• **الوقت على الشارت:** [مثال: 14:25:30] **← استخرج من الصورة**
+• **المسافة للهدف:** [عدد النقاط] نقطة **← قس من الصورة**
+• **متوسط حركة الشموع:** [نقاط/شمعة] **← احسب من الشموع المرئية**
+• **الشموع المتوقعة:** [النتيجة] شمعة **← استنتج من البيانات**
+
+**🧮 المرحلة 2 - الحساب الرياضي الدقيق (بدون تخمين بصري):**
+1. **البيانات المطلوبة كتابة في التحليل:**
+   • **السعر الحالي الملاحظ:** [يقرأ من المحور Y] 
+   • **سعر الهدف الملاحظ:** [يقرأ من المستوى المستهدف]
+   • **الفرق الرياضي:** |السعر الحالي - سعر الهدف| = [X] نقطة
+
+2. **حساب السرعة من الصورة:**
+   • **الشمعة الأخيرة:** تحركت [Y] نقطة
+   • **متوسط آخر 3 شموع:** [Z] نقطة/شمعة
+   • **المعادلة:** عدد الشموع = [X] ÷ [Z] = [N] شمعة
+
+3. **التحويل الزمني:**
+   • فريم الشموع: {candle} = {{
+       'S5': '5 ثواني', 'S10': '10 ثواني', 'S15': '15 ثواني',
+       'S30': '30 ثانية', 'M1': '60 ثانية', 'M5': '300 ثانية'
+   }}.get('{candle}', 'غير معروف')
+   
+   • **الوقت الإجمالي:** [N] × [مدة الشمعة] = [الوقت بالثواني]
+
+4. **التأكيد المزدوج:**
+   • جميع الحسابات يجب أن تكون مكتوبة
+   • يجب أن تتطابق النتائج مع التقدير البصري
+   • في حالة التناقض، الأفضلية للحساب الرياضي
+
+⏰ **مطلوب منك إضافة قسم "التوقيت الذكي" في تحليلك:**
+
+**🕐 التحليل الزمني المتقدم:**
+• **الوقت على المنصة:** [أدخل الوقت من الصورة] ← **ركز على استخراج هذا من الصورة**
+• الفريم المستخدم: {candle}
+• **المسافة المقدرة:** [X] نقطة ← **اقرأ من المحور اليميني**
+• **سرعة الشموع:** [Y] نقطة/شمعة ← **احسب من الشموع المرئية**
+• **الشموع المتوقعة:** [Z] شمعة من نوع {candle} ← **استنتج من البيانات**
+
+**🎯 نتائج التوقيت:**
+• وقت البداية (من الشارت): [الوقت] ← **من ساعة المنصة**
+• مدة الشمعة الواحدة: [تحويل {candle} إلى زمن]
+• وقت الوصول المتوقع: **[ساعة:دقيقة:ثانية بضبط]**
+• المدة الإجمالية: [تحويل إلى دقائق/ثواني]
+
+**🚀 التوصية الزمنية العملية:**
+"بناءً على سرعة الشموع في فريم **{candle}** واستراتيجية **{trading_strategy}**، السعر يحتاج **[عدد الشموع]** شمعة (≈[الزمن]) للوصول للهدف. التوقيت الأمثل للوصول: **[وقت الوصول]** - إبدأ العد التنازلي الآن!"
+
+✅ **بروتوكول التأكيد النهائي (Final Confirmation Protocol):**
+قبل إصدار أي قرار، قم بالفحص النهائي:
+
+1. **التحقق من المسافة الحقيقية (<5 نقاط → احتفاظ):** ✓
+2. **التحقق من هرم الأولويات (3 شموع >85% → إلغاء الفتيلة):** ✓
+3. **التحقق من أسباب المنع (7 أسباب):** ✓
+4. **التحقق من الحسابات الرياضية (تطابق بصري/رياضي):** ✓
+5. **التحقق من شروط التأكيد (الابتلاع 50%):** ✓
+6. **التحقق من فلتر الإنهاك (لا ذروة):** ✓
+
+🎯 **القاعدة الذهبية:**
+"إذا كان هناك شك ولو بسيط (أقل من 90% ثقة)، القرار الإلزامي هو (احتفاظ 🟡) مع ذكر سبب الشك بوضوح. السلامة أولاً قبل الربحية."
+
+**🔍 توجيه نهائي: التركيز على استخراج البيانات من الصورة فقط**
+تأكد من أن كل البيانات التي تستخدمها في التحليل مستخرجة من الصورة المرفقة فقط. لا تفترض أي أرقام أو أوقات. كل ما تحتاجه موجود في الصورة:
+
+1. **ركز على الأسعار:** اقرأها من المحور اليميني بدقة
+2. **ركز على الزمن:** ابحث عن ساعة المنصة واقرأ الوقت
+3. **ركز على الشموع:** حلل كل شمعة بشكل منفصل
+4. **ركز على المستويات:** حدد الدعم/المقاومة من حركة السعر
+5. **تطبيق هرم الأولويات:** الزخم (>85% ماروبوزو) → السيولة → الفتيلة → الهيكل
+6. **تطبيق فلتر المسافة:** إذا كانت المسافة <5 نقاط → احتفاظ فوري
+7. **تطبيق شرط التأكيد:** لا دخول عكسي بدون ابتلاع 50%
+8. **فحص أسباب المنع:** ابحث عن سبب واحد يمنع الصفقة قبل إعطاء أي إشارة
+9. **الوصف البصري أولاً:** ابدأ بوصف الشموع الثلاث الأخيرة قبل أي تحليل
+10. **الحسابات الرياضية:** اكتب المعادلات بدلاً من الاعتماد على التخمين البصري
+11. **كشف الإنهاك:** احذر الشموع الضخمة بالقرب من الأهداف
+
+**📊 المعطيات الفنية:**
+• إطار الزمن الحالي: {candle} ({candle_category})
+• فريم التحقق: {verification_timeframe} (مخصص للتحقق من كسر الهيكل)
+• استراتيجية التداول: {trading_strategy}
+• جلسة السوق: {session_name} ({session_time})
+• حالة السيولة: {session_vol}
+• تأثير الأخبار: {news_impact} (معامل ×{news_risk_multiplier})
+• حالة دقيقة الغدر: {last_minute_status}
+• {candle_closing_status}
+• توقيت التحليل: {gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}
+• المستوى: Professional باك تيست 15000 صفقة
+
+🎯 **التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصر:**
+
+📊 **التحليل الفني المتقدم:**
+• **هرم الأولويات المطبق:** [ذكر القاعدة التي تم تفعيلها - مثلاً: "3 شموع ماروبوزو >85% → إلغاء الفتيلة"]
+• **فلتر المسافة الحقيقية:** [المسافة المحسوبة: X نقطة - أقل من 5 نقاط؟ نعم/لا]
+• **أسباب المنع المفحوصة:** [قائمة بالأسباب التي تم فحصها ونتيجة كل منها]
+• **الوصف البصري الإلزامي:** 
+  - الشمعة -1: [نسبة الجسم: %]
+  - الشمعة -2: [نسبة الجسم: %] 
+  - الشمعة -3: [نسبة الجسم: %]
+  - اتجاه أحجام الأجسام: [تزايد/تناقص/ثابت]
+• **البصمة الزمنية:** {kill_zone_status}
+• **تطبيق قانون الفتيلة:** [نعم/لا] - نسبة الذيل: [٪] - حالة التأكيد: [ابتلاع/عدم ابتلاع] ← **حساب من الصورة**
+• **رقم مستدير قريب:** [السعر مع المسافة] ← **استخراج من المحور اليميني**
+• **حالة الهيكل:** (صاعد/هابط) + (توافق 4/4 إطارات: نعم/لا) ← **تحليل من حركة السعر**
+• **خريطة السيولة:** (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
+• **الفجوات السعرية:** (المناطق التي سيعود السعر لتغطيتها)
+• **ذاكرة السياق:** (ملاحظات من التحليل السابق إذا وجدت)
+
+🎯 **الإشارة التنفيذية:**
+• **التحليل الرياضي:**
+  - السعر الحالي: [القيمة]
+  - السعر المستهدف: [القيمة]  
+  - الفرق الحسابي: [نقاط]
+  - السرعة المقاسة: [نقاط/شمعة]
+  - الشموع المتوقعة: [عدد]
+• **السعر الحالي:** [السعر الدقيق من الشارت] ← **استخراج من الصورة**
+• **حالة الشمعة:** [مفتوحة / مغلقة] - الوقت المتبقي: [{seconds_remaining} ثانية]
+• **أسباب المنع النشطة:** [إذا وُجد → "احتفاظ 🟡" مع ذكر السبب]
+• **سبب القرار الرئيسي:** [بناءً على هرم الأولويات وفلتر المسافة]
+• **القرار الفني:** (شراء 🟢 / بيع 🔴 / احتفاظ 🟡) 
+• **قوة الإشارة:** (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
+• **نقطة الدخول:** [السعر الدقيق بناءً على OB + شرط الإغلاق] ← **حساب من الصورة**
+• **الأهداف الربحية:**
+🎯 TP1: [سحب أول سيولة داخلية], [احتمالية الوصول]
+🎯 TP2: [الهدف الرئيسي - منطقة عرض/طلب قوية]
+🎯 TP3: [سيولة خارجية أو سد فجوة سعرية]
+• **وقف الخسارة:** [السعر مع 3 طبقات حماية] ← **حساب من نقاط الدعم/المقاومة**
+• **المدة المتوقعة:** [عدد الدقائق] (بناءً على معادلة الزخم السعري)
+• **وقت الذروة المتوقع:** [مثلاً: خلال الـ 3 شموع القادمة]
+• **الحالة النفسية:** [خوف 🥺 / جشع 🤑 / تردد 🤌 / استسلام 👎]
+• **علامات التلاعب:** [موجودة ✔️ / غير موجودة ❎]
+
+⚠️ **إدارة المخاطر:**
+• **مستوى الثقة:** [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
+• **نقطة الإلغاء:** [السعر الذي يفسد التحليل] ← **حساب من الصورة**
+• **فريم التحقق:** {verification_timeframe} (للتأكد من كسر الهيكل الحقيقي)
+
+**🎯 التعليمات النهائية للتركيز:**
+1. **استخرج كل البيانات من الصورة فقط**
+2. **لا تفترض أي معلومات غير موجودة في الصورة**
+3. **ركز على قراءة الأسعار من المحور اليميني بدقة**
+4. **ابحث عن ساعة المنصة واقرأ الوقت بدقة**
+5. **حلل كل شمعة بشكل منفصل من الصورة**
+6. **طبق هرم الأولويات الصارم: الزخم >85% يلغي الفتيلة**
+7. **طبق فلتر المسافة الحقيقية: أقل من 5 نقاط = احتفاظ**
+8. **طبق شرط التأكيد: لا دخول عكسي بدون ابتلاع 50%**
+
+الآن قم بتحليل الشارت المرفق **بتركيز كامل على استخراج البيانات من الصورة** وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
+"""
+        
+        headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
+        
+        # --- الخطوة 1: التحليل الأولي الأساسي ---
+        await wait_msg.edit_text("استنى شويه قاعد بحلل 🤌...")
+        
+        payload_1 = {
+            "model": MISTRAL_MODEL,
+            "messages": [
+                {
+                    "role": "user", 
+                    "content": [
+                        {"type": "text", "text": MAIN_PROMPT},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                    ]
+                }
+            ],
+            **GENERATION_CONFIG
+        }
+        
+        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
+        
+        if response_1.status_code != 200:
+            print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
+            raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
+        
+        initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
+        
+        # --- الخطوة 2: التدقيق والتحسين الثاني ---
+        await wait_msg.edit_text("استنى شويه اخر لمسات 🤌...")
+        
+        # برومبت التدقيق المحدث
+        AUDIT_PROMPT = f"""
+وظيفتك الأساسية هي البحث عن تناقض بين الأسعار المذكورة في التحليل الأول وبين الأرقام الظاهرة في الصورة. إذا وجد التحليل الأول سعراً مختلفاً بينما الصورة تظهر السعر عند مختلف، قم بتصحيح كافة الأهداف بناءً على أرقام الصورة حصراً.
+
+مهمة: إجراء تدقيق عالي الدقة للأصل المالي
+
+-خطوات التنفيذ :
+- الهيكل الداخلي: حدد الهيكل السوقي (BOS / ChOCH / MSS) والمنطقة (Premium / Discount)
+- خريطة السيولة: حدد السيولة الداخلية (Equal Highs/Lows) والخارجية (Stop Loss Clusters)، وابحث عن مسح السيولة قبل أي انعكاس
+- كشف عدم الكفاءة: حدد أهم فجوة سعرية (FVG) أو فجوة انعكاس (Inversion FVG) وهل تعمل كمغناطيس أو دعم
+- تدفق الأوامر: حدد كتلة الأوامر (Order Block) أو كتلة الكسر (Breaker Block) مع تأكيد حجم تداول عالي
+- تدقيق الزخم: حلل حركة أجسام الشموع، وإذا اقترب السعر من رقم نفسي مستدير (.000, .500, .200, .800) أعط الأولوية لتأثير المغناطيس
+
+-التوجيه النهائي:
+- إذا كان الإعداد غامضاً: "NO CLEAR SETUP - STAND ASIDE"
+- إذا كان الاحتمال عالياً: [الاتجاه]، [منطقة الدخول]، [المنطق]
+- كن دقيقاً جداً، لا تخمن مستويات الأسعار
+- قاعدة التكذيب: إذا ذكر التحليل الأول أن السعر عند (X) ولكنك ترى بوضوح بالعين أن الشمعة تلامس خطاً مختلفاً على المحور Y، اضرب بالتحليل الأول عرض الحائط واعتمد إحداثيات الصورة فقط.
+
+أنت محلل فني خبير في SMC + ICT + Wyckoff + Volume Profile + Market Psychology. مهمتك: تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية متعددة الطبقات.
+
+*التحليل الأولي:* {initial_analysis}
+
+📊 القوانين الجديدة الإلزامية (نسخة شاملة):
+1. قانون "سيادة الزخم على الهيكل" (Momentum Supremacy): إذا رصدت 3 شموع متتالية أو أكثر بنفس اللون، وبأجسام ممتلئة (Marubozu) تزيد مساحتها عن 80% من طولها الإجمالي، يُمنع منعاً باتاً إصدار إشارة انعكاس (Reverse). الزخم المؤسسي يعتبر "قطاراً سريعاً"؛ أي منطقة دعم أو مقاومة سيتم اختراقها كأنها غير موجودة. القرار الإلزامي: "اللحاق بالمغناطيس السعري" حتى يلمس السعر أقرب هدف سيولة خارجي.
+2. قانون الفتيلة: ذيل >60% = انعكاس قوي.
+3. قانون الأرقام المستديرة (Round Number Magnet): الأرقام المستديرة في الـ OTC هي "أهداف" وليست "عوائق". إذا كان السعر يتحرك بزخم عالٍ باتجاه رقم مستدير، تُلغى جميع إشارات الانعكاس قبل ملامسة الرقم فعلياً. الانتظار الإلزامي: لا تدخل عكس الاتجاه إلا بعد أن "يخترق" السعر الرقم المستدير ثم يعود للإغلاق خلفه بفتيلة واضحة (SFP).
+4. قانون الفجوات: سعر → فجوة → فجوة → ارتداد.
+5. ميزان القوى الزمني (Time-Based Volatility): في الدقائق الأولى من الساعة الجديدة أو عند إغلاقات الشموع الكبيرة، السعر يبحث عن "توازن جديد". إذا تعارضت إشارة فنية مع بداية ساعة جديدة، الأولوية دائماً لـ "شمعة الغدر" التي تمسح السيولة قبل تحديد الاتجاه الحقيقي.
+6. قاعدة "السكين الساقط": أي هبوط حاد يتم استرداده فوراً بنسبة أقل من 50% من طول الموجة الهابطة يعتبر "تصحيحاً ضعيفاً" يتبعه انهيار أقوى. لا تقترح الشراء (أو البيع في الاتجاه الصاعد) إلا بعد رؤية "تغير في السلوك" (CHoCh) حقيقي.
+
+📊 الخوارزميات المتقدمة والمكملة الإلزامية:
+أ. "فخ القمة المزدوجة في الـ OTC": في الـ OTC، القمم المتساوية (Equal Highs) ليست مقاومات، بل هي "بنزين" للصعود. إذا رأيت قمتين متساويتين والسعر يقترب منهما بـ 3 شموع خضراء، احذر البيع. السعر سيقوم بـ 'Stop Hunt' لضرب الستوب لوز ثم يكمل صعوده أو يرتد لاحقاً. الدخول يكون مع الاختراق وليس ضده.
+ب. "التدقيق البكسلي للمحور Y" (Precision Y-Axis): أنت ملزم بمطابقة ذيل الشمعة مع الرقم المقابل له على المسطرة اليمنى بدقة. إذا كان الذيل يلمس 0.18877، فلا تقرب الهدف لـ 0.18880؛ استخدم الرقم الفعلي لحساب الفجوة السعرية (FVG) بدقة.
+ج. "السيولة المغناطيسية" (Magnet Liquidity): السعر يتحرك دائماً من "سيولة داخلية" (فجوة) إلى "سيولة خارجية" (قمة/قاع). عندما يغلق السعر فوق فجوة (FVG) هابطة، تصبح هذه الفجوة 'دفعاً' (Propulsion). الهدف القادم حتماً هو القمة السابقة (Old High). لا تقترح أي صفقة بيع طالما لم يتم لمس القمة الخارجية.
+د. "إغلاق الثغرة الأمنية" (The Safety Gap Rule): إذا تم تغطية مسار هابط استغرق 10 دقائق بصعود استغرق دقيقتين فقط، فهذا ليس مجرد صعود، بل هو 'اندفاع مؤسسي' (Institutional Drive). في هذه الحالة، يُمنع البيع حتى لو ظهرت شمعة حمراء صغيرة، لأنها ستكون مجرد 'توقف مؤقت' (Rest Point) قبل انفجار ثانٍ.
+ه. "فلتر الفتيلة الغادرة" (The Fake Wick Trap): لا تعتمد "الفتيلة" (Wick) كإشارة ارتداد إلا إذا كانت قد سحبت سيولة واضحة (Liquidity Sweep) من قمة أو قاع سابق. إذا ظهرت فتيلة طويلة ولكن الشمعة التالية أغلقت بجسم كامل تحت/فوق منتصف هذه الفتيلة، فهذا يسمى "Inversion"؛ أي أن الرفض فشل وتحول إلى منطقة دفع تكميلية للاتجاه السابق. القاعدة: "الجسم يبتلع الفتيلة = استمرار الانفجار السعري".
+و. "وقت انتهاء الصلاحية" (The 5-Minute Fatigue): في الـ OTC، الزخم غالباً ما يتعب بعد 5 شموع متتالية من نفس اللون. عند عد 5 شموع خضراء ممتلئة متتالية، ابدأ بالبحث عن 'شمعة المنهك' (Exhaustion Candle) وهي شمعة كبيرة جداً بشكل مبالغ فيه (أكبر بـ 3 مرات من سابقاتها). هذه هي اللحظة الوحيدة التي يُسمح فيها بتوقع ارتداد قصير.
+ز. "الاندفاع الانتحاري" (The Climax Rule): إذا زاد حجم جسم الشمعة الحالية عن 200% من متوسط حجم آخر 5 شموع وهي تقترب من مستوى سيولة، فهذا يسمى 'اندفاع الذروة'. لا تدخل عكسه أبداً حتى يكتمل المسح بالكامل (Full Sweep) وتظهر شمعة رفض واضحة.
+ح. "التوقيت الصفري" (The Zero-Second Filter): يُحظر إصدار إشارة دخول في الثواني (00-05) من بداية الدقيقة الجديدة، أو الثواني (55-59) من نهاية الدقيقة، بسبب تذبذب الخوارزمية لتعديل السعر عند هذه النقاط.
+ط. "الفجوة المكسورة" (The Inversion Logic): أي منطقة عرض (Supply) يتم اختراقها بشمعة اندفاعية (Marubozu) تتحول فوراً إلى منطقة طلب (Demand). إذا عاد السعر ليلمسها، فالقرار هو شراء مع الاتجاه الجديد، وليس البيع منها مرة أخرى.
+ي. "إعادة اختبار الفراغ" (FVG Rejection): عندما يعود السعر لفجوة (FVG) هابطة بشمعة اندفاعية خضراء ولا يحترمها (أي لا يرتد منها للأسفل)، فهذا يسمى Inversion FVG. بمجرد إغلاق شمعة دقيقة فوق منتصف الفجوة الهابطة، تتحول وظيفة هذه المنطقة من "مقاومة للبيع" إلى "منصة إطلاق للشراء".
+ك. "تزامن الوقت مع الرقم المستدير" (Kill-Zone Timing): في الـ OTC، الدقائق التي تنتهي بـ (5، 10، 15، 30، 45) هي دقائق "تعديل المراكز". إذا كان السعر قريباً من رقم مستدير (مثل 0.18900) عند الدقيقة 44 أو 59، فإنه سيقوم بـ "قفزة انتحارية" للمس الرقم قبل إغلاق الشمعة الكبيرة.
+ل. "ثبات الحجم البصري" (Visual Volume Stability): إذا كانت الشمعة الصاعدة تفتقر للذيل العلوي (Flat Top)، فهذا يعني أن ضغط الشراء لم ينتهِ بعد، ولا يوجد بائعون تجرأوا على الدخول. ممنوع البيع حتى تظهر أول شمعة بـ 'ذيل علوي' يمثل 30% من حجمها.
+م. "قفل الأمان للزخم" (The Momentum Deadlock): إذا رصدت 3 شموع متتالية بنفس اللون بجسم يمثل >80% من حجم الشمعة، يُحظر تماماً إصدار إشارة عكسية. في هذه الحالة، تتحول المهمة من 'توقع الانعكاس' إلى 'تحديد أقرب هدف مغناطيسي (Liquidity/Round Number)' والمطالبة باللحاق بالاتجاه.
+ن. "كشف كسر الحقيقة" (The Truth-Break Detection): عند حدوث هبوط ثم صعود مفاجئ (V-Shape)، قارن حجم شمعة الارتداد بآخر شموع الهبوط. إذا ابتلعت الشمعة الخضراء آخر شمعتين حمراوين، اعتبر الهبوط السابق 'Stop Hunt' (فخ سيولة) وألغِ جميع مستويات المقاومة القريبة؛ السعر الآن في وضع اندفاع مؤسسي.
+س. "قاعدة الرقم المستدير كهدف" (Round Number Target Logic): في سوق الـ OTC، الأرقام المستديرة (مثل 0.18900) هي أهداف وليست مقاومات. لا تعطي إشارة ارتداد من الرقم المستدير إلا بعد أن يتم اختراقه بـ 'ذيل' (Wick) ثم العودة للإغلاق دونه. قبل ذلك، الهدف هو لمس الرقم.
+ع. قواعد المعايرة الذاتية (Self-Calibration):
+ 1. تفضيل الزخم: في حال التعارض بين 'منطقة عرض' (SMC) و 'اندفاع قوي' (OTC Momentum)، يفوز الزخم دائماً. لا تقترح البيع إلا بعد ظهور CHoCh واضح على فريم أصغر.
+ 2. قاعدة الـ V-Shape: أي هبوط يتم استرداده فوراً بنسبة >100% يعتبر فخاً. الهدف القادم هو القمة التي تليها مباشرة.
+ 3. ميزان القوى: قارن حجم الشموع الخضراء بالحمراء في آخر 10 دقائق؛ اللون المسيطر حجماً هو الذي يحدد اتجاه صفقاتك حتى لو كان الهيكل عكس ذلك.
+
+📊 المستوى 1: التحليل الاستراتيجي
+• الهيكل العام: موجات إيليوت + BOS/CHoCh
+• مرحلة Wyckoff: Accumulation/Markup/Distribution/Decline
+• السياق الزمني: توافق {verification_timeframe} مع {candle}
+• السوق: {session_name} - {session_vol} سيولة
+
+⚡ المستوى 2: التحليل التكتيكي
+• الشموع: 5 شموع سابقة + الحالية
+• Order Blocks: آخر 3 مناطق طلب/عرض
+• FVG Tracking: فجوات غير مغطاة ≤50 نقطة
+• Liquidity Map: Equal Highs/Lows + Inducement
+
+🎯 المستوى 3: التحليل التنفيذي
+• Entry Triggers: شمعة إغلاق + حجم
+• Risk Matrix: RR ديناميكي × {news_risk_multiplier}
+• Position Sizing: {position_sizing}
+• Timing Precision: دخول/خروج بالثواني
+
+🎯 النظام الزمني الذكي - حساب وقت الوصول:
+*🔧 إعدادات النظام الحالية:*
+• إطار الشموع: {candle} (تم ضبطه من قبل المستخدم)
+• استراتيجية التداول: {trading_strategy}
+• جلسة السوق: {session_name} ({session_time})
+• وقت التحليل الفعلي: {gaza_time.strftime('%H:%M:%S بتوقيت غزة')}
+
+📊 المرحلة 1 - استخراج البيانات من الصورة:
+1. ابحث عن ساعة المنصة في الشارت (عادة في الزاوية اليسرى/اليمنى السفلى)
+2. سجل الوقت الحالي الذي تراه على الشارت: [ساعة:دقيقة:ثانية]
+3. قدّر المسافة البصرية بين السعر الحالي والهدف (بعدد النقاط)
+4. انظر إلى آخر 3 شموع واحسب متوسط حركتها (نقاط/شمعة)
+5. عدد الشموع المطلوبة = المسافة ÷ متوسط حركة الشمعة
+
+📋 البيانات المطلوبة من الصورة:
+• الوقت على الشارت: [مثال: 14:25:30]
+• المسافة للهدف: [عدد النقاط] نقطة
+• متوسط حركة الشموع: [نقاط/شمعة]
+• الشموع المتوقعة: [النتيجة] شمعة
+
+🧮 المرحلة 2 - الحساب الذكي (مع ربط الفريم):
+1. فريم الشموع: {candle}
+2. مدة كل شمعة: {{
+ 'S5': '5 ثواني',
+ 'S10': '10 ثواني',
+ 'S15': '15 ثانية',
+ 'S30': '30 ثانية',
+ 'M1': '1 دقيقة',
+ 'M2': '2 دقيقة',
+ 'M3': '3 دقائق',
+ 'M5': '5 دقائق',
+ 'M10': '10 دقائق',
+ 'M15': '15 دقيقة',
+ 'M30': '30 دقيقة',
+ 'H1': '1 ساعة',
+ 'H4': '4 ساعات',
+ 'D1': '1 يوم'
+}}.get('{candle}', '{candle}')
+
+3. المعادلة:
+ وقت الوصول = الوقت من الشارت + (عدد الشموع × مدة الشمعة)
+
+4. تطبيق إعدادات المستخدم:
+ - الفريم: {candle}
+ - الإستراتيجية: {trading_strategy}
+ - حجم الصفقة: {position_sizing}
+
+⏰ مطلوب منك إضافة قسم "التوقيت الذكي" في تحليلك:
+
+🕐 التحليل الزمني المتقدم:
+• الوقت على المنصة: [أدخل الوقت من الصورة]
+• الفريم المستخدم: {candle}
+• المسافة المقدرة: [X] نقطة
+• سرعة الشموع: [Y] نقطة/شمعة
+• الشموع المتوقعة: [Z] شمعة من نوع {candle}
+
+🎯 نتائج التوقيت:
+• وقت البداية (من الشارت): [الوقت]
+• مدة الشمعة الواحدة: [تحويل {candle} إلى زمن]
+• وقت الوصول المتوقع: [ساعة:دقيقة:ثانية بضبط]
+• المدة الإجمالية: [تحويل إلى دقائق/ثواني]
+
+🚀 التوصية الزمنية العملية:
+"بناءً على سرعة الشموع في فريم {candle} واستراتيجية {trading_strategy}، السعر يحتاج [عدد الشموع] شمعة (≈[الزمن]) للوصول للهدف. التوقيت الأمثل للوصول: [وقت الوصول] - إبدأ العد التنازلي الآن!"
+
+💡 ملاحظة هامة:
+تأكد من أن الوقت الذي تستخرجه من الصورة يتوافق مع توقيت {gaza_time.strftime('%H:%M:%S بتوقيت غزة')}. إذا كان هناك فارق زمني، قم بضبط الحساب وفقاً لذلك.
+
+🛡️ طبقات الحماية
+1. فلتر الأخبار: {news_warning if news_warning else "✅ آمن"}
+2. Kill Zone: {kill_zone_status}
+3. فلتر دقيقة الغدر: {last_minute_status}
+4. حاجز السيولة: لا دخول عكس FVG غير مغطاة
+5. أرقام مستديرة: منع دخول ±5 نقاط بدون CHoCh
+6. توقيت إغلاق الشمعة: {candle_closing_status}
+
+⚡ قواعد سريعة
+• REJECTION ENTRY: ذيل طويل + إغلاق داخل النطاق
+• MOMENTUM FOLLOW: 3 شموع قوية → استمرار الاتجاه
+• GAP FILLING: تحرك من فجوة إلى فجوة قبل الارتداد
+• LAST MINUTE RULE: تجاهل انعكاسات الدقيقة 29/59/14/44
+
+🔍 أمر التدقيق:
+1. تحقق من كل سعر ومستوى مذكور في التحليل مع الصورة بدقة بكسلية
+2. تأكد من تطبيق جميع القواعد التالية:
+ - فلتر المسافة الذهبية: إذا كان السعر قريب من رقم مستدير (<0.00010)، فالقرار يجب أن يكون متابعة الزخم
+ - فلتر الأرقام المستديرة: فريم التحقق = {verification_timeframe}
+ - قاعدة المغناطيس للفجوات
+ - ميزان القوى (الهيكل vs الزخم)
+ - قاعدة التنبيه من الفجوات السعرية
+3. تحقق من صحة:
+ • الأسعار الدقيقة من المحور اليمني
+ • مناطق FVG والحاجة لتغطيتها
+ • تطابق الهيكل مع مرحلة وايكوف
+ • صحة قوة الإشارة بناءً على النقاط المحسوبة
+4. صحح أي أخطاء في:
+ • تحديد السعر الحالي
+ • نقاط الدخول والخروج
+ • مستويات الثقة
+ • مدة الصفقة المتوقعة
+
+*تذكر:* يجب أن يكون تدقيقك موضوعياً ويعتمد على الصورة فقط. لا تخترع أسعاراً أو مستويات غير موجودة.
+
+📊 المعطيات الفنية:
+• الإطار الحالي: {candle} ({candle_category})
+• فريم التحقق: {verification_timeframe}
+• استراتيجية التداول: {trading_strategy}
+• جلسة السوق: {session_name} ({session_time}), السيولة: {session_vol}
+• تأثير الأخبار: {news_impact} ×{news_risk_multiplier}
+• حالة دقيقة الغدر: {last_minute_status}
+• توقيت إغلاق الشمعة: {candle_closing_status}
+• توقيت التحليل: {gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}
+• المستوى: Professional باك تيست 15000 صفقة
+
 🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصرآ:
 
 📊 التحليل الفني المتقدم:
@@ -1258,56 +2478,154 @@ async def analyze_chart_image_triple_model(update, context, image_path, candle, 
 • نقطة الإلغاء: [السعر الذي يفسد التحليل]
 
 الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط، بدون أي نص إضافي أو تفسيرات خارج الهيكل.
-        """
+"""
         
-        optimize_payload = {
-            "model": MODEL_SUMMARY,
-            "messages": [{"role": "user", "content": OPTIMIZE_PROMPT}],
-            "max_tokens": 910,
-            "temperature": 0.2
+        payload_2 = {
+            "model": MISTRAL_MODEL_AUDIT,
+            "messages": [
+                {
+                    "role": "user", 
+                    "content": [
+                        {"type": "text", "text": AUDIT_PROMPT},
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                    ]
+                }
+            ],
+            "max_tokens": 950,
+            "temperature": 0.2,
+            "top_p": 1.0,
+            "random_seed": 42
         }
         
-        optimize_response = requests.post(MISTRAL_URL, headers=headers, json=optimize_payload, timeout=30)
+        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
         
-        if optimize_response.status_code == 200:
-            optimized_result = optimize_response.json()['choices'][0]['message']['content'].strip()
+        if response_2.status_code == 200:
+            audit_result = response_2.json()['choices'][0]['message']['content'].strip()
         else:
-            optimized_result = audit_result
+            print(f"Obeida Vision Warning (Model 2): {response_2.status_code} - استخدام التحليل الأول")
+            audit_result = f"📋 **ملاحظة:** تعذر التدقيق - استخدام التحليل الأولي مباشرة\n\n{initial_analysis}"
         
-        # تنظيف النص من التكرارات
-        optimized_result = clean_repeated_text(optimized_result)
+        # تنظيف النصوص من التكرار
+        audit_result = clean_repeated_text(audit_result)
         
-        # حفظ سياق التحليل
-        save_analysis_context(user_id, optimized_result)
+        # حفظ سياق التحليل في قاعدة البيانات
+        save_analysis_context(user_id, audit_result)
         
-        # استخراج مستوى الثقة من التحليل
-        confidence_match = re.search(r'الثقة:\s*(\d+)%', optimized_result)
-        confidence = int(confidence_match.group(1)) if confidence_match else 70
+        keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
         
-        # حفظ سجل التحليل
-        save_analysis_history(user_id, symbol, candle, trade_time, optimized_result[:200], confidence)
+        # تنسيق وقت الصفقة للعرض
+        time_display = format_trade_time_for_prompt(trade_time)
         
-        return optimized_result
+        # إعداد النص النهائي
+        full_result = (
+            f"✅ **تم التحليل  صفقتك بنجاح** ✅\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"{audit_result}\n\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"🔧 **الإعدادات المستخدمة:**\n"
+            f"•🕧 فريم التحقق للكسر: {verification_timeframe}\n"
+            f"•🕧 جلسة السوق: {session_name} ({session_time})\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"🤖 **Powered by - Obeida Trading**"
+        )
+        
+        # تنظيف النهائي من التكرارات
+        full_result = clean_repeated_text(full_result)
+        
+        # تقسيم النتيجة إذا كانت طويلة
+        if len(full_result) > 4000:
+            parts = split_message(full_result, max_length=4000)
+            
+            # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
+            await wait_msg.edit_text(
+                parts[0],
+                parse_mode="Markdown"
+            )
+            
+            # إرسال الأجزاء المتبقية
+            for part in parts[1:]:
+                await update.message.reply_text(part, parse_mode="Markdown")
+        else:
+            await wait_msg.edit_text(
+                full_result,
+                parse_mode="Markdown"
+            )
+        
+        # إرسال الأزرار
+        await update.message.reply_text(
+            "📊 **اختر الإجراء التالي:**",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
         
     except requests.exceptions.Timeout:
-        return "⏱️ **تجاوز الوقت المحدد**\nيرجى المحاولة مرة أخرى."
+        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
     except Exception as e:
         print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
-        return f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}"
+        keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
+        await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
     finally:
         # تنظيف الملفات المؤقتة
+        for filepath in [original_path, compressed_path]:
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except Exception as e:
+                    print(f"⚠️ خطأ في حذف الملف المؤقت: {e}")
+    
+    return MAIN_MENU
+
+# --- حارس الأخطاء (Error Handler) ---
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """معالجة الأخطاء في البوت"""
+    try:
+        error_msg = f"❌ حدث خطأ في البوت:\n"
+        
+        if update and hasattr(update, 'effective_user'):
+            error_msg += f"المستخدم: {update.effective_user.id}\n"
+        
+        error_msg += f"الخطأ: {context.error}\n"
+        
+        tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+        tb_string = ''.join(tb_list)
+        
+        with open("bot_errors.log", "a", encoding="utf-8") as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"الخطأ: {error_msg}\n")
+            f.write(f"Traceback:\n{tb_string}\n")
+            f.write(f"{'='*60}\n")
+        
+        print(f"❌ خطأ مسجل: {error_msg}")
+        
+        if update and hasattr(update, 'effective_chat'):
+            try:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="⚠️ حدث خطأ تقني. النظام يعمل على إصلاحه تلقائياً. يرجى المحاولة مرة أخرى."
+                )
+            except:
+                pass
+        
+        if isinstance(context.error, (NetworkError, TimedOut, ConnectionError)):
+            print("🌐 خطأ في الشبكة، محاولة الاستمرار...")
+            
+    except Exception as e:
+        print(f"❌ خطأ في معالج الأخطاء نفسه: {e}")
+
+# --- وظيفة تنظيف دورية للملفات المؤقتة ---
+async def periodic_cleanup():
+    """تنظيف دوري للملفات المؤقتة"""
+    while True:
         try:
-            if os.path.exists(image_path):
-                os.remove(image_path)
-            if 'compressed_path' in locals() and os.path.exists(compressed_path) and compressed_path != image_path:
-                os.remove(compressed_path)
-        except:
-            pass
+            await asyncio.sleep(1800)
+            cleanup_old_images()
+            cleanup_old_database_records()
+            print("🧹 تم التنظيف الدوري للملفات المؤقتة")
+            
+        except Exception as e:
+            print(f"⚠️ خطأ في التنظيف الدوري: {e}")
 
-# =====================================================================
-# ================ معالجات Telegram ==================================
-# =====================================================================
-
+# --- الدوال الأساسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء البوت"""
     if update.effective_user:
@@ -1319,13 +2637,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     await update.message.reply_text(
-        "🚀 **أهلاً بك في Obeida Trading**\n\n"
-        "🤖 **الخدمات المتاحة:**\n"
-        "• 📊 **تحليل الشارتات** - نظام ثلاثي المراحل\n"
-        "• 📈 **توصيات جاهزة** - مع سحب الصور تلقائياً\n"
-        "• 💬 **دردشة ذكية** - مساعد متعدد التخصصات\n"
-        "• ⚙️ **إعدادات مخصصة** - ضبط الفريم والمدة\n\n"
-        "⬇️ **اختر أحد الخيارات:** ⬇️",
+        "🚀 *أهلاً بك في Obeida Trading*\n\n"
+        "🤖 *⬇️ نقدم لكم الخدمات التالية ⬇️*"
+        "• 📊 نظام تحليل شارت \n"
+        "• 📈 نظام توصيات الجاهزة \n"
+        "• 💬 نظام دردشة الذكية \n"
+        "•⚙️ إعدادات تخصيص كاملة ⚙️ \n\n"
+        "اختر أحد الخيارات:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
     )
@@ -1341,10 +2659,9 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(["الرجوع للقائمة الرئيسية"])
         
         await update.message.reply_text(
-            "⚙️ **إعدادات التحليل الفني**\n\n"
-            "🕧 **اختر سرعة الشموع:**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
+            "⚙️ *إعدادات التحليل الفني*\n\n"
+            "حدد سرعة الشموع للبدء:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         return SETTINGS_CANDLE
     
@@ -1354,22 +2671,26 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not candle or not trade_time:
             keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
             await update.message.reply_text(
-                "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-                "الرجاء ضبط سرعة الشموع ومدة الصفقة من قائمة الإعدادات.",
+                "❌ *يجب ضبط الإعدادات أولاً*\n\n"
+                "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
                 parse_mode="Markdown"
             )
             return MAIN_MENU
         else:
             keyboard = [["الرجوع للقائمة الرئيسية"]]
+            
             time_display = format_trade_time_for_prompt(trade_time)
             
             await update.message.reply_text(
-                f"📊 **نظام التحليل جاهز**\n\n"
-                f"⚙️ **الإعدادات الحالية:**\n"
-                f"• 🕧 سرعة الشموع: {candle}\n"
-                f"• 📈 استراتيجية: {time_display}\n\n"
-                f"📤 **الرجاء إرسال صورة الشارت الآن:**",
+                f"📊* نظام جاهز لتحليل *:\n\n"
+                f"⚙️ الإعدادات الذي تستخدمها ⚙️:\n"
+                f"•🏃 سرعة الشموع: {candle}\n"
+                f"•🕧 استراتيجية : {time_display}\n\n"
+                f"📡 *نظام التحليل الشارات :* \n"
+                f"1. 🔧 مرحلة تفكيك هيكل الشارت \n"
+                f"2. 🔬 مرحلة تحليل صورة الشارت \n\n"
+                f"📤 قم برفع صورة  (الشارت) الآن: 📤",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
                 parse_mode="Markdown"
             )
@@ -1386,9 +2707,8 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["💬 دردشة", "📈 توصية"]
     ]
     await update.message.reply_text(
-        "❌ **خيار غير صحيح**\nالرجاء الاختيار من الأزرار:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
+        "اختر أحد الخيارات من القائمة:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
     )
     return MAIN_MENU
 
@@ -1403,9 +2723,8 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
             ["💬 دردشة", "📈 توصية"]
         ]
         await update.message.reply_text(
-            "🏠 **العودة للقائمة الرئيسية**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         return MAIN_MENU
     
@@ -1415,23 +2734,20 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
         keyboard = [TRADE_TIMES[i:i+2] for i in range(0, len(TRADE_TIMES), 2)]
         keyboard.append(["الرجوع للقائمة الرئيسية"])
         
-        candle_category = get_candle_category(user_message)
-        verification = calculate_verification_timeframe(user_message)
-        
         await update.message.reply_text(
-            f"✅ **تم تعيين سرعة الشموع:** {user_message}\n"
-            f"📊 تصنيف: {candle_category}\n"
-            f"🔍 فريم التحقق: {verification}\n\n"
-            f"⬇️ **الآن حدد مدة الصفقة:** ⬇️",
+            f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n"
+            f" ⬇️ الآن حدد ** مدة الصفقة** المتوقعة ⬇️:\n\n"
+            f"📊 **🕧 خيارات مدة الصفقة: 🕧**\n"
+            f"•1- **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة\n"
+            f"•2- **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة\n"
+            f"•3- **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة\n\n"
+            f" 🖊️ اختر الإطار الزمني المناسب لاستراتيجيتك:🖊️",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
         )
         return SETTINGS_TIME
     
-    await update.message.reply_text(
-        "❌ **الرجاء اختيار سرعة شموع صحيحة**",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("❌ الرجاء اختيار سرعة شموع صحيحة.")
     return SETTINGS_CANDLE
 
 async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1445,45 +2761,38 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
             ["💬 دردشة", "📈 توصية"]
         ]
         await update.message.reply_text(
-            "🏠 **العودة للقائمة الرئيسية**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         return MAIN_MENU
     
     if user_message in TRADE_TIMES:
         save_user_setting(user_id, "trade_time", user_message)
         
-        candle, _, _, _ = get_user_setting(user_id)
-        strategy = get_trading_strategy(user_message)
-        position = get_position_sizing(user_message)
-        verification = calculate_verification_timeframe(candle)
-        
         keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+        
+        candle, _, _, _ = get_user_setting(user_id)
         
         await update.message.reply_text(
             f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
-            f"✅ **الإعدادات النهائية:**\n"
-            f"• 🕧 سرعة الشموع: {candle}\n"
-            f"• 🔍 فريم التحقق: {verification}\n"
-            f"• 📈 استراتيجية: {strategy}\n"
-            f"• 💰 حجم الصفقة: {position}\n"
-            f"• ⏱️ مدة الصفقة: {user_message}\n\n"
-            f"📤 **يمكنك الآن إرسال صورة الشارت للتحليل**",
+            f"✅ سرعة الشموع: {candle}\n"
+            f"✅ مدة الصفقة: {user_message}\n\n"
+            f"📡 ** نظام تحليل مستهدفة :** \n"
+            f"• 1- تفكيك هيكل شارت  =مفعلة ✔️\n"
+            f"• تحليل صورة شارت = مفعلة ✔️\n"
+            f" 📤 قم الأن برفع صورة شارت : 📤",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
         )
         return MAIN_MENU
     
-    await update.message.reply_text(
-        "❌ **الرجاء اختيار مدة صفقة صحيحة**",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text("❌ الرجاء اختيار مدة صفقة صحيحة.")
     return SETTINGS_TIME
 
 async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة وضع التحليل"""
     user_message = update.message.text
+    user_id = update.effective_user.id
     
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [
@@ -1491,398 +2800,53 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
             ["💬 دردشة", "📈 توصية"]
         ]
         await update.message.reply_text(
-            "🏠 **العودة للقائمة الرئيسية**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         return MAIN_MENU
     
     await update.message.reply_text(
-        "📤 **الرجاء إرسال صورة الشارت فقط**",
-        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True),
-        parse_mode="Markdown"
+        "📤 **الرجاء إرسال صورة الشارت فقط**\nأو اضغط 'الرجوع للقائمة الرئيسية'",
+        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True, one_time_keyboard=False)
     )
     return ANALYZE_MODE
 
-async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني المتقدم"""
-    user_id = update.effective_user.id
-    candle, trade_time, _, _ = get_user_setting(user_id)
-    
-    if not candle or not trade_time:
-        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-        await update.message.reply_text(
-            "❌ **يجب ضبط الإعدادات أولاً**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    
-    # رسالة الانتظار
-    wait_msg = await update.message.reply_text("📥 **جاري استلام الصورة...**")
-    context.user_data['wait_msg_id'] = wait_msg.message_id
-    
-    # تحميل الصورة
-    photo = await update.message.photo[-1].get_file()
-    timestamp = int(time.time())
-    image_path = os.path.join(IMAGE_CACHE_DIR, f"analysis_{user_id}_{timestamp}.jpg")
-    await photo.download_to_drive(image_path)
-    
-    try:
-        # تحليل الصورة بالنظام الثلاثي
-        analysis_result = await analyze_chart_image_triple_model(
-            update, context, image_path, candle, trade_time, "شارت"
-        )
-        
-        # إرسال النتيجة
-        if len(analysis_result) > 4000:
-            parts = split_message(analysis_result)
-            await context.bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=wait_msg.message_id,
-                text=parts[0],
-                parse_mode="Markdown"
-            )
-            for part in parts[1:]:
-                await update.message.reply_text(part, parse_mode="Markdown")
-        else:
-            await context.bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=wait_msg.message_id,
-                text=analysis_result,
-                parse_mode="Markdown"
-            )
-        
-        # عرض خيارات المتابعة
-        keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات"], ["الرجوع للقائمة الرئيسية"]]
-        await update.message.reply_text(
-            "🔄 **اختر الإجراء التالي:**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-            parse_mode="Markdown"
-        )
-        
-    except Exception as e:
-        print(f"❌ خطأ في معالجة الصورة: {traceback.format_exc()}")
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=wait_msg.message_id,
-            text=f"❌ **حدث خطأ في التحليل**\n{str(e)[:200]}",
-            parse_mode="Markdown"
-        )
-    finally:
-        # تنظيف
-        if os.path.exists(image_path):
-            try:
-                os.remove(image_path)
-            except:
-                pass
-    
-    return MAIN_MENU
-
-async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء وضع الدردشة المتقدم"""
-    keyboard = [
-        ["🚀 مساعد شامل", "💼 استشارات احترافية"],
-        ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
-        ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
-        ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
-    ]
-    
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🚀 **وضع الدردشة - Obeida Trading**\n\n"
-             "أنا مساعدك الذكي متعدد المجالات:\n"
-             "• 💬 أرسل سؤالك مباشرة\n"
-             "• 🎯 اختر تخصصاً من الأزرار\n"
-             "• 📊 اسأل عن التحليل الفني\n\n"
-             "**جاهز لخدمتك!**",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-        parse_mode="Markdown"
-    )
-    return CHAT_MODE
-
-async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة رسائل الدردشة"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "ايقاف الدردشة":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
-        await update.message.reply_text(
-            "✅ **تم إنهاء وضع الدردشة**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    
-    elif user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
-        await update.message.reply_text(
-            "🏠 **العودة للقائمة الرئيسية**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    
-    # رسالة الانتظار
-    wait_msg = await update.message.reply_text("🤔 **جاري التفكير...**")
-    
-    try:
-        # تحديد البرومبت المناسب
-        system_prompt = """أنت Obeida Trading، مساعد ذكي شامل. 
-        تمتلك معرفة عميقة في التحليل الفني، التداول، البرمجة، والاستشارات.
-        أجب باللغة العربية الفصحى مع لمسة عصرية.
-        كن دقيقاً، منظماً، ومفيداً."""
-        
-        payload = {
-            "model": MODEL_SUMMARY,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            "max_tokens": 2500,
-            "temperature": 0.3,
-            "top_p": 1.0
-        }
-        
-        headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
-        
-        if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content']
-            result = clean_repeated_text(result)
-            
-            if len(result) > 4000:
-                parts = split_message(result)
-                await wait_msg.edit_text(parts[0], parse_mode="Markdown")
-                for part in parts[1:]:
-                    await update.message.reply_text(part, parse_mode="Markdown")
-            else:
-                await wait_msg.edit_text(result, parse_mode="Markdown")
-        else:
-            await wait_msg.edit_text(f"❌ **خطأ:** {response.status_code}")
-            
-    except Exception as e:
-        print(f"❌ خطأ في الدردشة: {e}")
-        await wait_msg.edit_text("❌ **حدث خطأ. حاول مرة أخرى.**")
-    
-    return CHAT_MODE
-
-async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء وضع التوصية"""
-    reply_keyboard = [[key] for key in CATEGORIES.keys()]
-    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-    
-    await update.message.reply_text(
-        "🚀 **نظام التوصيات**\n\n"
-        "اختر القسم المطلوب:",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True),
-        parse_mode="Markdown"
-    )
-    return RECOMMENDATION_MODE
-
-async def handle_recommendation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات نظام التوصية"""
-    user_text = update.message.text.strip()
-    
-    if user_text == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
-        await update.message.reply_text(
-            "🏠 **العودة للقائمة الرئيسية**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    
-    if user_text in CATEGORIES:
-        keyboard = [[asset] for asset in CATEGORIES[user_text]]
-        keyboard.append(["🔙 العودة للقائمة", "الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            f"📍 **قسم: {user_text}**\nاختر العملة:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-            parse_mode="Markdown"
-        )
-        return CATEGORY_SELECTION
-    
-    # البحث عن العملة المختارة
-    symbol_to_analyze = None
-    for category_list in CATEGORIES.values():
-        if user_text in category_list:
-            symbol_to_analyze = user_text
-            break
-    
-    if symbol_to_analyze:
-        save_last_recommendation_symbol(context, symbol_to_analyze)
-        
-        wait_msg = await update.message.reply_text(
-            f"⏳ **جاري سحب صورة {symbol_to_analyze}...**"
-        )
-        context.user_data['wait_msg_id'] = wait_msg.message_id
-        
-        # سحب الصورة
-        chart_image_path = download_chart_image(symbol_to_analyze)
-        
-        if chart_image_path and os.path.exists(chart_image_path):
-            # إرسال الصورة للمستخدم
-            with open(chart_image_path, 'rb') as photo:
-                await update.message.reply_photo(
-                    photo=photo,
-                    caption=f"📈 شارت {symbol_to_analyze}"
-                )
-            
-            # الحصول على إعدادات المستخدم
-            user_id = update.effective_user.id
-            candle, trade_time, _, _ = get_user_setting(user_id)
-            
-            if not candle or not trade_time:
-                await wait_msg.edit_text("❌ **يجب ضبط الإعدادات أولاً**")
-                return RECOMMENDATION_MODE
-            
-            # تحليل الصورة
-            analysis_result = await analyze_chart_image_triple_model(
-                update, context, chart_image_path, candle, trade_time, symbol_to_analyze
-            )
-            
-            await wait_msg.edit_text(analysis_result, parse_mode="Markdown")
-            
-            # تنظيف الصورة
-            try:
-                os.remove(chart_image_path)
-            except:
-                pass
-        else:
-            await wait_msg.edit_text(f"❌ **فشل سحب صورة {symbol_to_analyze}**")
-    
-    # عرض الأزرار للمتابعة
-    reply_keyboard = [[key] for key in CATEGORIES.keys()]
-    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-    
-    await update.message.reply_text(
-        "🔽 **اختر قسماً آخر:**",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True),
-        parse_mode="Markdown"
-    )
-    return RECOMMENDATION_MODE
-
-async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور في وضع التوصية"""
-    user_id = update.effective_user.id
-    last_symbol = get_last_recommendation_symbol(context)
-    
-    wait_msg = await update.message.reply_text(f"📊 **تحليل {last_symbol}...**")
-    context.user_data['wait_msg_id'] = wait_msg.message_id
-    
-    try:
-        # تحميل الصورة
-        photo = await update.message.photo[-1].get_file()
-        timestamp = int(time.time())
-        image_path = os.path.join(IMAGE_CACHE_DIR, f"recommendation_{user_id}_{timestamp}.jpg")
-        await photo.download_to_drive(image_path)
-        
-        # الحصول على الإعدادات
-        candle, trade_time, _, _ = get_user_setting(user_id)
-        
-        if not candle or not trade_time:
-            await wait_msg.edit_text("❌ **يجب ضبط الإعدادات أولاً**")
-            return RECOMMENDATION_MODE
-        
-        # تحليل الصورة
-        analysis_result = await analyze_chart_image_triple_model(
-            update, context, image_path, candle, trade_time, last_symbol
-        )
-        
-        await wait_msg.edit_text(analysis_result, parse_mode="Markdown")
-        
-    except Exception as e:
-        print(f"❌ خطأ في تحليل صورة التوصية: {e}")
-        await wait_msg.edit_text("❌ **حدث خطأ في معالجة الصورة**")
-    
-    # عرض خيارات المتابعة
-    reply_keyboard = [[key] for key in CATEGORIES.keys()]
-    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-    
-    await update.message.reply_text(
-        "🔽 **اختر قسماً آخر:**",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True),
-        parse_mode="Markdown"
-    )
-    return RECOMMENDATION_MODE
-
-# =====================================================================
-# ================ معالج الأخطاء ====================================
-# =====================================================================
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الأخطاء في البوت"""
-    try:
-        error_msg = f"❌ **حدث خطأ في البوت**\n"
-        
-        if update and hasattr(update, 'effective_user'):
-            error_msg += f"المستخدم: {update.effective_user.id}\n"
-        
-        error_msg += f"الخطأ: {context.error}\n"
-        
-        # تسجيل الخطأ في ملف
-        tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
-        tb_string = ''.join(tb_list)
-        
-        with open("bot_errors.log", "a", encoding="utf-8") as f:
-            f.write(f"\n{'='*60}\n")
-            f.write(f"الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"الخطأ: {error_msg}\n")
-            f.write(f"Traceback:\n{tb_string}\n")
-            f.write(f"{'='*60}\n")
-        
-        print(f"❌ خطأ مسجل: {context.error}")
-        
-        # إرسال رسالة للمستخدم
-        if update and hasattr(update, 'effective_chat'):
-            try:
-                await context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text="⚠️ **حدث خطأ تقني. النظام يعمل على إصلاحه.**",
-                    parse_mode="Markdown"
-                )
-            except:
-                pass
-                
-    except Exception as e:
-        print(f"❌ خطأ في معالج الأخطاء: {e}")
+async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور في وضع التحليل"""
+    return await handle_photo_analysis(update, context)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر المساعدة"""
-    help_text = """
-    🤖 **Obeida Trading - دليل الاستخدام**
+    help_text = f"""
+    🤖 **أوامر البوت:**
     
-    **الأوامر:**
-    /start - بدء البوت
-    /help - عرض المساعدة
-    /cancel - إلغاء وإعادة تشغيل
+    /start - بدء البوت والعودة للقائمة الرئيسية
+    /help - عرض رسالة المساعدة
     
-    **الخدمات المتاحة:**
+    ⚙️ **كيفية الاستخدام:**
+    1. استخدم أزرار القائمة للتنقل
+    2. أرسل صورة الشارت للتحليل
+    3. اختر "دردشة" للاستفسارات النصية
+    4. اختر "توصية" لتحليل العملات مع سحب الصور التلقائي
     
-    📊 **تحليل الشارتات:**
-    • نظام ثلاثي المراحل (Pixtral + Audit + Optimize)
-    • استخراج دقيق للبيانات من الصورة
-    • تطبيق هرم السلطة الفني
-    
-    📈 **توصيات جاهزة:**
-    • 50+ أداة مالية
+    📈 **نظام التوصيات الجديد:**
+    • تحليل فني للعملات والمؤشرات
     • سحب تلقائي للصور من TradingView
-    • تحليل فوري
+    • تطبيق القوانين الجديدة
+    • تحليل مزدوج (نصي + بصري)
     
-    💬 **دردشة ذكية:**
-    • مساعد متعدد التخصصات
-    • استشارات مالية وبرمجية
-    • كتابة وتحليل
+    ⏱️ **خيارات مدة الصفقة:**
+    • **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة
+    • **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة
+    • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
     
-    ⚙️ **إعدادات مخصصة:**
-    • 14 فريم زمني (من S5 إلى D1)
-    • 3 استراتيجيات تداول
-    • حفظ تلقائي للإعدادات
-    
-    **تم التطوير بواسطة Obeida Trading** 🤖
+    📡 **مميزات البوت المتقدمة:**
+    • 📊 تحليل فني للرسوم البيانية بتقنيات متطورة
+    • 💬 دردشة ذكية متعددة التخصصات
+    • 📈 نظام توصيات الجاهزة 
+    • ⚙️ حفظ إعداداتك الشخصية
+    • 🔹 واجهة سهلة بالأزرار
+    • 🗑️ نظام تنظيف تلقائي للذاكرة
     """
     await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -1892,66 +2856,29 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cleanup_user_data(context, update.effective_user.id)
     
     await update.message.reply_text(
-        "✅ **تم الإلغاء وتنظيف الذاكرة**\n"
-        "اكتب /start للبدء من جديد",
-        reply_markup=ReplyKeyboardRemove(),
-        parse_mode="Markdown"
+        "تم الإلغاء وتم تنظيف الذاكرة. اكتب /start للبدء من جديد.",
+        reply_markup=ReplyKeyboardRemove()
     )
     return ConversationHandler.END
 
-# =====================================================================
-# ================ دوال السوق المساعدة ==============================
-# =====================================================================
-
-def get_market_session():
-    """الحصول على جلسة السوق باستخدام توقيت غزة"""
-    try:
-        gaza_time = datetime.now(GAZA_TIMEZONE)
-        current_hour = gaza_time.hour
-        
-        if 2 <= current_hour < 8:
-            return "الجلسة الآسيوية", "02:00-08:00 بتوقيت غزة", "منخفضة"
-        elif 8 <= current_hour < 14:
-            return "جلسة لندن/أوروبا", "08:00-14:00 بتوقيت غزة", "مرتفعة"
-        elif 14 <= current_hour < 20:
-            return "جلسة نيويورك", "14:00-20:00 بتوقيت غزة", "عالية جداً"
-        elif 20 <= current_hour < 24 or 0 <= current_hour < 2:
-            return "جلسة المحيط الهادئ", "20:00-02:00 بتوقيت غزة", "منخفضة"
-        else:
-            return "جلسة عالمية", "متداخلة", "متوسطة"
-    except Exception as e:
-        print(f"⚠️ خطأ في تحديد جلسة السوق: {e}")
-        return "جلسة عالمية", "غير محددة", "متوسطة"
-
-# =====================================================================
-# ================ Flask Server =====================================
-# =====================================================================
-
+# --- الحل النهائي ---
 def run_flask_server():
     """تشغيل Flask server"""
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-# =====================================================================
-# ================ الدالة الرئيسية ==================================
-# =====================================================================
-
 def main():
-    """الدالة الرئيسية"""
-    print("🤖 **Starting Obeida Trading - Triple Model System**")
+    """الدالة الرئيسية - النسخة السهلة"""
+    print("🤖 Starting Powered by - Obeida Trading ...")
     
     # تشغيل Flask
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
+    
     print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
     
     # تهيئة قاعدة البيانات
     init_db()
-    print("✅ Database initialized")
-    
-    # تنظيف أولي
-    cleanup_old_images()
-    cleanup_old_database_records()
     
     # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
@@ -1974,7 +2901,7 @@ def main():
             ],
             ANALYZE_MODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode),
-                MessageHandler(filters.PHOTO, handle_photo_analysis)
+                MessageHandler(filters.PHOTO, handle_photo_in_analyze_mode)
             ],
             RECOMMENDATION_MODE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection),
@@ -1988,19 +2915,15 @@ def main():
         allow_reentry=True
     )
     
-    # إضافة المعالجات
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cancel", cancel))
+    
+    # إضافة معالج للأخطاء
     application.add_error_handler(error_handler)
     
-    # تشغيل مهمة التنظيف الدورية
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(periodic_cleanup())
-    
-    print("✅ **Obeida Trading Bot is online!**")
-    print("📡 Waiting for messages...")
+    print("✅ Telegram Bot  safe mode ...")
+    print("📡 Bot Obeida Trading online...")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
