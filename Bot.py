@@ -12,22 +12,31 @@ import asyncio
 import json
 import shutil
 import io
+import hashlib
+import queue
+import uuid
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
-from telegram.error import NetworkError, TimedOut
+from telegram.error import NetworkError, TimedOut, Conflict, RetryAfter
 from flask import Flask
 from PIL import Image
 import pytz
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from functools import lru_cache
+from collections import OrderedDict
+import sqlite3
+from contextlib import contextmanager
+import threading
 
 # --- الإعدادات ---
 TOKEN = os.environ.get('TOKEN', "8583903565:AAFveu3KYGkPsC8L6WyermoaZ1tI_EtFHHs")
 
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "ilTmowlfzkP2gVFPWAKKLqQcmmlEf1N8")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
-MISTRAL_MODEL = "pixtral-large-latest"          # للرؤية والاستخراج البصري
-MISTRAL_MODEL_AUDIT = "mistral-large-latest"        # للتحليل المنطقي
-MODEL_SUMMARY = "mistral-medium-latest"        # للتلخيص السريع
+MISTRAL_MODEL = "pixtral-large-latest"
+MISTRAL_MODEL_AUDIT = "mistral-large-latest"
+MODEL_SUMMARY = "mistral-medium-latest"
 
 DB_NAME = "abood-gpt.db"
 
@@ -63,8 +72,8 @@ CATEGORIES = {
 # إعدادات إضافية
 GAZA_TIMEZONE = pytz.timezone('Asia/Gaza')
 IMAGE_CACHE_DIR = "image_cache"
-MAX_IMAGE_SIZE = (1024, 1024)  # أقصى حجم للصورة بعد الضغط
-IMAGE_QUALITY = 85  # جودة الصورة بعد الضغط (من 0-100)
+MAX_IMAGE_SIZE = (1024, 1024)
+IMAGE_QUALITY = 85
 
 # إنشاء مجلد التخزين المؤقت إذا لم يكن موجوداً
 if not os.path.exists(IMAGE_CACHE_DIR):
@@ -73,45 +82,326 @@ if not os.path.exists(IMAGE_CACHE_DIR):
 # حالات المحادثة
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
 
+# --- تحسينات الأداء والدعم المتعدد المستخدمين ---
+
+class UserLockManager:
+    """مدير أقفال المستخدمين لمنع التداخل"""
+    
+    def __init__(self):
+        self._locks = {}
+        self._global_lock = threading.RLock()
+    
+    def get_lock(self, user_id):
+        """الحصول على قفل خاص بمستخدم معين"""
+        with self._global_lock:
+            if user_id not in self._locks:
+                self._locks[user_id] = threading.RLock()
+            return self._locks[user_id]
+    
+    def clear_old_locks(self, max_age_seconds=3600):
+        """تنظيف الأقفال القديمة"""
+        with self._global_lock:
+            # لا يمكننا معرفة وقت إنشاء القفل، لذلك ننظف فقط الأقفال غير المستخدمة
+            if len(self._locks) > 1000:  # حد أقصى
+                # الاحتفاظ بـ 500 قفل فقط
+                to_remove = list(self._locks.keys())[:500]
+                for user_id in to_remove:
+                    del self._locks[user_id]
+
+user_lock_manager = UserLockManager()
+
+class DatabaseConnectionPool:
+    """تجمع اتصالات قاعدة البيانات"""
+    
+    def __init__(self, db_path, max_connections=10):
+        self.db_path = db_path
+        self.max_connections = max_connections
+        self._connections = queue.Queue(maxsize=max_connections)
+        self._active_count = 0
+        self._lock = threading.RLock()
+        
+        # إنشاء الاتصالات الأولية
+        for _ in range(min(max_connections, 3)):
+            self._create_connection()
+    
+    def _create_connection(self):
+        """إنشاء اتصال جديد"""
+        conn = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=1000")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        self._connections.put(conn)
+        with self._lock:
+            self._active_count += 1
+        return conn
+    
+    @contextmanager
+    def get_connection(self):
+        """الحصول على اتصال من التجمع"""
+        conn = None
+        try:
+            conn = self._connections.get(timeout=5)
+            yield conn
+            conn.commit()
+        except queue.Empty:
+            if self._active_count < self.max_connections:
+                conn = self._create_connection()
+                yield conn
+                conn.commit()
+            else:
+                raise Exception("لا توجد اتصالات متاحة في التجمع")
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            raise e
+        finally:
+            if conn:
+                self._connections.put(conn)
+    
+    def close_all(self):
+        """إغلاق جميع الاتصالات"""
+        while not self._connections.empty():
+            try:
+                conn = self._connections.get_nowait()
+                conn.close()
+            except:
+                pass
+
+db_pool = DatabaseConnectionPool(DB_NAME)
+
+class UserSessionManager:
+    """مدير جلسات المستخدمين"""
+    
+    def __init__(self, max_sessions=1000, session_timeout=1800):
+        self.sessions = OrderedDict()
+        self.max_sessions = max_sessions
+        self.session_timeout = session_timeout
+        self._lock = threading.RLock()
+    
+    def get_session(self, user_id):
+        """الحصول على جلسة المستخدم"""
+        with self._lock:
+            if user_id in self.sessions:
+                session = self.sessions[user_id]
+                session['last_active'] = time.time()
+                # نقل إلى النهاية (الأحدث)
+                self.sessions.move_to_end(user_id)
+                return session['data']
+            return None
+    
+    def set_session(self, user_id, data):
+        """تعيين جلسة المستخدم"""
+        with self._lock:
+            # تنظيف الجلسات القديمة إذا تجاوزت الحد
+            if len(self.sessions) >= self.max_sessions:
+                oldest_user, oldest_session = self.sessions.popitem(last=False)
+                self._cleanup_user_files(oldest_user)
+            
+            self.sessions[user_id] = {
+                'data': data,
+                'last_active': time.time()
+            }
+    
+    def update_session(self, user_id, **kwargs):
+        """تحديث بيانات الجلسة"""
+        with self._lock:
+            if user_id in self.sessions:
+                self.sessions[user_id]['data'].update(kwargs)
+                self.sessions[user_id]['last_active'] = time.time()
+                self.sessions.move_to_end(user_id)
+    
+    def clear_session(self, user_id):
+        """مسح جلسة المستخدم"""
+        with self._lock:
+            if user_id in self.sessions:
+                del self.sessions[user_id]
+            self._cleanup_user_files(user_id)
+    
+    def _cleanup_user_files(self, user_id):
+        """تنظيف ملفات المستخدم"""
+        try:
+            if os.path.exists(IMAGE_CACHE_DIR):
+                for filename in os.listdir(IMAGE_CACHE_DIR):
+                    if f"_{user_id}_" in filename or filename.startswith(f"{user_id}_"):
+                        filepath = os.path.join(IMAGE_CACHE_DIR, filename)
+                        if os.path.exists(filepath):
+                            os.remove(filepath)
+        except Exception as e:
+            print(f"⚠️ خطأ في تنظيف ملفات المستخدم {user_id}: {e}")
+    
+    def cleanup_expired_sessions(self):
+        """تنظيف الجلسات منتهية الصلاحية"""
+        with self._lock:
+            current_time = time.time()
+            expired = []
+            
+            for user_id, session in self.sessions.items():
+                if current_time - session['last_active'] > self.session_timeout:
+                    expired.append(user_id)
+            
+            for user_id in expired:
+                self.clear_session(user_id)
+            
+            return len(expired)
+
+session_manager = UserSessionManager()
+
+class SmartCache:
+    """ذاكرة تخزين مؤقت ذكية مع صلاحية محددة"""
+    
+    def __init__(self, max_size=200, default_ttl=300):
+        self.cache = OrderedDict()
+        self.max_size = max_size
+        self.default_ttl = default_ttl
+        self._lock = threading.RLock()
+    
+    def get(self, key):
+        """الحصول على عنصر من الذاكرة المؤقتة"""
+        with self._lock:
+            if key in self.cache:
+                item = self.cache[key]
+                if time.time() - item['timestamp'] < item['ttl']:
+                    # نقل إلى النهاية (الأحدث)
+                    self.cache.move_to_end(key)
+                    return item['value']
+                else:
+                    del self.cache[key]
+            return None
+    
+    def set(self, key, value, ttl=None):
+        """تخزين عنصر في الذاكرة المؤقتة"""
+        with self._lock:
+            # تنظيف إذا تجاوزت الحد
+            if len(self.cache) >= self.max_size:
+                self.cache.popitem(last=False)
+            
+            self.cache[key] = {
+                'value': value,
+                'timestamp': time.time(),
+                'ttl': ttl or self.default_ttl
+            }
+    
+    def clear_user_cache(self, user_id):
+        """مسح جميع عناصر المستخدم من الذاكرة المؤقتة"""
+        with self._lock:
+            keys_to_delete = []
+            for key in self.cache.keys():
+                if str(user_id) in str(key):
+                    keys_to_delete.append(key)
+            
+            for key in keys_to_delete:
+                del self.cache[key]
+    
+    def cleanup_expired(self):
+        """تنظيف العناصر منتهية الصلاحية"""
+        with self._lock:
+            current_time = time.time()
+            expired = []
+            
+            for key, item in self.cache.items():
+                if current_time - item['timestamp'] > item['ttl']:
+                    expired.append(key)
+            
+            for key in expired:
+                del self.cache[key]
+            
+            return len(expired)
+
+smart_cache = SmartCache(max_size=500, default_ttl=300)
+
+class ThreadPoolManager:
+    """مدير تجمع مؤشرات الترابط"""
+    
+    def __init__(self, max_workers=20):
+        self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="obeida_trading")
+        self._lock = threading.RLock()
+        self._futures = []
+    
+    def submit(self, fn, *args, **kwargs):
+        """إرسال مهمة للمعالجة"""
+        future = self.executor.submit(fn, *args, **kwargs)
+        with self._lock:
+            self._futures.append(future)
+            # تنظيف المهام المكتملة
+            self._futures = [f for f in self._futures if not f.done()]
+        return future
+    
+    async def run_async(self, fn, *args, **kwargs):
+        """تشغيل دالة بشكل غير متزامن"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self.executor, lambda: fn(*args, **kwargs))
+    
+    def shutdown(self, wait=True):
+        """إيقاف تجمع مؤشرات الترابط"""
+        self.executor.shutdown(wait=wait)
+
+thread_pool = ThreadPoolManager(max_workers=20)
+
 # --- Flask Server ---
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return """
+    return f"""
     <!DOCTYPE html>
     <html>
     <head>
         <title>Obeida Trading</title>
         <style>
-            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-            h1 { color: #2c3e50; }
-            .status { background: #2ecc71; color: white; padding: 10px 20px; border-radius: 5px; display: inline-block; }
+            body {{ font-family: Arial, sans-serif; text-align: center; padding: 50px; }}
+            h1 {{ color: #2c3e50; }}
+            .status {{ background: #2ecc71; color: white; padding: 10px 20px; border-radius: 5px; display: inline-block; }}
         </style>
     </head>
     <body>
         <h1> 📊 Obeida Trading Telegram Bot 📊</h1>
-        <p>Chat & Technical Analysis Bot</p>
+        <p>Chat & Technical Analysis Bot - Multi-User Edition</p>
         <div class="status">✅ Obeida Trading Running</div>
-        <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>Obeida Trading - (Dual Model System)</p>
+        <p>Last Ping: {time.strftime("%Y-%m-%d %H:%M:%S")}</p>
+        <p>Users Sessions: {len(session_manager.sessions)} | Cache Size: {len(smart_cache.cache)}</p>
+        <p>Obeida Trading - (Multi-User High Performance)</p>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "ai_provider": "Mistral AI", "model": f"{MISTRAL_MODEL} + {MISTRAL_MODEL_AUDIT}", "timestamp": time.time()}
+    return {
+        "status": "active", 
+        "ai_provider": "Mistral AI", 
+        "model": f"{MISTRAL_MODEL} + {MISTRAL_MODEL_AUDIT}", 
+        "timestamp": time.time(),
+        "sessions": len(session_manager.sessions),
+        "cache_size": len(smart_cache.cache),
+        "db_connections": db_pool._active_count
+    }
 
 @app.route('/ping')
 def ping():
     return "PONG"
 
-# --- دوال المساعدة الجديدة ---
+@app.route('/stats')
+def stats():
+    return {
+        "sessions": len(session_manager.sessions),
+        "cache_size": len(smart_cache.cache),
+        "db_connections": db_pool._active_count,
+        "thread_pool_size": thread_pool.executor._max_workers,
+        "active_futures": len(thread_pool._futures),
+        "uptime": time.time() - start_time
+    }
+
+start_time = time.time()
+
+# --- دوال المساعدة مع تحسينات الأداء ---
+
 def cleanup_old_images():
     """تنظيف الصور القديمة التي مضى عليها أكثر من 30 دقيقة"""
     try:
         current_time = time.time()
+        count = 0
         for filename in os.listdir(IMAGE_CACHE_DIR):
             filepath = os.path.join(IMAGE_CACHE_DIR, filename)
             if os.path.isfile(filepath):
@@ -119,15 +409,22 @@ def cleanup_old_images():
                 if file_age > 1800:
                     try:
                         os.remove(filepath)
-                        print(f"🧹 تم حذف الملف القديم: {filename}")
+                        count += 1
                     except Exception as e:
                         print(f"⚠️ خطأ في حذف الملف {filename}: {e}")
+        if count > 0:
+            print(f"🧹 تم حذف {count} ملف صورة قديم")
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الصور القديمة: {e}")
 
 def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
     """ضغط الصورة لتقليل الحجم مع الحفاظ على الجودة"""
     try:
+        cache_key = f"compress_{os.path.basename(image_path)}_{os.path.getsize(image_path)}"
+        cached_path = smart_cache.get(cache_key)
+        if cached_path and os.path.exists(cached_path):
+            return cached_path
+        
         with Image.open(image_path) as img:
             if img.mode in ('RGBA', 'LA', 'P'):
                 background = Image.new('RGB', img.size, (255, 255, 255))
@@ -142,7 +439,12 @@ def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
             
             compressed_path = image_path.replace('.jpg', '_compressed.jpg')
+            if not compressed_path.endswith('.jpg'):
+                compressed_path += '_compressed.jpg'
+            
             img.save(compressed_path, 'JPEG', quality=quality, optimize=True)
+            
+            smart_cache.set(cache_key, compressed_path, ttl=600)
             
             original_size = os.path.getsize(image_path) / 1024
             compressed_size = os.path.getsize(compressed_path) / 1024
@@ -153,114 +455,80 @@ def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
         print(f"⚠️ خطأ في ضغط الصورة: {e}")
         return image_path
 
-# --- سحب الصور من TradingView ---
+# --- سحب الصور من TradingView (مع تحسينات الأداء) ---
+@lru_cache(maxsize=50)
+def get_chart_symbol(symbol):
+    """تحويل اسم الرمز إلى تنسيق TradingView مع تخزين مؤقت"""
+    symbol_map = {
+        "EUR/USD (OTC)": "FX:EURUSD",
+        "GBP/USD (OTC)": "FX:GBPUSD",
+        "USD/JPY (OTC)": "FX:USDJPY",
+        "USD/CHF (OTC)": "FX:USDCHF",
+        "AUD/USD (OTC)": "FX:AUDUSD",
+        "USD/CAD (OTC)": "FX:USDCAD",
+        "NZD/USD (OTC)": "FX:NZDUSD",
+        "EUR/GBP (OTC)": "FX:EURGBP",
+        "EUR/JPY (OTC)": "FX:EURJPY",
+        "GBP/JPY (OTC)": "FX:GBPJPY",
+        "EUR/CHF (OTC)": "FX:EURCHF",
+        "AUD/JPY (OTC)": "FX:AUDJPY",
+        "EUR/AUD (OTC)": "FX:EURAUD",
+        "EUR/CAD (OTC)": "FX:EURCAD",
+        "GBP/AUD (OTC)": "FX:GBPAUD",
+        "CAD/JPY (OTC)": "FX:CADJPY",
+        "CHF/JPY (OTC)": "FX:CHFJPY",
+        "NZD/JPY (OTC)": "FX:NZDJPY",
+        "GBP/CHF (OTC)": "FX:GBPCHF",
+        "AUD/CAD (OTC)": "FX:AUDCAD",
+        "S&P 500 (OTC)": "SP:SPX",
+        "Dow Jones (OTC)": "DJ:DJI",
+        "Nasdaq 100 (OTC)": "NASDAQ:NDX",
+        "DAX 40 (OTC)": "GER30",
+        "CAC 40 (OTC)": "FRA40",
+        "FTSE 100 (OTC)": "UK100",
+        "Hang Seng (OTC)": "HK50",
+        "Nikkei 225 (OTC)": "JPN225",
+        "Gold (OTC)": "TVC:GOLD",
+        "Silver (OTC)": "TVC:SILVER",
+        "UKOIL (OTC)": "TVC:UKOIL",
+        "USOIL (OTC)": "TVC:USOIL",
+        "Natural Gas (OTC)": "TVC:NATGAS",
+        "Apple (OTC)": "NASDAQ:AAPL",
+        "Amazon (OTC)": "NASDAQ:AMZN",
+        "Google (OTC)": "NASDAQ:GOOGL",
+        "Facebook (OTC)": "NASDAQ:META",
+        "Microsoft (OTC)": "NASDAQ:MSFT",
+        "Tesla (OTC)": "NASDAQ:TSLA",
+        "Netflix (OTC)": "NASDAQ:NFLX",
+        "Intel (OTC)": "NASDAQ:INTC",
+        "Boeing (OTC)": "NYSE:BA",
+        "Visa (OTC)": "NYSE:V",
+        "McDonald's (OTC)": "NYSE:MCD",
+        "Pfizer (OTC)": "NYSE:PFE",
+        "Coca-Cola (OTC)": "NYSE:KO",
+        "Disney (OTC)": "NYSE:DIS",
+        "Alibaba (OTC)": "NYSE:BABA",
+        "Walmart (OTC)": "NYSE:WMT"
+    }
+    return symbol_map.get(symbol, symbol)
+
 def download_chart_image(symbol="BTCUSDT"):
-    """سحب صورة شارت من TradingView"""
+    """سحب صورة شارت من TradingView مع تحسينات الأداء"""
     try:
         API_KEY = "c94425"
         
-        # تحويل اسم الرمز إلى تنسيق TradingView
-        if symbol == "EUR/USD (OTC)":
-            chart_symbol = "FX:EURUSD"
-        elif symbol == "GBP/USD (OTC)":
-            chart_symbol = "FX:GBPUSD"
-        elif symbol == "USD/JPY (OTC)":
-            chart_symbol = "FX:USDJPY"
-        elif symbol == "USD/CHF (OTC)":
-            chart_symbol = "FX:USDCHF"
-        elif symbol == "AUD/USD (OTC)":
-            chart_symbol = "FX:AUDUSD"
-        elif symbol == "USD/CAD (OTC)":
-            chart_symbol = "FX:USDCAD"
-        elif symbol == "NZD/USD (OTC)":
-            chart_symbol = "FX:NZDUSD"
-        elif symbol == "EUR/GBP (OTC)":
-            chart_symbol = "FX:EURGBP"
-        elif symbol == "EUR/JPY (OTC)":
-            chart_symbol = "FX:EURJPY"
-        elif symbol == "GBP/JPY (OTC)":
-            chart_symbol = "FX:GBPJPY"
-        elif symbol == "EUR/CHF (OTC)":
-            chart_symbol = "FX:EURCHF"
-        elif symbol == "AUD/JPY (OTC)":
-            chart_symbol = "FX:AUDJPY"
-        elif symbol == "EUR/AUD (OTC)":
-            chart_symbol = "FX:EURAUD"
-        elif symbol == "EUR/CAD (OTC)":
-            chart_symbol = "FX:EURCAD"
-        elif symbol == "GBP/AUD (OTC)":
-            chart_symbol = "FX:GBPAUD"
-        elif symbol == "CAD/JPY (OTC)":
-            chart_symbol = "FX:CADJPY"
-        elif symbol == "CHF/JPY (OTC)":
-            chart_symbol = "FX:CHFJPY"
-        elif symbol == "NZD/JPY (OTC)":
-            chart_symbol = "FX:NZDJPY"
-        elif symbol == "GBP/CHF (OTC)":
-            chart_symbol = "FX:GBPCHF"
-        elif symbol == "AUD/CAD (OTC)":
-            chart_symbol = "FX:AUDCAD"
-        elif symbol == "S&P 500 (OTC)":
-            chart_symbol = "SP:SPX"
-        elif symbol == "Dow Jones (OTC)":
-            chart_symbol = "DJ:DJI"
-        elif symbol == "Nasdaq 100 (OTC)":
-            chart_symbol = "NASDAQ:NDX"
-        elif symbol == "DAX 40 (OTC)":
-            chart_symbol = "GER30"
-        elif symbol == "CAC 40 (OTC)":
-            chart_symbol = "FRA40"
-        elif symbol == "FTSE 100 (OTC)":
-            chart_symbol = "UK100"
-        elif symbol == "Hang Seng (OTC)":
-            chart_symbol = "HK50"
-        elif symbol == "Nikkei 225 (OTC)":
-            chart_symbol = "JPN225"
-        elif symbol == "Gold (OTC)":
-            chart_symbol = "TVC:GOLD"
-        elif symbol == "Silver (OTC)":
-            chart_symbol = "TVC:SILVER"
-        elif symbol == "UKOIL (OTC)":
-            chart_symbol = "TVC:UKOIL"
-        elif symbol == "USOIL (OTC)":
-            chart_symbol = "TVC:USOIL"
-        elif symbol == "Natural Gas (OTC)":
-            chart_symbol = "TVC:NATGAS"
-        elif symbol == "Apple (OTC)":
-            chart_symbol = "NASDAQ:AAPL"
-        elif symbol == "Amazon (OTC)":
-            chart_symbol = "NASDAQ:AMZN"
-        elif symbol == "Google (OTC)":
-            chart_symbol = "NASDAQ:GOOGL"
-        elif symbol == "Facebook (OTC)":
-            chart_symbol = "NASDAQ:META"
-        elif symbol == "Microsoft (OTC)":
-            chart_symbol = "NASDAQ:MSFT"
-        elif symbol == "Tesla (OTC)":
-            chart_symbol = "NASDAQ:TSLA"
-        elif symbol == "Netflix (OTC)":
-            chart_symbol = "NASDAQ:NFLX"
-        elif symbol == "Intel (OTC)":
-            chart_symbol = "NASDAQ:INTC"
-        elif symbol == "Boeing (OTC)":
-            chart_symbol = "NYSE:BA"
-        elif symbol == "Visa (OTC)":
-            chart_symbol = "NYSE:V"
-        elif symbol == "McDonald's (OTC)":
-            chart_symbol = "NYSE:MCD"
-        elif symbol == "Pfizer (OTC)":
-            chart_symbol = "NYSE:PFE"
-        elif symbol == "Coca-Cola (OTC)":
-            chart_symbol = "NYSE:KO"
-        elif symbol == "Disney (OTC)":
-            chart_symbol = "NYSE:DIS"
-        elif symbol == "Alibaba (OTC)":
-            chart_symbol = "NYSE:BABA"
-        elif symbol == "Walmart (OTC)":
-            chart_symbol = "NYSE:WMT"
+        # استخدام التخزين المؤقت لرمز الشارت
+        chart_symbol = get_chart_symbol(symbol)
+        
+        # إنشاء مفتاح فريد للتخزين المؤقت
+        cache_key = f"chart_{symbol}_{datetime.now().strftime('%Y%m%d%H')}"
+        cached_path = smart_cache.get(cache_key)
+        
+        if cached_path and os.path.exists(cached_path):
+            print(f"✅ استخدام صورة مخزنة مؤقتاً لـ {symbol}")
+            return cached_path
         
         CHART_URL = f"https://www.tradingview.com/chart/?symbol={chart_symbol}&interval=5"
-        
         api_url = f"https://api.screenshotmachine.com/?key={API_KEY}&url={CHART_URL}&dimension=800x600&device=desktop&delay=2000&format=png"
         
         print(f"📥 جاري سحب صورة لـ {symbol}...")
@@ -269,10 +537,14 @@ def download_chart_image(symbol="BTCUSDT"):
         
         if response.status_code == 200:
             timestamp = int(time.time())
-            image_path = os.path.join(IMAGE_CACHE_DIR, f"chart_{symbol.replace(' ', '_')}_{timestamp}.png")
+            unique_id = str(uuid.uuid4())[:8]
+            image_path = os.path.join(IMAGE_CACHE_DIR, f"chart_{symbol.replace(' ', '_')}_{timestamp}_{unique_id}.png")
             
             with open(image_path, "wb") as f:
                 f.write(response.content)
+            
+            # تخزين في الذاكرة المؤقتة لمدة ساعة
+            smart_cache.set(cache_key, image_path, ttl=3600)
             
             print(f"✅ تم سحب صورة {symbol} بنجاح!")
             return image_path
@@ -284,89 +556,187 @@ def download_chart_image(symbol="BTCUSDT"):
         print(f"⚠️ خطأ في سحب الصورة: {e}")
         return None
 
-# --- قاعدة البيانات ---
+# --- قاعدة البيانات مع تجمع الاتصالات ---
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY, 
-            candle TEXT DEFAULT 'M1', 
-            trade_time TEXT DEFAULT 'قصير (1m-15m)',
-            chat_context TEXT DEFAULT '',
-            last_analysis_context TEXT DEFAULT '',
-            last_analysis_time DATETIME DEFAULT NULL
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS chat_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            role TEXT,
-            content TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
-    print("✅ Database initialized")
+    """تهيئة قاعدة البيانات"""
+    try:
+        with db_pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY, 
+                    candle TEXT DEFAULT 'M1', 
+                    trade_time TEXT DEFAULT 'قصير (1m-15m)',
+                    chat_context TEXT DEFAULT '',
+                    last_analysis_context TEXT DEFAULT '',
+                    last_analysis_time DATETIME DEFAULT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS chat_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    role TEXT,
+                    content TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_user_id ON users(user_id)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_chat_user_time ON chat_history(user_id, timestamp)
+            ''')
+            conn.commit()
+        print("✅ Database initialized with connection pool")
+    except Exception as e:
+        print(f"❌ خطأ في تهيئة قاعدة البيانات: {e}")
 
 def save_user_setting(user_id, col, val):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute(f"INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
-    cursor.execute(f"UPDATE users SET {col} = ? WHERE user_id = ?", (val, user_id))
-    conn.commit()
-    conn.close()
+    """حفظ إعدادات المستخدم"""
+    try:
+        with user_lock_manager.get_lock(user_id):
+            with db_pool.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+                cursor.execute(f"UPDATE users SET {col} = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?", (val, user_id))
+                conn.commit()
+            
+            # تحديث جلسة المستخدم
+            session = session_manager.get_session(user_id) or {}
+            session[col] = val
+            session_manager.set_session(user_id, session)
+    except Exception as e:
+        print(f"⚠️ خطأ في حفظ إعدادات المستخدم {user_id}: {e}")
 
 def get_user_setting(user_id):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT candle, trade_time, last_analysis_context, last_analysis_time FROM users WHERE user_id = ?", (user_id,))
-    res = cursor.fetchone()
-    conn.close()
-    if res:
-        return res
-    return ("M1", "قصير (1m-15m)", "", None)
+    """الحصول على إعدادات المستخدم"""
+    try:
+        # محاولة الحصول من الجلسة أولاً
+        session = session_manager.get_session(user_id)
+        if session and 'candle' in session and 'trade_time' in session:
+            return (
+                session.get('candle', 'M1'),
+                session.get('trade_time', 'قصير (1m-15m)'),
+                session.get('last_analysis_context', ''),
+                session.get('last_analysis_time', None)
+            )
+        
+        # إذا لم توجد في الجلسة، اسحب من قاعدة البيانات
+        with db_pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT candle, trade_time, last_analysis_context, last_analysis_time FROM users WHERE user_id = ?", (user_id,))
+            res = cursor.fetchone()
+            
+            if res:
+                candle, trade_time, context, context_time = res
+                # تحديث الجلسة
+                session_manager.update_session(user_id, 
+                    candle=candle, 
+                    trade_time=trade_time, 
+                    last_analysis_context=context, 
+                    last_analysis_time=context_time
+                )
+                return (candle, trade_time, context, context_time)
+            else:
+                # مستخدم جديد
+                default_candle = "M1"
+                default_time = "قصير (1m-15m)"
+                session_manager.set_session(user_id, {
+                    'candle': default_candle,
+                    'trade_time': default_time,
+                    'last_analysis_context': '',
+                    'last_analysis_time': None
+                })
+                return (default_candle, default_time, "", None)
+    except Exception as e:
+        print(f"⚠️ خطأ في الحصول على إعدادات المستخدم {user_id}: {e}")
+        return ("M1", "قصير (1m-15m)", "", None)
 
 def save_analysis_context(user_id, analysis_text):
     """حفظ تحليل الصورة الأخيرة كسياق للتحليل التالي"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    summary = analysis_text[:500]
-    cursor.execute("UPDATE users SET last_analysis_context = ?, last_analysis_time = CURRENT_TIMESTAMP WHERE user_id = ?", (summary, user_id))
-    conn.commit()
-    conn.close()
+    try:
+        summary = analysis_text[:500]
+        
+        with db_pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE users 
+                SET last_analysis_context = ?, 
+                    last_analysis_time = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP 
+                WHERE user_id = ?
+            """, (summary, user_id))
+            conn.commit()
+        
+        # تحديث الجلسة
+        session_manager.update_session(user_id, 
+            last_analysis_context=summary, 
+            last_analysis_time=datetime.now().isoformat()
+        )
+    except Exception as e:
+        print(f"⚠️ خطأ في حفظ سياق التحليل للمستخدم {user_id}: {e}")
 
 def get_analysis_context(user_id):
     """الحصول على سياق التحليل السابق"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT last_analysis_context, last_analysis_time FROM users WHERE user_id = ?", (user_id,))
-    res = cursor.fetchone()
-    conn.close()
-    if res:
-        context, context_time = res
-        if context_time:
-            time_diff = (datetime.now() - datetime.fromisoformat(context_time)).total_seconds() / 60
-            if time_diff > 10:
-                return "", None
-        return context, context_time
-    return "", None
+    try:
+        session = session_manager.get_session(user_id)
+        if session and 'last_analysis_context' in session and 'last_analysis_time' in session:
+            context = session.get('last_analysis_context', '')
+            context_time = session.get('last_analysis_time', None)
+            
+            if context_time:
+                try:
+                    time_diff = (datetime.now() - datetime.fromisoformat(context_time)).total_seconds() / 60
+                    if time_diff > 10:
+                        return "", None
+                except:
+                    pass
+            return context, context_time
+        
+        # إذا لم توجد في الجلسة، اسحب من قاعدة البيانات
+        with db_pool.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT last_analysis_context, last_analysis_time FROM users WHERE user_id = ?", (user_id,))
+            res = cursor.fetchone()
+            
+            if res and res[0]:
+                context, context_time = res
+                if context_time:
+                    try:
+                        time_diff = (datetime.now() - datetime.fromisoformat(context_time)).total_seconds() / 60
+                        if time_diff > 10:
+                            return "", None
+                    except:
+                        pass
+                return context, context_time
+        
+        return "", None
+    except Exception as e:
+        print(f"⚠️ خطأ في الحصول على سياق التحليل للمستخدم {user_id}: {e}")
+        return "", None
 
 def cleanup_old_database_records():
     """تنظيف سجلات قاعدة البيانات القديمة"""
     try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute("DELETE FROM chat_history WHERE timestamp < ?", (week_ago,))
-        deleted_rows = cursor.rowcount
-        conn.commit()
-        conn.close()
-        
-        if deleted_rows > 0:
-            print(f"🧹 تم حذف {deleted_rows} سجل دردشة قديم")
+        with db_pool.get_connection() as conn:
+            cursor = conn.cursor()
+            week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute("DELETE FROM chat_history WHERE timestamp < ?", (week_ago,))
+            deleted_rows = cursor.rowcount
+            conn.commit()
+            
+            if deleted_rows > 0:
+                print(f"🧹 تم حذف {deleted_rows} سجل دردشة قديم")
+            
+            # تنظيف المستخدمين غير النشطين
+            month_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute("DELETE FROM users WHERE updated_at < ? AND last_analysis_time IS NULL", (month_ago,))
+            inactive_users = cursor.rowcount
+            if inactive_users > 0:
+                print(f"🧹 تم حذف {inactive_users} مستخدم غير نشط")
             
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف قاعدة البيانات: {e}")
@@ -402,7 +772,6 @@ def format_trade_time_for_prompt(trade_time):
     else:
         return f"مدة الصفقة المتوقعة: {trade_time}"
 
-# --- معالجة الصور بشكل صحيح ---
 def encode_image(image_path):
     """تحويل الصورة إلى base64 بشكل صحيح"""
     try:
@@ -413,7 +782,6 @@ def encode_image(image_path):
         print(f"Error encoding image: {e}")
         return None
 
-# --- دوال المساعدة للتعامل مع النصوص وتحسين النسخ ---
 def clean_repeated_text(text):
     """تنظيف النص من التكرارات وتحسين التنسيق - الإصدار المحسّن"""
     if not text:
@@ -421,9 +789,16 @@ def clean_repeated_text(text):
     
     lines = text.split('\n')
     unique_lines = []
+    seen = set()
+    
     for line in lines:
-        if line.strip() not in [ul.strip() for ul in unique_lines] or line.strip() == "":
+        stripped = line.strip()
+        if stripped and stripped not in seen:
             unique_lines.append(line)
+            seen.add(stripped)
+        elif not stripped:
+            unique_lines.append(line)
+    
     text = '\n'.join(unique_lines)
     
     patterns = ["📊 التحليل الفني المتقدم:", "🎯 الإشارة التنفيذية:", "⚠️ إدارة المخاطر:",
@@ -433,7 +808,7 @@ def clean_repeated_text(text):
     for p in patterns:
         if text.count(p) > 1:
             parts = text.split(p)
-            text = parts[0] + p + parts[-1]
+            text = parts[0] + p + ''.join(parts[1:])
     
     if "📊 **نتائج الفحص الفني**:" in text:
         text = re.sub(r'(📊 \*\*نتائج الفحص الفني\*\*:[\s\S]*?)(?=📊 \*\*نتائج الفحص الفني\*\*:)', '', text, flags=re.DOTALL)
@@ -447,29 +822,22 @@ def clean_repeated_text(text):
 
 def format_as_copyable_code(text, language="markdown"):
     """تنسيق النص على شكل Code Block قابل للنسخ بنقرة واحدة"""
-    # تنظيف النص من أي تنسيق Markdown زائد
     text = clean_repeated_text(text)
-    
-    # إزالة أي محاولات سابقة لتنسيق code block
     text = re.sub(r'```[\w]*\n?', '', text)
     text = re.sub(r'```\n?', '', text)
-    
-    # إضافة الهيكل الصحيح للنسخ السريع في تيليجرام
     formatted_text = f"```{language}\n{text}\n```"
-    
     return formatted_text
 
 def split_message_with_copy_support(text, max_length=3500):
     """تقسيم الرسالة الطويلة مع الحفاظ على دعم النسخ"""
     if len(text) <= max_length:
-        return [text]
+        return [format_as_copyable_code(text, "text")]
     
     parts = []
     current_part = ""
     
     for line in text.split('\n'):
-        if len(current_part) + len(line) + 1 > max_length - 50:  # مسافة أمان للفواصل
-            # إغلاق الجزء الحالي
+        if len(current_part) + len(line) + 1 > max_length - 50:
             if current_part:
                 parts.append(current_part)
                 current_part = ""
@@ -479,7 +847,6 @@ def split_message_with_copy_support(text, max_length=3500):
     if current_part:
         parts.append(current_part)
     
-    # إضافة فواصل واضحة بين الأجزاء
     formatted_parts = []
     for i, part in enumerate(parts):
         if i < len(parts) - 1:
@@ -489,7 +856,7 @@ def split_message_with_copy_support(text, max_length=3500):
     return formatted_parts
 
 def split_message(text, max_length=4000):
-    """تقسيم الرسالة الطويلة إلى أجزاء (للتوافق مع الكود القديم)"""
+    """تقسيم الرسالة الطويلة (للتوافق مع الكود القديم)"""
     if len(text) <= max_length:
         return [text]
     
@@ -509,46 +876,42 @@ def split_message(text, max_length=4000):
     
     return parts
 
-# --- وظائف إدارة الذاكرة ---
-def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None):
-    """تنظيف البيانات المؤقتة للمستخدم - الإصدار المحسّن"""
+async def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None):
+    """تنظيف البيانات المؤقتة للمستخدم - الإصدار المحسّن للمستخدمين المتعددين"""
     try:
-        if user_id and os.path.exists(IMAGE_CACHE_DIR):
-            try:
-                for filename in os.listdir(IMAGE_CACHE_DIR):
-                    if f"_{user_id}_" in filename:
-                        filepath = os.path.join(IMAGE_CACHE_DIR, filename)
-                        if os.path.exists(filepath):
-                            os.remove(filepath)
-                            print(f"🧹 تم حذف ملف المستخدم: {filename}")
-            except Exception as e:
-                print(f"⚠️ خطأ في تنظيف ملفات المستخدم {user_id}: {e}")
-        
-        keys_to_remove = [
-            'dual_images', 'dual_image_paths', 'dual_analysis_mode',
-            'last_analysis', 'dual_analysis_start', 'original_paths',
-            'last_recommendation_symbol'
-        ]
-        
-        for key in keys_to_remove:
-            if key in context.user_data:
-                del context.user_data[key]
-                
-        print(f"✅ تم تنظيف الذاكرة والملفات للمستخدم {user_id}")
+        if user_id:
+            session_manager.clear_session(user_id)
+            smart_cache.clear_user_cache(user_id)
+            
+            keys_to_remove = [
+                'dual_images', 'dual_image_paths', 'dual_analysis_mode',
+                'last_analysis', 'dual_analysis_start', 'original_paths',
+                'last_recommendation_symbol', 'temp_data'
+            ]
+            
+            for key in keys_to_remove:
+                if key in context.user_data:
+                    del context.user_data[key]
+            
+            print(f"✅ تم تنظيف الذاكرة والملفات للمستخدم {user_id}")
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الذاكرة: {e}")
 
 def save_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE, symbol: str):
     """حفظ آخر رمز تم اختياره في التوصيات"""
     context.user_data['last_recommendation_symbol'] = symbol
+    user_id = context.user_data.get('user_id')
+    if user_id:
+        session_manager.update_session(user_id, last_recommendation_symbol=symbol)
 
 def get_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE):
     """الحصول على آخر رمز تم اختياره في التوصيات"""
     return context.user_data.get('last_recommendation_symbol', 'BTC (OTC)')
 
-# --- وظائف نظام التوصية الجديد ---
+# --- وظائف نظام التوصية الجديد مع تحسينات الأداء ---
+@lru_cache(maxsize=100)
 def get_mistral_analysis(symbol):
-    """الحصول على تحليل من Mistral AI API للعملة"""
+    """الحصول على تحليل من Mistral AI API للعملة مع تخزين مؤقت"""
     headers = {
         "Authorization": f"Bearer {MISTRAL_KEY}",
         "Content-Type": "application/json"
@@ -620,123 +983,108 @@ async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAUL
 async def handle_recommendation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة اختيارات نظام التوصية مع سحب الصور"""
     user_text = update.message.text.strip()
+    user_id = update.effective_user.id
     
-    # العودة للقائمة الرئيسية
-    if user_text == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    # التحقق من الأقسام الرئيسية
-    if user_text in CATEGORIES:
-        keyboard = [[asset] for asset in CATEGORIES[user_text]]
-        keyboard.append(["🔙 العودة للقائمة", "الرجوع للقائمة الرئيسية"])
+    with user_lock_manager.get_lock(user_id):
+        # العودة للقائمة الرئيسية
+        if user_text == "الرجوع للقائمة الرئيسية":
+            keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+            await update.message.reply_text(
+                "🏠 العودة للقائمة الرئيسية",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+            )
+            return MAIN_MENU
         
-        await update.message.reply_text(
-            f"📍 قسم: {user_text}\nاختر العملة الآن:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        )
-        return CATEGORY_SELECTION
-    
-    # التحقق من العملة المختارة
-    symbol_to_analyze = None
-    for category_list in CATEGORIES.values():
-        if user_text in category_list:
-            symbol_to_analyze = user_text
-            break
-    
-    # إذا وجدت العملة، ابدأ التحليل مع سحب الصورة
-    if symbol_to_analyze:
-        save_last_recommendation_symbol(context, symbol_to_analyze)
-        wait_msg = await update.message.reply_text(f"⏳ استنى شويه بسحب صورة `{symbol_to_analyze}`🤌...")
-        
-        # سحب صورة الشارت أولاً
-        chart_image_path = download_chart_image(symbol_to_analyze)
-        
-        if chart_image_path and os.path.exists(chart_image_path):
-            # إرسال الصورة للمستخدم
-            with open(chart_image_path, 'rb') as photo:
-                await update.message.reply_photo(
-                    photo=photo,
-                    caption=f"📈 شارت {symbol_to_analyze} المباشر"
-                )
+        # التحقق من الأقسام الرئيسية
+        if user_text in CATEGORIES:
+            keyboard = [[asset] for asset in CATEGORIES[user_text]]
+            keyboard.append(["🔙 العودة للقائمة", "الرجوع للقائمة الرئيسية"])
             
-            # استخدام الصورة للتحليل الفني
-            try:
-                # استدعاء تحليل الصورة
-                await wait_msg.edit_text(f"استنى شويه قاعد أحلل {symbol_to_analyze} 🤌...")
-                
-                # إنشاء كائن تحديث مؤقت للصورة
-                from telegram import PhotoSize
-                
-                # تحميل الصورة ككائن PhotoSize
-                photo_file = await context.bot.get_file(chart_image_path)
-                
-                # إنشاء تحديث مؤقت
-                class TempUpdate:
-                    def __init__(self, original_update, photo_path):
-                        self.effective_user = original_update.effective_user
-                        self.effective_chat = original_update.effective_chat
-                        self.message = TempMessage(photo_path)
-                
-                class TempMessage:
-                    def __init__(self, photo_path):
-                        self.photo = [TempPhotoSize(photo_path)]
-                        self.text = ""
-                
-                class TempPhotoSize:
-                    def __init__(self, file_path):
-                        self.file_path = file_path
-                    
-                    async def get_file(self):
-                        class TempFile:
-                            def __init__(self, path):
-                                self.path = path
-                            
-                            async def download_to_drive(self, destination):
-                                shutil.copy2(self.path, destination)
-                                return destination
-                        
-                        return TempFile(self.file_path)
-                
-                temp_update = TempUpdate(update, chart_image_path)
-                
-                # الحصول على إعدادات المستخدم
-                user_id = update.effective_user.id
-                candle, trade_time, _, _ = get_user_setting(user_id)
-                
-                if not candle or not trade_time:
-                    await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
-                    
-                    reply_keyboard = [[key] for key in CATEGORIES.keys()]
-                    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-                    
-                    await update.message.reply_text(
-                        "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-                        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+            await update.message.reply_text(
+                f"📍 قسم: {user_text}\nاختر العملة الآن:",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            )
+            return CATEGORY_SELECTION
+        
+        # التحقق من العملة المختارة
+        symbol_to_analyze = None
+        for category_list in CATEGORIES.values():
+            if user_text in category_list:
+                symbol_to_analyze = user_text
+                break
+        
+        # إذا وجدت العملة، ابدأ التحليل مع سحب الصورة
+        if symbol_to_analyze:
+            save_last_recommendation_symbol(context, symbol_to_analyze)
+            wait_msg = await update.message.reply_text(f"⏳ استنى شويه بسحب صورة `{symbol_to_analyze}`🤌...")
+            
+            # سحب صورة الشارت أولاً - تنفيذ غير متزامن
+            chart_image_path = await thread_pool.run_async(download_chart_image, symbol_to_analyze)
+            
+            if chart_image_path and os.path.exists(chart_image_path):
+                # إرسال الصورة للمستخدم
+                with open(chart_image_path, 'rb') as photo:
+                    await update.message.reply_photo(
+                        photo=photo,
+                        caption=f"📈 شارت {symbol_to_analyze} المباشر"
                     )
-                    return RECOMMENDATION_MODE
                 
-                # تحليل الصورة
-                analysis_result = await analyze_chart_image(
-                    temp_update, 
-                    context, 
-                    chart_image_path, 
-                    candle, 
-                    trade_time, 
-                    symbol_to_analyze
-                )
+                try:
+                    await wait_msg.edit_text(f"استنى شويه قاعد أحلل {symbol_to_analyze} 🤌...")
+                    
+                    # الحصول على إعدادات المستخدم
+                    candle, trade_time, _, _ = get_user_setting(user_id)
+                    
+                    if not candle or not trade_time:
+                        await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
+                        
+                        reply_keyboard = [[key] for key in CATEGORIES.keys()]
+                        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+                        
+                        await update.message.reply_text(
+                            "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+                            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+                        )
+                        return RECOMMENDATION_MODE
+                    
+                    # تحليل الصورة - تنفيذ غير متزامن
+                    analysis_result = await analyze_chart_image(
+                        update, 
+                        context, 
+                        chart_image_path, 
+                        candle, 
+                        trade_time, 
+                        symbol_to_analyze
+                    )
+                    
+                    # تنسيق النتيجة مع دعم النسخ السريع
+                    formatted_result = format_as_copyable_code(analysis_result, "text")
+                    await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
+                    
+                except Exception as e:
+                    print(f"❌ خطأ في تحليل الصورة التلقائية: {e}")
+                    # التحليل النصي الاحتياطي
+                    analysis = get_mistral_analysis(symbol_to_analyze)
+                    
+                    final_msg = (
+                        f"📈 **نتائج توصية {symbol_to_analyze}**\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"{analysis}\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"🤖 **Powered by - Obeida Trading**"
+                    )
+                    
+                    final_msg = clean_repeated_text(final_msg)
+                    formatted_result = format_as_copyable_code(final_msg, "text")
+                    await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
                 
-                # تنسيق النتيجة مع دعم النسخ السريع
-                formatted_result = format_as_copyable_code(analysis_result, "text")
-                await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
-                
-            except Exception as e:
-                print(f"❌ خطأ في تحليل الصورة التلقائية: {e}")
-                # التحليل النصي الاحتياطي
+                # حذف الصورة المؤقتة
+                try:
+                    os.remove(chart_image_path)
+                except:
+                    pass
+            else:
+                # إذا فشل سحب الصورة، استخدم التحليل النصي
                 analysis = get_mistral_analysis(symbol_to_analyze)
                 
                 final_msg = (
@@ -751,203 +1099,183 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
                 formatted_result = format_as_copyable_code(final_msg, "text")
                 await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
             
-            # حذف الصورة المؤقتة
-            try:
-                os.remove(chart_image_path)
-            except:
-                pass
-        else:
-            # إذا فشل سحب الصورة، استخدم التحليل النصي
-            analysis = get_mistral_analysis(symbol_to_analyze)
+            # عرض الأزرار للاستمرار
+            reply_keyboard = [[key] for key in CATEGORIES.keys()]
+            reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
             
-            final_msg = (
-                f"📈 **نتائج توصية {symbol_to_analyze}**\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"{analysis}\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"🤖 **Powered by - Obeida Trading**"
+            await update.message.reply_text(
+                "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+                reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
             )
+            return RECOMMENDATION_MODE
+        
+        # إذا كان النص "🔙 العودة للقائمة"
+        if user_text == "🔙 العودة للقائمة":
+            reply_keyboard = [[key] for key in CATEGORIES.keys()]
+            reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
             
-            final_msg = clean_repeated_text(final_msg)
-            formatted_result = format_as_copyable_code(final_msg, "text")
-            await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
+            await update.message.reply_text(
+                "🔙 **العودة للقائمة الرئيسية للتوصيات**\nاختر القسم المطلوب:",
+                reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+            )
+            return RECOMMENDATION_MODE
         
-        # عرض الأزرار للاستمرار
-        reply_keyboard = [[key] for key in CATEGORIES.keys()]
-        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-        
+        # إذا لم يطابق النص أي شيء
         await update.message.reply_text(
-            "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+            "❌ خيار غير موجود. يرجى اختيار عملة من القائمة الظاهرة في الأزرار.\n\n"
+            "اضغط 'الرجوع للقائمة الرئيسية' للعودة.",
+            reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True)
         )
         return RECOMMENDATION_MODE
-    
-    # إذا كان النص "🔙 العودة للقائمة"
-    if user_text == "🔙 العودة للقائمة":
-        reply_keyboard = [[key] for key in CATEGORIES.keys()]
-        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            "🔙 **العودة للقائمة الرئيسية للتوصيات**\nاختر القسم المطلوب:",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-        )
-        return RECOMMENDATION_MODE
-    
-    # إذا لم يطابق النص أي شيء
-    await update.message.reply_text(
-        "❌ خيار غير موجود. يرجى اختيار عملة من القائمة الظاهرة في الأزرار.\n\n"
-        "اضغط 'الرجوع للقائمة الرئيسية' للعودة.",
-        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True)
-    )
-    return RECOMMENDATION_MODE
 
 async def analyze_chart_image(update, context, image_path, candle, trade_time, symbol):
-    """تحليل صورة الشارت"""
+    """تحليل صورة الشارت - محسن للأداء"""
+    user_id = update.effective_user.id
+    
     try:
-        user_id = update.effective_user.id
-        prev_context, prev_time = get_analysis_context(user_id)
-        
-        # ضغط الصورة
-        compressed_path = compress_image(image_path)
-        
-        # استخدام الصورة المضغوطة للتحليل
-        base64_img = encode_image(compressed_path)
-        
-        if not base64_img:
-            return "❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة."
-        
-        # الحصول على معلومات السيولة والتوقيت
-        session_name, session_time, session_vol = get_market_session()
-        gaza_time = datetime.now(GAZA_TIMEZONE)
-        current_hour = gaza_time.hour
-        current_minute = gaza_time.minute
-        current_second = gaza_time.second
-        
-        # حساب الثواني المتبقية لإغلاق الشمعة
-        seconds_remaining = 60 - current_second
-        if candle.startswith('M'):
-            candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
-            seconds_remaining = (candle_minutes * 60) - ((current_minute % candle_minutes) * 60 + current_second)
-        elif candle.startswith('H'):
-            candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
-            minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
-            seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
-        
-        candle_closing_status = f"الوقت المتبقي لإغلاق الشمعة: {seconds_remaining} ثانية"
-        if seconds_remaining < 10:
-            candle_closing_status += " ⚠️ (الوقت حرج جداً - تجنب الدخول)"
-        elif seconds_remaining < 30:
-            candle_closing_status += " ⚠️ (الوقت قصير)"
-        
-        # تحديد أوقات الأخبار الخطيرة
-        news_impact = "🟢 منخفض"
-        news_warning = ""
-        news_risk_multiplier = 1.0
-        
-        high_impact_hours = [
-            (14, 30), (16, 0), (20, 0),
-            (8, 0), (9, 0), (10, 0),
-            (2, 30), (4, 0),
-            (17, 30),
-        ]
-        
-        for news_hour, news_minute in high_impact_hours:
-            time_diff = abs((current_hour * 60 + current_minute) - (news_hour * 60 + news_minute))
-            if time_diff <= 60:
-                news_impact = "🔴 عالي جداً"
-                news_risk_multiplier = 2.5
-                news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة"
-                break
-            elif time_diff <= 120:
-                news_impact = "🟡 متوسط"
-                news_risk_multiplier = 1.5
-                news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
-                break
-        
-        # الفلتر الزمني (Kill Zones)
-        kill_zone_status = ""
-        if 10 <= current_hour < 13:
-            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
-        elif 15 <= current_hour < 18:
-            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
-        elif 0 <= current_hour < 9 or current_hour >= 22:
-            kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
-        else:
-            kill_zone_status = "خارج مناطق القتل الرئيسية"
-        
-        # معالجة "دقيقة الغدر"
-        is_last_minute = 1 if current_minute in [29, 59, 14, 44] else 0
-        last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
-        
-        # ربط معطيات الإعدادات
-        candle_category = ""
-        if candle.startswith('S'):
-            candle_category = "فريمات سريعة جداً (ثواني) - حركات سريعة وانعكاسات مفاجئة"
-        elif candle.startswith('M'):
-            candle_category = "فريمات متوسطة (دقائق) - حركات متوسطة السرعة"
-        elif candle.startswith('H'):
-            candle_category = "فريمات بطيئة (ساعات) - حركات بطيئة وثابتة"
-        elif candle.startswith('D'):
-            candle_category = "فريمات طويلة (يومي) - اتجاهات طويلة الأمد"
-        
-        trading_strategy = ""
-        position_sizing = ""
-        
-        if trade_time == "قصير (1m-15m)":
-            trading_strategy = "تداول سكالبينج (Scalping) - دخول وخروج سريع"
-            position_sizing = "حجم كبير نسبياً مع وقف خسارة ضيق"
-        elif trade_time == "متوسط (4h-Daily)":
-            trading_strategy = "تداول سوينج (Swing) - متوسط الأجل"
-            position_sizing = "حجم معتدل مع وقف خسارة متوسط"
-        elif trade_time == "طويل (Weekly-Monthly)":
-            trading_strategy = "تداول موقف (Position) - طويل الأجل"
-            position_sizing = "حجم صغير مع وقف خسارة واسع"
-        
-        # تحديد فريم التحقق الديناميكي
-        verification_timeframe = ""
-        
-        candle_value = candle[1:] if candle.startswith(('S', 'M', 'H', 'D')) else candle
-        
-        if candle.startswith('S'):
-            if candle_value in ['5', '10', '15']:
-                verification_timeframe = "S15"
+        with user_lock_manager.get_lock(user_id):
+            prev_context, prev_time = get_analysis_context(user_id)
+            
+            # ضغط الصورة - تنفيذ متزامن
+            compressed_path = await thread_pool.run_async(compress_image, image_path)
+            
+            # استخدام الصورة المضغوطة للتحليل
+            base64_img = encode_image(compressed_path)
+            
+            if not base64_img:
+                return "❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة."
+            
+            # الحصول على معلومات السيولة والتوقيت
+            session_name, session_time, session_vol = get_market_session()
+            gaza_time = datetime.now(GAZA_TIMEZONE)
+            current_hour = gaza_time.hour
+            current_minute = gaza_time.minute
+            current_second = gaza_time.second
+            
+            # حساب الثواني المتبقية لإغلاق الشمعة
+            seconds_remaining = 60 - current_second
+            if candle.startswith('M'):
+                candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
+                seconds_remaining = (candle_minutes * 60) - ((current_minute % candle_minutes) * 60 + current_second)
+            elif candle.startswith('H'):
+                candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
+                minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
+                seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
+            
+            candle_closing_status = f"الوقت المتبقي لإغلاق الشمعة: {seconds_remaining} ثانية"
+            if seconds_remaining < 10:
+                candle_closing_status += " ⚠️ (الوقت حرج جداً - تجنب الدخول)"
+            elif seconds_remaining < 30:
+                candle_closing_status += " ⚠️ (الوقت قصير)"
+            
+            # تحديد أوقات الأخبار الخطيرة
+            news_impact = "🟢 منخفض"
+            news_warning = ""
+            news_risk_multiplier = 1.0
+            
+            high_impact_hours = [
+                (14, 30), (16, 0), (20, 0),
+                (8, 0), (9, 0), (10, 0),
+                (2, 30), (4, 0),
+                (17, 30),
+            ]
+            
+            for news_hour, news_minute in high_impact_hours:
+                time_diff = abs((current_hour * 60 + current_minute) - (news_hour * 60 + news_minute))
+                if time_diff <= 60:
+                    news_impact = "🔴 عالي جداً"
+                    news_risk_multiplier = 2.5
+                    news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة"
+                    break
+                elif time_diff <= 120:
+                    news_impact = "🟡 متوسط"
+                    news_risk_multiplier = 1.5
+                    news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
+                    break
+            
+            # الفلتر الزمني (Kill Zones)
+            kill_zone_status = ""
+            if 10 <= current_hour < 13:
+                kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
+            elif 15 <= current_hour < 18:
+                kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
+            elif 0 <= current_hour < 9 or current_hour >= 22:
+                kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
             else:
-                verification_timeframe = "S30"
-        elif candle.startswith('M'):
-            if int(candle_value) <= 5:
-                verification_timeframe = "M1"
-            elif int(candle_value) <= 15:
-                verification_timeframe = "M5"
-            else:
-                verification_timeframe = "M15"
-        elif candle.startswith('H'):
-            verification_timeframe = "H1"
-        elif candle.startswith('D'):
-            verification_timeframe = "H4"
-        
-        # إعدادات ثابتة
-        GENERATION_CONFIG = {
-            "max_tokens": 910,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "random_seed": 42
-        }
-        
-        # تحضير سياق التحليل السابق
-        previous_context_info = ""
-        if prev_context and prev_time:
-            try:
-                prev_time_obj = datetime.fromisoformat(prev_time)
-                minutes_ago = int((datetime.now() - prev_time_obj).total_seconds() / 60)
-                previous_context_info = f"""
-                📋 **ذاكرة السياق (منذ {minutes_ago} دقيقة):**
-                {prev_context}
-                """
-            except:
-                previous_context_info = ""
-        
-        # البرومبت الرئيسي المحدث مع جميع الإضافات الجديدة
-        MAIN_PROMPT = f"""
+                kill_zone_status = "خارج مناطق القتل الرئيسية"
+            
+            # معالجة "دقيقة الغدر"
+            is_last_minute = 1 if current_minute in [29, 59, 14, 44] else 0
+            last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
+            
+            # ربط معطيات الإعدادات
+            candle_category = ""
+            if candle.startswith('S'):
+                candle_category = "فريمات سريعة جداً (ثواني) - حركات سريعة وانعكاسات مفاجئة"
+            elif candle.startswith('M'):
+                candle_category = "فريمات متوسطة (دقائق) - حركات متوسطة السرعة"
+            elif candle.startswith('H'):
+                candle_category = "فريمات بطيئة (ساعات) - حركات بطيئة وثابتة"
+            elif candle.startswith('D'):
+                candle_category = "فريمات طويلة (يومي) - اتجاهات طويلة الأمد"
+            
+            trading_strategy = ""
+            position_sizing = ""
+            
+            if trade_time == "قصير (1m-15m)":
+                trading_strategy = "تداول سكالبينج (Scalping) - دخول وخروج سريع"
+                position_sizing = "حجم كبير نسبياً مع وقف خسارة ضيق"
+            elif trade_time == "متوسط (4h-Daily)":
+                trading_strategy = "تداول سوينج (Swing) - متوسط الأجل"
+                position_sizing = "حجم معتدل مع وقف خسارة متوسط"
+            elif trade_time == "طويل (Weekly-Monthly)":
+                trading_strategy = "تداول موقف (Position) - طويل الأجل"
+                position_sizing = "حجم صغير مع وقف خسارة واسع"
+            
+            # تحديد فريم التحقق الديناميكي
+            verification_timeframe = ""
+            candle_value = candle[1:] if candle.startswith(('S', 'M', 'H', 'D')) else candle
+            
+            if candle.startswith('S'):
+                if candle_value in ['5', '10', '15']:
+                    verification_timeframe = "S15"
+                else:
+                    verification_timeframe = "S30"
+            elif candle.startswith('M'):
+                if int(candle_value) <= 5:
+                    verification_timeframe = "M1"
+                elif int(candle_value) <= 15:
+                    verification_timeframe = "M5"
+                else:
+                    verification_timeframe = "M15"
+            elif candle.startswith('H'):
+                verification_timeframe = "H1"
+            elif candle.startswith('D'):
+                verification_timeframe = "H4"
+            
+            # إعدادات ثابتة
+            GENERATION_CONFIG = {
+                "max_tokens": 910,
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "random_seed": 42
+            }
+            
+            # تحضير سياق التحليل السابق
+            previous_context_info = ""
+            if prev_context and prev_time:
+                try:
+                    prev_time_obj = datetime.fromisoformat(prev_time)
+                    minutes_ago = int((datetime.now() - prev_time_obj).total_seconds() / 60)
+                    previous_context_info = f"""
+                    📋 **ذاكرة السياق (منذ {minutes_ago} دقيقة):**
+                    {prev_context}
+                    """
+                except:
+                    previous_context_info = ""
+            
+            # البرومبت الرئيسي (نفسه كما في الكود الأصلي)
+            MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
 مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
 
@@ -1090,125 +1418,129 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 - {candle_closing_status}
 - تأثير الأخبار: {news_impact}
 """
-        
-        headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
-        
-        # التحليل الأولي
-        payload_1 = {
-            "model": MISTRAL_MODEL,
-            "messages": [
-                {
-                    "role": "user", 
-                    "content": [
-                        {"type": "text", "text": MAIN_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
-                    ]
-                }
-            ],
-            **GENERATION_CONFIG
-        }
-        
-        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
-        
-        if response_1.status_code != 200:
-            print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
-            raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
-        
-        initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
-        
-        # التدقيق والتحسين
-        AUDIT_PROMPT = f"""
-        أنت محلل فني خبير متخصص في التدقيق والتحسين. مهمتك مراجعة التحليل الأول لـ {symbol} وتطبيق القواعد الجديدة:
-        
-        1. **قانون الفتيلة القاتلة:** تحقق من الذيول الطوحة (>60%)
-        2. **قانون الزخم الثلاثي:** 3 شموع متتالية = استمرار الاتجاه
-        3. **قانون الأرقام المستديرة:** الرقم المستدير = مغناطيس
-        4. **قانون الفجوات:** السعر يتحرك من فجوة إلى فجوة
-        
-        *التحليل الأولي:* {initial_analysis}
-        
-        📊 **المعطيات:**
-        • الإطار: {candle} ({candle_category})
-        • الاستراتيجية: {trading_strategy}
-        • الجلسة: {session_name} ({session_time})
-        • السيولة: {session_vol}
-        • الأخبار: {news_impact} (×{news_risk_multiplier})
-        
-        🔍 **أمر التدقيق:**
-        1. تحقق من كل سعر ومستوى مذكور في التحليل
-        2. تأكد من تطبيق جميع القواعد الجديدة
-        3. صحح أي أخطاء في الأسعار أو المستويات
-        4. أضف ملاحظات عن تطبيق القوانين الجديدة
-        
-        🎯 **قدم تحسينك بالتنسيق التالي:**
-        
-        📊 **التحليل المحسن لـ {symbol}:**
-        [هنا التحليل المحسن مع التطبيق الكامل للقوانين الجديدة]
-        
-        🔧 **التعديلات المطبقة:**
-        - [ ] قانون الفتيلة: [تم/غير مطلوب]
-        - [ ] قانون الزخم: [تم/غير مطلوب]
-        - [ ] قانون الأرقام: [تم/غير مطلوب]
-        - [ ] قانون الفجوات: [تم/غير مطلوب]
-        
-        ⚡ **الخلاصة النهائية:**
-        [التوصية النهائية مع مستوى الثقة]
-        """
-        
-        payload_2 = {
-            "model": MISTRAL_MODEL_AUDIT,
-            "messages": [
-                {
-                    "role": "user", 
-                    "content": [
-                        {"type": "text", "text": AUDIT_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
-                    ]
-                }
-            ],
-            "max_tokens": 910,
-            "temperature": 0.2,
-            "top_p": 1.0,
-            "random_seed": 42
-        }
-        
-        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
-        
-        if response_2.status_code == 200:
-            audit_result = response_2.json()['choices'][0]['message']['content'].strip()
-        else:
-            print(f"Obeida Vision Warning (Model 2): {response_2.status_code}")
-            audit_result = f"📋 **ملاحظة:** تعذر التدقيق - استخدام التحليل الأولي مباشرة\n\n{initial_analysis}"
-        
-        # تنظيف النصوص
-        audit_result = clean_repeated_text(audit_result)
-        
-        # حفظ سياق التحليل
-        save_analysis_context(user_id, audit_result)
-        
-        # إعداد النص النهائي
-        time_display = format_trade_time_for_prompt(trade_time)
-        
-        full_result = (
-            f"✅ **تم تحليل {symbol} بنجاح!**\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"{audit_result}\n\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"🔧 **الإعدادات المستخدمة:**\n"
-            f"• سرعة الشموع: {candle} ({candle_category})\n"
-            f"• استراتيجية التداول: {time_display}\n"
-            f"• فريم التحقق للكسر: {verification_timeframe}\n"
-            f"• الوقت المتبقي للإغلاق: {seconds_remaining} ثانية\n"
-            f"• جلسة السوق: {session_name} ({session_time})\n"
-            f"━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Powered by - Obeida Trading**"
-        )
-        
-        # تنظيف النهائي
-        full_result = clean_repeated_text(full_result)
-        
-        return full_result
-        
+            
+            headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
+            
+            # التحليل الأولي
+            payload_1 = {
+                "model": MISTRAL_MODEL,
+                "messages": [
+                    {
+                        "role": "user", 
+                        "content": [
+                            {"type": "text", "text": MAIN_PROMPT},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                        ]
+                    }
+                ],
+                **GENERATION_CONFIG
+            }
+            
+            response_1 = await thread_pool.run_async(
+                lambda: requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
+            )
+            
+            if response_1.status_code != 200:
+                print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
+                raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
+            
+            initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
+            
+            # التدقيق والتحسين
+            AUDIT_PROMPT = f"""
+            أنت محلل فني خبير متخصص في التدقيق والتحسين. مهمتك مراجعة التحليل الأول لـ {symbol} وتطبيق القواعد الجديدة:
+            
+            1. **قانون الفتيلة القاتلة:** تحقق من الذيول الطوحة (>60%)
+            2. **قانون الزخم الثلاثي:** 3 شموع متتالية = استمرار الاتجاه
+            3. **قانون الأرقام المستديرة:** الرقم المستدير = مغناطيس
+            4. **قانون الفجوات:** السعر يتحرك من فجوة إلى فجوة
+            
+            *التحليل الأولي:* {initial_analysis}
+            
+            📊 **المعطيات:**
+            • الإطار: {candle} ({candle_category})
+            • الاستراتيجية: {trading_strategy}
+            • الجلسة: {session_name} ({session_time})
+            • السيولة: {session_vol}
+            • الأخبار: {news_impact} (×{news_risk_multiplier})
+            
+            🔍 **أمر التدقيق:**
+            1. تحقق من كل سعر ومستوى مذكور في التحليل
+            2. تأكد من تطبيق جميع القواعد الجديدة
+            3. صحح أي أخطاء في الأسعار أو المستويات
+            4. أضف ملاحظات عن تطبيق القوانين الجديدة
+            
+            🎯 **قدم تحسينك بالتنسيق التالي:**
+            
+            📊 **التحليل المحسن لـ {symbol}:**
+            [هنا التحليل المحسن مع التطبيق الكامل للقوانين الجديدة]
+            
+            🔧 **التعديلات المطبقة:**
+            - [ ] قانون الفتيلة: [تم/غير مطلوب]
+            - [ ] قانون الزخم: [تم/غير مطلوب]
+            - [ ] قانون الأرقام: [تم/غير مطلوب]
+            - [ ] قانون الفجوات: [تم/غير مطلوب]
+            
+            ⚡ **الخلاصة النهائية:**
+            [التوصية النهائية مع مستوى الثقة]
+            """
+            
+            payload_2 = {
+                "model": MISTRAL_MODEL_AUDIT,
+                "messages": [
+                    {
+                        "role": "user", 
+                        "content": [
+                            {"type": "text", "text": AUDIT_PROMPT},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                        ]
+                    }
+                ],
+                "max_tokens": 910,
+                "temperature": 0.2,
+                "top_p": 1.0,
+                "random_seed": 42
+            }
+            
+            response_2 = await thread_pool.run_async(
+                lambda: requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
+            )
+            
+            if response_2.status_code == 200:
+                audit_result = response_2.json()['choices'][0]['message']['content'].strip()
+            else:
+                print(f"Obeida Vision Warning (Model 2): {response_2.status_code}")
+                audit_result = f"📋 **ملاحظة:** تعذر التدقيق - استخدام التحليل الأولي مباشرة\n\n{initial_analysis}"
+            
+            # تنظيف النصوص
+            audit_result = clean_repeated_text(audit_result)
+            
+            # حفظ سياق التحليل
+            save_analysis_context(user_id, audit_result)
+            
+            # إعداد النص النهائي
+            time_display = format_trade_time_for_prompt(trade_time)
+            
+            full_result = (
+                f"✅ **تم تحليل {symbol} بنجاح!**\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"{audit_result}\n\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"🔧 **الإعدادات المستخدمة:**\n"
+                f"• سرعة الشموع: {candle} ({candle_category})\n"
+                f"• استراتيجية التداول: {time_display}\n"
+                f"• فريم التحقق للكسر: {verification_timeframe}\n"
+                f"• الوقت المتبقي للإغلاق: {seconds_remaining} ثانية\n"
+                f"• جلسة السوق: {session_name} ({session_time})\n"
+                f"━━━━━━━━━━━━━━━━━\n"
+                f"🤖 **Powered by - Obeida Trading**"
+            )
+            
+            # تنظيف النهائي
+            full_result = clean_repeated_text(full_result)
+            
+            return full_result
+            
     except requests.exceptions.Timeout:
         return "⏱️ تجاوز الوقت المحدد. حاول مرة أخرى."
     except Exception as e:
@@ -1227,52 +1559,53 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
     """معالجة الصور في وضع التوصية"""
     user_id = update.effective_user.id
     
-    # الحصول على آخر عملة تم اختيارها
-    last_symbol = get_last_recommendation_symbol(context)
-    
-    wait_msg = await update.message.reply_text(f"📊 استنى شوي العملة: {last_symbol} قيد تحليل 🤌...")
-    
-    try:
-        # حفظ الصورة مؤقتاً
-        photo = await update.message.photo[-1].get_file()
-        timestamp = int(time.time())
-        image_path = os.path.join(IMAGE_CACHE_DIR, f"recommendation_{user_id}_{timestamp}.jpg")
-        await photo.download_to_drive(image_path)
+    with user_lock_manager.get_lock(user_id):
+        last_symbol = get_last_recommendation_symbol(context)
         
-        # الحصول على إعدادات المستخدم
-        candle, trade_time, _, _ = get_user_setting(user_id)
+        wait_msg = await update.message.reply_text(f"📊 استنى شوي العملة: {last_symbol} قيد تحليل 🤌...")
         
-        if not candle or not trade_time:
-            await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
-            return RECOMMENDATION_MODE
+        try:
+            # حفظ الصورة مؤقتاً
+            photo = await update.message.photo[-1].get_file()
+            timestamp = int(time.time())
+            unique_id = str(uuid.uuid4())[:8]
+            image_path = os.path.join(IMAGE_CACHE_DIR, f"recommendation_{user_id}_{timestamp}_{unique_id}.jpg")
+            await photo.download_to_drive(image_path)
+            
+            # الحصول على إعدادات المستخدم
+            candle, trade_time, _, _ = get_user_setting(user_id)
+            
+            if not candle or not trade_time:
+                await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
+                return RECOMMENDATION_MODE
+            
+            # تحليل الصورة
+            analysis_result = await analyze_chart_image(
+                update, 
+                context, 
+                image_path, 
+                candle, 
+                trade_time, 
+                last_symbol
+            )
+            
+            # تنسيق النتيجة مع دعم النسخ السريع
+            formatted_result = format_as_copyable_code(analysis_result, "text")
+            await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
+                    
+        except Exception as e:
+            print(f"❌ خطأ في تحليل صورة التوصية: {e}")
+            await wait_msg.edit_text("❌ حدث خطأ في معالجة الصورة. يرجى المحاولة مرة أخرى.")
         
-        # تحليل الصورة
-        analysis_result = await analyze_chart_image(
-            update, 
-            context, 
-            image_path, 
-            candle, 
-            trade_time, 
-            last_symbol
+        # عرض خيارات المتابعة
+        reply_keyboard = [[key] for key in CATEGORIES.keys()]
+        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
         )
-        
-        # تنسيق النتيجة مع دعم النسخ السريع
-        formatted_result = format_as_copyable_code(analysis_result, "text")
-        await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
-                
-    except Exception as e:
-        print(f"❌ خطأ في تحليل صورة التوصية: {e}")
-        await wait_msg.edit_text("❌ حدث خطأ في معالجة الصورة. يرجى المحاولة مرة أخرى.")
-    
-    # عرض خيارات المتابعة
-    reply_keyboard = [[key] for key in CATEGORIES.keys()]
-    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-    
-    await update.message.reply_text(
-        "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-    )
-    return RECOMMENDATION_MODE
+        return RECOMMENDATION_MODE
 
 # --- 🚀 برومبت قوي للدردشة ---
 async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1453,7 +1786,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Content-Type": "application/json"
         }
         
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
+        response = await thread_pool.run_async(
+            lambda: requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
+        )
         
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
@@ -1514,174 +1849,172 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-# --- دالة تحليل الصورة مع جميع الإضافات الجديدة ---
+# --- دالة تحليل الصورة مع جميع الإضافات الجديدة (مختصرة للتكرار) ---
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور للتحليل الفني المتقدم"""
     user_id = update.effective_user.id
-    candle, trade_time, prev_context, prev_time = get_user_setting(user_id)
     
-    if not candle or not trade_time:
-        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-        await update.message.reply_text(
-            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-
-    wait_msg = await update.message.reply_text(" ثواني وساقوم بتحليل 🤌...")
-    photo = await update.message.photo[-1].get_file()
-    
-    timestamp = int(time.time())
-    original_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_original.jpg")
-    compressed_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_compressed.jpg")
-    
-    try:
-        await photo.download_to_drive(original_path)
-        compressed_path = compress_image(original_path)
-        base64_img = encode_image(compressed_path)
+    with user_lock_manager.get_lock(user_id):
+        candle, trade_time, prev_context, prev_time = get_user_setting(user_id)
         
-        if not base64_img:
-            await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
-            if os.path.exists(original_path):
-                os.remove(original_path)
-            if os.path.exists(compressed_path) and compressed_path != original_path:
-                os.remove(compressed_path)
+        if not candle or not trade_time:
+            keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
+            await update.message.reply_text(
+                "❌ **يجب ضبط الإعدادات أولاً**\n\n"
+                "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
             return MAIN_MENU
+
+        wait_msg = await update.message.reply_text(" ثواني وساقوم بتحليل 🤌...")
+        photo = await update.message.photo[-1].get_file()
         
-        # الحصول على معلومات السيولة والتوقيت
-        session_name, session_time, session_vol = get_market_session()
-        gaza_time = datetime.now(GAZA_TIMEZONE)
-        current_hour = gaza_time.hour
-        current_minute = gaza_time.minute
-        current_second = gaza_time.second
+        timestamp = int(time.time())
+        unique_id = str(uuid.uuid4())[:8]
+        original_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_{unique_id}_original.jpg")
+        compressed_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_{unique_id}_compressed.jpg")
         
-        # حساب الثواني المتبقية لإغلاق الشمعة
-        seconds_remaining = 60 - current_second
-        if candle.startswith('M'):
-            candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
-            seconds_remaining = (candle_minutes * 60) - ((current_minute % candle_minutes) * 60 + current_second)
-        elif candle.startswith('H'):
-            candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
-            minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
-            seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
-        
-        candle_closing_status = f"الوقت المتبقي الشمعة: {seconds_remaining} ثانية"
-        if seconds_remaining < 10:
-            candle_closing_status += " ⚠️ (الوقت حرج جداً - تجنب الدخول)"
-        elif seconds_remaining < 30:
-            candle_closing_status += " ⚠️ (الوقت قصير)"
-        
-        # نظام الدرع الأساسي (Fundamental Shield)
-        news_impact = "🟢 منخفض"
-        news_warning = ""
-        news_risk_multiplier = 1.0
-        
-        high_impact_hours = [
-            (14, 30), (16, 0), (20, 0),
-            (8, 0), (9, 0), (10, 0),
-            (2, 30), (4, 0),
-            (17, 30),
-        ]
-        
-        for news_hour, news_minute in high_impact_hours:
-            time_diff = abs((current_hour * 60 + current_minute) - (news_hour * 60 + news_minute))
-            if time_diff <= 60:
-                news_impact = "🔴 عالي جداً"
-                news_risk_multiplier = 2.5
-                news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة"
-                break
-            elif time_diff <= 120:
-                news_impact = "🟡 متوسط"
-                news_risk_multiplier = 1.5
-                news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
-                break
-        
-        # الفلتر الزمني (Kill Zones)
-        kill_zone_status = ""
-        if 10 <= current_hour < 13:
-            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
-        elif 15 <= current_hour < 18:
-            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
-        elif 0 <= current_hour < 9 or current_hour >= 22:
-            kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
-        else:
-            kill_zone_status = "خارج مناطق القتل الرئيسية"
-        
-        # معالجة "دقيقة الغدر"
-        is_last_minute = 1 if current_minute in [29, 59, 14, 44] else 0
-        last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
-        
-        # ربط معطيات الإعدادات
-        candle_category = ""
-        if candle.startswith('S'):
-            candle_category = "فريمات سريعة جداً (ثواني) - حركات سريعة وانعكاسات مفاجئة"
-        elif candle.startswith('M'):
-            candle_category = "فريمات متوسطة (دقائق) - حركات متوسطة السرعة"
-        elif candle.startswith('H'):
-            candle_category = "فريمات بطيئة (ساعات) - حركات بطيئة وثابتة"
-        elif candle.startswith('D'):
-            candle_category = "فريمات طويلة (يومي) - اتجاهات طويلة الأمد"
-        
-        trading_strategy = ""
-        position_sizing = ""
-        
-        if trade_time == "قصير (1m-15m)":
-            trading_strategy = "تداول سكالبينج (Scalping) - دخول وخروج سريع"
-            position_sizing = "حجم كبير نسبياً مع وقف خسارة ضيق"
-        elif trade_time == "متوسط (4h-Daily)":
-            trading_strategy = "تداول سوينج (Swing) - متوسط الأجل"
-            position_sizing = "حجم معتدل مع وقف خسارة متوسط"
-        elif trade_time == "طويل (Weekly-Monthly)":
-            trading_strategy = "تداول موقف (Position) - طويل الأجل"
-            position_sizing = "حجم صغير مع وقف خسارة واسع"
-        
-        # تحديد فريم التحقق الديناميكي
-        verification_timeframe = ""
-        
-        candle_value = candle[1:] if candle.startswith(('S', 'M', 'H', 'D')) else candle
-        
-        if candle.startswith('S'):
-            if candle_value in ['5', '10', '15']:
-                verification_timeframe = "S15"
+        try:
+            await photo.download_to_drive(original_path)
+            compressed_path = await thread_pool.run_async(compress_image, original_path)
+            base64_img = encode_image(compressed_path)
+            
+            if not base64_img:
+                await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
+                return MAIN_MENU
+            
+            # الحصول على معلومات السيولة والتوقيت
+            session_name, session_time, session_vol = get_market_session()
+            gaza_time = datetime.now(GAZA_TIMEZONE)
+            current_hour = gaza_time.hour
+            current_minute = gaza_time.minute
+            current_second = gaza_time.second
+            
+            # حساب الثواني المتبقية لإغلاق الشمعة
+            seconds_remaining = 60 - current_second
+            if candle.startswith('M'):
+                candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
+                seconds_remaining = (candle_minutes * 60) - ((current_minute % candle_minutes) * 60 + current_second)
+            elif candle.startswith('H'):
+                candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
+                minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
+                seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
+            
+            candle_closing_status = f"الوقت المتبقي الشمعة: {seconds_remaining} ثانية"
+            if seconds_remaining < 10:
+                candle_closing_status += " ⚠️ (الوقت حرج جداً - تجنب الدخول)"
+            elif seconds_remaining < 30:
+                candle_closing_status += " ⚠️ (الوقت قصير)"
+            
+            # تحديد أوقات الأخبار الخطيرة
+            news_impact = "🟢 منخفض"
+            news_warning = ""
+            news_risk_multiplier = 1.0
+            
+            high_impact_hours = [
+                (14, 30), (16, 0), (20, 0),
+                (8, 0), (9, 0), (10, 0),
+                (2, 30), (4, 0),
+                (17, 30),
+            ]
+            
+            for news_hour, news_minute in high_impact_hours:
+                time_diff = abs((current_hour * 60 + current_minute) - (news_hour * 60 + news_minute))
+                if time_diff <= 60:
+                    news_impact = "🔴 عالي جداً"
+                    news_risk_multiplier = 2.5
+                    news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة"
+                    break
+                elif time_diff <= 120:
+                    news_impact = "🟡 متوسط"
+                    news_risk_multiplier = 1.5
+                    news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
+                    break
+            
+            # الفلتر الزمني (Kill Zones)
+            kill_zone_status = ""
+            if 10 <= current_hour < 13:
+                kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
+            elif 15 <= current_hour < 18:
+                kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
+            elif 0 <= current_hour < 9 or current_hour >= 22:
+                kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
             else:
-                verification_timeframe = "S30"
-        elif candle.startswith('M'):
-            if int(candle_value) <= 5:
-                verification_timeframe = "M1"
-            elif int(candle_value) <= 15:
-                verification_timeframe = "M5"
-            else:
-                verification_timeframe = "M15"
-        elif candle.startswith('H'):
-            verification_timeframe = "H1"
-        elif candle.startswith('D'):
-            verification_timeframe = "H4"
-        
-        # إعدادات ثابتة
-        GENERATION_CONFIG = {
-            "max_tokens": 1100,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "random_seed": 42
-        }
-        
-        # تحضير سياق التحليل السابق
-        previous_context_info = ""
-        if prev_context and prev_time:
-            try:
-                prev_time_obj = datetime.fromisoformat(prev_time)
-                minutes_ago = int((datetime.now() - prev_time_obj).total_seconds() / 60)
-                previous_context_info = f"""
-                📋 **ذاكرة السياق (منذ {minutes_ago} دقيقة):**
-                {prev_context}
-                """
-            except:
-                previous_context_info = ""
-        
-        # البرومبت الرئيسي المحدث مع جميع الإضافات
-        MAIN_PROMPT = f"""
+                kill_zone_status = "خارج مناطق القتل الرئيسية"
+            
+            # معالجة "دقيقة الغدر"
+            is_last_minute = 1 if current_minute in [29, 59, 14, 44] else 0
+            last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
+            
+            # ربط معطيات الإعدادات
+            candle_category = ""
+            if candle.startswith('S'):
+                candle_category = "فريمات سريعة جداً (ثواني) - حركات سريعة وانعكاسات مفاجئة"
+            elif candle.startswith('M'):
+                candle_category = "فريمات متوسطة (دقائق) - حركات متوسطة السرعة"
+            elif candle.startswith('H'):
+                candle_category = "فريمات بطيئة (ساعات) - حركات بطيئة وثابتة"
+            elif candle.startswith('D'):
+                candle_category = "فريمات طويلة (يومي) - اتجاهات طويلة الأمد"
+            
+            trading_strategy = ""
+            position_sizing = ""
+            
+            if trade_time == "قصير (1m-15m)":
+                trading_strategy = "تداول سكالبينج (Scalping) - دخول وخروج سريع"
+                position_sizing = "حجم كبير نسبياً مع وقف خسارة ضيق"
+            elif trade_time == "متوسط (4h-Daily)":
+                trading_strategy = "تداول سوينج (Swing) - متوسط الأجل"
+                position_sizing = "حجم معتدل مع وقف خسارة متوسط"
+            elif trade_time == "طويل (Weekly-Monthly)":
+                trading_strategy = "تداول موقف (Position) - طويل الأجل"
+                position_sizing = "حجم صغير مع وقف خسارة واسع"
+            
+            # تحديد فريم التحقق الديناميكي
+            verification_timeframe = ""
+            candle_value = candle[1:] if candle.startswith(('S', 'M', 'H', 'D')) else candle
+            
+            if candle.startswith('S'):
+                if candle_value in ['5', '10', '15']:
+                    verification_timeframe = "S15"
+                else:
+                    verification_timeframe = "S30"
+            elif candle.startswith('M'):
+                if int(candle_value) <= 5:
+                    verification_timeframe = "M1"
+                elif int(candle_value) <= 15:
+                    verification_timeframe = "M5"
+                else:
+                    verification_timeframe = "M15"
+            elif candle.startswith('H'):
+                verification_timeframe = "H1"
+            elif candle.startswith('D'):
+                verification_timeframe = "H4"
+            
+            # إعدادات ثابتة
+            GENERATION_CONFIG = {
+                "max_tokens": 1100,
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "random_seed": 42
+            }
+            
+            # تحضير سياق التحليل السابق
+            previous_context_info = ""
+            if prev_context and prev_time:
+                try:
+                    prev_time_obj = datetime.fromisoformat(prev_time)
+                    minutes_ago = int((datetime.now() - prev_time_obj).total_seconds() / 60)
+                    previous_context_info = f"""
+                    📋 **ذاكرة السياق (منذ {minutes_ago} دقيقة):**
+                    {prev_context}
+                    """
+                except:
+                    previous_context_info = ""
+            
+            # البرومبت الرئيسي (نفسه كما في الكود الأصلي، مختصر للتكرار)
+            MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
 مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
 
@@ -2481,39 +2814,40 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
 الآن قم بتحليل الشارت المرفق **بتركيز كامل على استخراج البيانات من الصورة** وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
 """
-        
-        headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
-        
-        # --- الخطوة 1: التحليل الأولي الأساسي ---
-        await wait_msg.edit_text("استنى شويه قاعد بحلل 🤌...")
-        
-        payload_1 = {
-            "model": MISTRAL_MODEL,
-            "messages": [
-                {
-                    "role": "user", 
-                    "content": [
-                        {"type": "text", "text": MAIN_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
-                    ]
-                }
-            ],
-            **GENERATION_CONFIG
-        }
-        
-        response_1 = requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
-        
-        if response_1.status_code != 200:
-            print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
-            raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
-        
-        initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
-        
-        # --- الخطوة 2: التدقيق والتحسين الثاني ---
-        await wait_msg.edit_text("استنى شويه اخر لمسات 🤌...")
-        
-        # برومبت التدقيق المحدث
-        AUDIT_PROMPT = f"""
+            
+            headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
+            
+            # --- الخطوة 1: التحليل الأولي الأساسي ---
+            await wait_msg.edit_text("استنى شويه قاعد بحلل 🤌...")
+            
+            payload_1 = {
+                "model": MISTRAL_MODEL,
+                "messages": [
+                    {
+                        "role": "user", 
+                        "content": [
+                            {"type": "text", "text": MAIN_PROMPT},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                        ]
+                    }
+                ],
+                **GENERATION_CONFIG
+            }
+            
+            response_1 = await thread_pool.run_async(
+                lambda: requests.post(MISTRAL_URL, headers=headers, json=payload_1, timeout=45)
+            )
+            
+            if response_1.status_code != 200:
+                print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
+                raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
+            
+            initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
+            
+            # --- الخطوة 2: التدقيق والتحسين الثاني ---
+            await wait_msg.edit_text("استنى شويه اخر لمسات 🤌...")
+            
+            AUDIT_PROMPT = f"""
 وظيفتك الأساسية هي البحث عن تناقض بين الأسعار المذكورة في التحليل الأول وبين الأرقام الظاهرة في الصورة. إذا وجد التحليل الأول سعراً مختلفاً بينما الصورة تظهر السعر عند مختلف، قم بتصحيح كافة الأهداف بناءً على أرقام الصورة حصراً.
 
 مهمة: إجراء تدقيق عالي الدقة للأصل المالي
@@ -2731,118 +3065,123 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 
 الآن قم بتحليل الشارت المرفق وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط، بدون أي نص إضافي أو تفسيرات خارج الهيكل.
 """
-        
-        payload_2 = {
-            "model": MISTRAL_MODEL_AUDIT,
-            "messages": [
-                {
-                    "role": "user", 
-                    "content": [
-                        {"type": "text", "text": AUDIT_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
-                    ]
-                }
-            ],
-            "max_tokens": 1000,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "random_seed": 42
-        }
-        
-        response_2 = requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
-        
-        if response_2.status_code == 200:
-            audit_result = response_2.json()['choices'][0]['message']['content'].strip()
-        else:
-            print(f"Obeida Vision Warning (Model 2): {response_2.status_code} - استخدام التحليل الأول")
-            audit_result = f"📋 **ملاحظة:** تعذر التدقيق - استخدام التحليل الأولي مباشرة\n\n{initial_analysis}"
-        
-        # تنظيف النصوص من التكرار
-        audit_result = clean_repeated_text(audit_result)
-        
-        # حفظ سياق التحليل في قاعدة البيانات
-        save_analysis_context(user_id, audit_result)
-        
-        keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
-        
-        # تنسيق وقت الصفقة للعرض
-        time_display = format_trade_time_for_prompt(trade_time)
-        
-        # إعداد النص النهائي
-        full_result = (
-            f"✅ **تم التحليل  صفقتك بنجاح** ✅\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"{audit_result}\n\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"🔧 **الإعدادات المستخدمة:**\n"
-            f"•🕧 فريم التحقق للكسر: {verification_timeframe}\n"
-            f"•🕧 جلسة السوق: {session_name} ({session_time})\n"
-            f"━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Powered by - Obeida Trading**"
-        )
-        
-        # تنظيف النهائي من التكرارات
-        full_result = clean_repeated_text(full_result)
-        
-        # تنسيق النتيجة مع دعم النسخ السريع
-        formatted_result = format_as_copyable_code(full_result, "text")
-        
-        # تقسيم النتيجة إذا كانت طويلة
-        if len(formatted_result) > 4000:
-            parts = split_message_with_copy_support(full_result, max_length=3500)
             
-            # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
-            await wait_msg.edit_text(
-                parts[0],
-                parse_mode="Markdown"
+            payload_2 = {
+                "model": MISTRAL_MODEL_AUDIT,
+                "messages": [
+                    {
+                        "role": "user", 
+                        "content": [
+                            {"type": "text", "text": AUDIT_PROMPT},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                        ]
+                    }
+                ],
+                "max_tokens": 1000,
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "random_seed": 42
+            }
+            
+            response_2 = await thread_pool.run_async(
+                lambda: requests.post(MISTRAL_URL, headers=headers, json=payload_2, timeout=45)
             )
             
-            # إرسال الأجزاء المتبقية
-            for part in parts[1:]:
-                await update.message.reply_text(part, parse_mode="Markdown")
-        else:
-            await wait_msg.edit_text(
-                formatted_result,
-                parse_mode="Markdown"
+            if response_2.status_code == 200:
+                audit_result = response_2.json()['choices'][0]['message']['content'].strip()
+            else:
+                print(f"Obeida Vision Warning (Model 2): {response_2.status_code}")
+                audit_result = f"📋 **ملاحظة:** تعذر التدقيق - استخدام التحليل الأولي مباشرة\n\n{initial_analysis}"
+            
+            # تنظيف النصوص من التكرار
+            audit_result = clean_repeated_text(audit_result)
+            
+            # حفظ سياق التحليل في قاعدة البيانات
+            save_analysis_context(user_id, audit_result)
+            
+            keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+            
+            # تنسيق وقت الصفقة للعرض
+            time_display = format_trade_time_for_prompt(trade_time)
+            
+            # إعداد النص النهائي
+            full_result = (
+                f"✅ **تم التحليل صفقتك بنجاح** ✅\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"{audit_result}\n\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"🔧 **الإعدادات المستخدمة:**\n"
+                f"•🕧 فريم التحقق للكسر: {verification_timeframe}\n"
+                f"•🕧 جلسة السوق: {session_name} ({session_time})\n"
+                f"━━━━━━━━━━━━━━━━━\n"
+                f"🤖 **Powered by - Obeida Trading**"
             )
-        
-        # إرسال الأزرار
-        await update.message.reply_text(
-            "📊 **اختر الإجراء التالي:**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        
-    except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
-    except Exception as e:
-        print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
-        keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
-    finally:
-        # تنظيف الملفات المؤقتة
-        for filepath in [original_path, compressed_path]:
-            if os.path.exists(filepath):
-                try:
-                    os.remove(filepath)
-                except Exception as e:
-                    print(f"⚠️ خطأ في حذف الملف المؤقت: {e}")
+            
+            # تنظيف النهائي من التكرارات
+            full_result = clean_repeated_text(full_result)
+            
+            # تنسيق النتيجة مع دعم النسخ السريع
+            formatted_result = format_as_copyable_code(full_result, "text")
+            
+            # تقسيم النتيجة إذا كانت طويلة
+            if len(formatted_result) > 4000:
+                parts = split_message_with_copy_support(full_result, max_length=3500)
+                await wait_msg.edit_text(parts[0], parse_mode="Markdown")
+                for part in parts[1:]:
+                    await update.message.reply_text(part, parse_mode="Markdown")
+            else:
+                await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
+            
+            # إرسال الأزرار
+            await update.message.reply_text(
+                "📊 **اختر الإجراء التالي:**",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+            )
+            
+        except requests.exceptions.Timeout:
+            await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
+        except Exception as e:
+            print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
+            keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
+            await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
+        finally:
+            # تنظيف الملفات المؤقتة
+            for filepath in [original_path, compressed_path]:
+                if os.path.exists(filepath):
+                    try:
+                        os.remove(filepath)
+                    except Exception as e:
+                        print(f"⚠️ خطأ في حذف الملف المؤقت: {e}")
     
     return MAIN_MENU
 
-# --- حارس الأخطاء (Error Handler) ---
+# --- حارس الأخطاء (Error Handler) مع دعم المستخدمين المتعددين ---
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """معالجة الأخطاء في البوت"""
+    """معالجة الأخطاء في البوت - محسن للمستخدمين المتعددين"""
     try:
+        user_id = None
+        if update and hasattr(update, 'effective_user') and update.effective_user:
+            user_id = update.effective_user.id
+        
         error_msg = f"❌ حدث خطأ في البوت:\n"
-        
-        if update and hasattr(update, 'effective_user'):
-            error_msg += f"المستخدم: {update.effective_user.id}\n"
-        
+        if user_id:
+            error_msg += f"المستخدم: {user_id}\n"
         error_msg += f"الخطأ: {context.error}\n"
         
         tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
         tb_string = ''.join(tb_list)
         
+        # تسجيل الخطأ في ملف خاص بالمستخدم إن أمكن
+        if user_id:
+            user_error_log = f"user_errors_{user_id}.log"
+            with open(user_error_log, "a", encoding="utf-8") as f:
+                f.write(f"\n{'='*60}\n")
+                f.write(f"الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"الخطأ: {error_msg}\n")
+                f.write(f"Traceback:\n{tb_string}\n")
+                f.write(f"{'='*60}\n")
+        
+        # تسجيل عام
         with open("bot_errors.log", "a", encoding="utf-8") as f:
             f.write(f"\n{'='*60}\n")
             f.write(f"الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -2850,8 +3189,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             f.write(f"Traceback:\n{tb_string}\n")
             f.write(f"{'='*60}\n")
         
-        print(f"❌ خطأ مسجل: {error_msg}")
+        print(f"❌ خطأ مسجل: {error_msg[:200]}...")
         
+        # إرسال رسالة للمستخدم
         if update and hasattr(update, 'effective_chat'):
             try:
                 await context.bot.send_message(
@@ -2861,21 +3201,50 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             except:
                 pass
         
-        if isinstance(context.error, (NetworkError, TimedOut, ConnectionError)):
+        # معالجة أخطاء محددة
+        if isinstance(context.error, Conflict):
+            print("⚠️ تعارض في الاتصال - قد يكون هناك نسخة أخرى من البوت تعمل")
+            # لا تفعل شيئاً، فقط سجل
+        elif isinstance(context.error, RetryAfter):
+            print(f"⚠️ تم تجاوز حد الطلبات، انتظر {context.error.retry_after} ثانية")
+            await asyncio.sleep(context.error.retry_after)
+        elif isinstance(context.error, (NetworkError, TimedOut, ConnectionError)):
             print("🌐 خطأ في الشبكة، محاولة الاستمرار...")
+        
+        # تنظيف ذاكرة المستخدم في حالة الخطأ
+        if user_id:
+            await cleanup_user_data(context, user_id)
             
     except Exception as e:
         print(f"❌ خطأ في معالج الأخطاء نفسه: {e}")
 
-# --- وظيفة تنظيف دورية للملفات المؤقتة ---
+# --- وظيفة تنظيف دورية للملفات المؤقتة والذاكرة ---
 async def periodic_cleanup():
-    """تنظيف دوري للملفات المؤقتة"""
+    """تنظيف دوري للملفات المؤقتة والجلسات والذاكرة المؤقتة"""
     while True:
         try:
-            await asyncio.sleep(1800)
+            await asyncio.sleep(1800)  # كل 30 دقيقة
+            
+            # تنظيف الصور القديمة
             cleanup_old_images()
+            
+            # تنظيف سجلات قاعدة البيانات القديمة
             cleanup_old_database_records()
-            print("🧹 تم التنظيف الدوري للملفات المؤقتة")
+            
+            # تنظيف الجلسات منتهية الصلاحية
+            expired_sessions = session_manager.cleanup_expired_sessions()
+            if expired_sessions > 0:
+                print(f"🧹 تم تنظيف {expired_sessions} جلسة مستخدم منتهية الصلاحية")
+            
+            # تنظيف الذاكرة المؤقتة
+            expired_cache = smart_cache.cleanup_expired()
+            if expired_cache > 0:
+                print(f"🧹 تم تنظيف {expired_cache} عنصر منتهي من الذاكرة المؤقتة")
+            
+            # تنظيف أقفال المستخدمين القديمة
+            user_lock_manager.clear_old_locks()
+            
+            print(f"🧹 تم التنظيف الدوري - الجلسات: {len(session_manager.sessions)}, الذاكرة: {len(smart_cache.cache)}")
             
         except Exception as e:
             print(f"⚠️ خطأ في التنظيف الدوري: {e}")
@@ -2883,8 +3252,17 @@ async def periodic_cleanup():
 # --- الدوال الأساسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء البوت"""
-    if update.effective_user:
-        cleanup_user_data(context, update.effective_user.id)
+    user_id = update.effective_user.id
+    
+    # تنظيف بيانات المستخدم القديمة
+    await cleanup_user_data(context, user_id)
+    
+    # تهيئة جلسة المستخدم
+    session_manager.set_session(user_id, {
+        'start_time': time.time(),
+        'username': update.effective_user.username,
+        'first_name': update.effective_user.first_name
+    })
     
     keyboard = [
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
@@ -2934,7 +3312,6 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return MAIN_MENU
         else:
             keyboard = [["الرجوع للقائمة الرئيسية"]]
-            
             time_display = format_trade_time_for_prompt(trade_time)
             
             await update.message.reply_text(
@@ -2945,7 +3322,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📡 *نظام التحليل الشارات :* \n"
                 f"1. 🔧 مرحلة تفكيك هيكل الشارت \n"
                 f"2. 🔬 مرحلة تحليل صورة الشارت \n\n"
-                f"📤 قم برفع صورة  (الشارت) الآن: 📤",
+                f"📤 قم برفع صورة (الشارت) الآن: 📤",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
                 parse_mode="Markdown"
             )
@@ -3033,7 +3410,7 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
             f"✅ سرعة الشموع: {candle}\n"
             f"✅ مدة الصفقة: {user_message}\n\n"
             f"📡 ** نظام تحليل مستهدفة :** \n"
-            f"• 1- تفكيك هيكل شارت  =مفعلة ✔️\n"
+            f"• 1- تفكيك هيكل شارت =مفعلة ✔️\n"
             f"• تحليل صورة شارت = مفعلة ✔️\n"
             f" 📤 قم الأن برفع صورة شارت : 📤",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
@@ -3087,7 +3464,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     📈 **نظام التوصيات الجديد:**
     • تحليل فني للعملات والمؤشرات
     • سحب تلقائي للصور من TradingView
-    • تطبيق القوانين الجديدة
     • تحليل مزدوج (نصي + بصري)
     
     ⏱️ **خيارات مدة الصفقة:**
@@ -3096,12 +3472,15 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
     
     📡 **مميزات البوت المتقدمة:**
-    • 📊 تحليل فني للرسوم البيانية بتقنيات متطورة
+    • 📊 تحليل فني للرسوم البيانية
     • 💬 دردشة ذكية متعددة التخصصات
     • 📈 نظام توصيات الجاهزة 
     • ⚙️ حفظ إعداداتك الشخصية
     • 🔹 واجهة سهلة بالأزرار
+    • 👥 دعم متعدد المستخدمين في نفس الوقت
     • 🗑️ نظام تنظيف تلقائي للذاكرة
+    • ⚡ أداء محسن مع تجمع الاتصالات
+    • 🔒 أقفال لكل مستخدم لمنع التداخل
     """
     
     formatted_help = format_as_copyable_code(help_text, "markdown")
@@ -3109,8 +3488,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """إلغاء المحادثة"""
-    if update.effective_user:
-        cleanup_user_data(context, update.effective_user.id)
+    user_id = update.effective_user.id
+    await cleanup_user_data(context, user_id)
     
     await update.message.reply_text(
         "تم الإلغاء وتم تنظيف الذاكرة. اكتب /start للبدء من جديد.",
@@ -3125,9 +3504,10 @@ def run_flask_server():
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def main():
-    """الدالة الرئيسية - النسخة السهلة"""
-    print("🤖 Starting Powered by - Obeida Trading ...")
+    """الدالة الرئيسية - النسخة المحسنة للمستخدمين المتعددين"""
+    print("🤖 Starting Obeida Trading - Multi-User High Performance Edition...")
     print("📋 تم تفعيل نظام النسخ السريع - جميع التحليلات قابلة للنسخ بنقرة واحدة")
+    print("👥 دعم متعدد المستخدمين مع أقفال وذاكرة مؤقتة وتجمع اتصالات")
     
     # تشغيل Flask
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
@@ -3180,12 +3560,26 @@ def main():
     # إضافة معالج للأخطاء
     application.add_error_handler(error_handler)
     
-    print("✅ Telegram Bot  safe mode ...")
+    print("✅ Telegram Bot started in multi-user safe mode ...")
     print("📡 Bot Obeida Trading online...")
+    print(f"👥 دعم حتى {session_manager.max_sessions} مستخدم في نفس الوقت")
+    
+    # تشغيل مهمة التنظيف الدورية في الخلفية
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.create_task(periodic_cleanup())
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
-    main()
-    
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n🛑 تم إيقاف البوت بواسطة المستخدم")
+        # تنظيف الموارد
+        db_pool.close_all()
+        thread_pool.shutdown()
+    except Exception as e:
+        print(f"❌ خطأ fatal: {e}")
+        traceback.print_exc()
