@@ -875,9 +875,15 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         else:
             kill_zone_status = "خارج مناطق القتل الرئيسية"
         
-        # معالجة "دقيقة الغدر"
+        # معالجة "دقيقة الغدر" - مع التعديل الجديد
         is_last_minute = 1 if current_minute in [29, 59, 14, 44] else 0
-        last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
+        # التعديل: تحديد ما إذا كان الفريم من فئة S5 أو S10 والزخم >90% لاستثناء قاعدة دقيقة الغدر
+        is_small_timeframe_exception = False
+        # سنقوم بتقييم الزخم لاحقاً في التحليل، لكن هنا نعدل النص التحذيري
+        if candle in ['S5', 'S10']:
+            last_minute_status = f"⚠️ دقيقة الغدر - الفريم {candle}: يُسمح بالدخول حتى آخر ثانيتين إذا كان الزخم >90%"
+        else:
+            last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
         
         # ربط معطيات الإعدادات
         candle_category = ""
@@ -946,12 +952,18 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             except:
                 previous_context_info = ""
         
-        # البرومبت الرئيسي المحدث مع جميع الإضافات الجديدة
+        # البرومبت الرئيسي المحدث مع جميع الإضافات الجديدة + التعديلات الحرجة
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
 مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
 
 🎯 **قاعدة فلتر المسافة الذهبية:** أنت ملزم باستخراج السعر من المحور الأيمن (Y-axis) ومقارنته بأقرب رقم مستدير (.000). إذا كانت المسافة أقل من 0.00010، تُلغى جميع أوامر البيع/الشراء العكسية ويتم تفعيل نظام 'اللحاق بالمغناطيس السعري' - أي متابعة الاتجاه حتى لمس الرقم المستدير.
+
+🎯 **تعديلات منع الخسارة الفورية (Critical Patch) - الإضافات الجديدة:**
+1. **قاعدة "اللمس قبل العكس":** يُمنع منعاً باتاً توقع ارتداد من رقم مستدير أو منطقة عرض إلا بعد أن يلمس السعر المستوى فعلياً (بذيل أو جسم). الفراغ السعري (Gap) قبل المستوى يعني أن السعر سيندفع للمسه أولاً.
+2. **فلتر "زخم الشمعة الضخمة":** إذا كانت الشمعة الحالية أكبر بـ 300% من الشموع السابقة، فهي شمعة خبر أو تلاعب. القرار "احتفاظ 🟡" فوراً حتى تستقر الشموع الثلاث التالية.
+3. **استثناء "سيادة الجسم":** إذا كان الجسم ممتلئاً بنسبة >95% (Marubozu)، تجاهل أي إشارة انعكاس حتى لو كان السعر عند قمة تاريخية؛ انتظر شمعة رفض واضحة أولاً.
+4. **تعديل منطق "دقيقة الغدر":** في فريمات S5/S10، إذا كان الزخم >90% (3 شموع متتالية ممتلئة)، قلص فترة الحظر إلى ثانيتين فقط للسماح باللحاق بالانفجار السعري. وإلا، التزم بالحظر الكامل لآخر 10 ثوانٍ.
 
 {previous_context_info}
 
@@ -982,7 +994,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 1.2 كشف مخاطر OTC:
 • إشارات التلاعب: اختراق ثم عودة، انعكاس لحظي، حركة بدون حجم
-• حماية: تجنب آخر 10 ثوانٍ، أوامر معلقة، SL +20%
+• حماية: تجنب آخر 10 ثوانٍ (مع استثناء فريمات S5/S10 إذا الزخم >90%، يُسمح حتى آخر ثانيتين)، أوامر معلقة، SL +20%
 
 1.3 تحليل الارتباط السعري:
 • Forex: مؤشر الدولار، العملات المرتبطة، السندات
@@ -1514,7 +1526,75 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-# --- دالة تحليل الصورة مع جميع الإضافات الجديدة ---
+# ====================================================
+# الجزء 1: إضافة "ساعة الذكاء" (الوقت والسيولة) 🕒
+# ====================================================
+
+def get_detailed_market_info(candle_setting):
+    """هذه الدالة هي التي تخبر البوت بحالة الوقت والسيولة"""
+    now = datetime.now(pytz.timezone('Asia/Gaza'))
+    secs = now.second
+    minute = now.minute
+    hour = now.hour
+    
+    # 1. حساب الثواني المتبقية للشمعة
+    try:
+        if "S" in candle_setting:
+            # فريمات الثواني
+            period = int(candle_setting[1:])
+            secs_rem = period - (secs % period)
+        elif "M" in candle_setting:
+            # فريمات الدقائق
+            period = int(candle_setting[1:])
+            secs_rem = (period * 60) - ((minute % period) * 60 + secs)
+        elif "H" in candle_setting:
+            # فريمات الساعات
+            period = int(candle_setting[1:])
+            mins_passed = (hour % period) * 60 + minute
+            secs_rem = (period * 3600) - (mins_passed * 60 + secs)
+        elif "D" in candle_setting:
+            # فريم يومي
+            secs_rem = (24 * 3600) - (hour * 3600 + minute * 60 + secs)
+        else:
+            secs_rem = 0
+    except:
+        secs_rem = 0
+
+    # 2. تحديد "دقيقة الغدر"
+    if secs_rem <= 5:
+        last_min_status = "🔥 خطر شديد: ثواني الغدر (أقل من 5 ثوان)"
+    elif secs_rem <= 10:
+        last_min_status = "⚠️ خطر: دقيقة الغدر (أقل من 10 ثوان)"
+    elif secs_rem <= 30:
+        last_min_status = "⚡ تنبيه: اقتراب من الإغلاق"
+    else:
+        last_min_status = "✅ الوقت آمن للدخول"
+    
+    # 3. تحديد الجلسة والسيولة
+    if 8 <= hour < 16: 
+        session, vol = "لندن/أوروبا", "عالية"
+        kill_zone = "منطقة قتل لندن (8-16)"
+    elif 15 <= hour < 23: 
+        session, vol = "نيويورك", "ضخمة"
+        kill_zone = "منطقة قتل نيويورك (15-23)"
+    elif 23 <= hour < 24 or 0 <= hour < 9:
+        session, vol = "آسيوية/هادئة", "منخفضة"
+        kill_zone = "جلسة آسيوية (خارج مناطق القتل)"
+    else:
+        session, vol = "متوسطة", "متوسطة"
+        kill_zone = "جلسة متداخلة"
+    
+    # 4. تحديد الثواني المتبقية كـ نص
+    if secs_rem < 60:
+        time_remaining = f"{secs_rem} ثانية"
+    elif secs_rem < 3600:
+        time_remaining = f"{secs_rem // 60} دقيقة و {secs_rem % 60} ثانية"
+    else:
+        time_remaining = f"{secs_rem // 3600} ساعة و {(secs_rem % 3600) // 60} دقيقة"
+    
+    return last_min_status, secs_rem, session, vol, now, kill_zone, time_remaining
+
+
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور للتحليل الفني المتقدم"""
     user_id = update.effective_user.id
@@ -1550,24 +1630,16 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 os.remove(compressed_path)
             return MAIN_MENU
         
-        # الحصول على معلومات السيولة والتوقيت
-        session_name, session_time, session_vol = get_market_session()
-        gaza_time = datetime.now(GAZA_TIMEZONE)
-        current_hour = gaza_time.hour
-        current_minute = gaza_time.minute
-        current_second = gaza_time.second
+        # ====================================================
+        # استخدام دالة get_detailed_market_info للحصول على معلومات الوقت والسيولة
+        # ====================================================
+        last_min_status, seconds_remaining, session_name, session_vol, gaza_time, kill_zone_status, time_remaining = get_detailed_market_info(candle)
         
-        # حساب الثواني المتبقية لإغلاق الشمعة
-        seconds_remaining = 60 - current_second
-        if candle.startswith('M'):
-            candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
-            seconds_remaining = (candle_minutes * 60) - ((current_minute % candle_minutes) * 60 + current_second)
-        elif candle.startswith('H'):
-            candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
-            minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
-            seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
+        # تنسيق وقت الجلسة
+        session_time = f"{gaza_time.hour:02d}:{gaza_time.minute:02d}"
         
-        candle_closing_status = f"الوقت المتبقي الشمعة: {seconds_remaining} ثانية"
+        # حالة إغلاق الشمعة المنسقة
+        candle_closing_status = f"الوقت المتبقي للشمعة: {time_remaining}"
         if seconds_remaining < 10:
             candle_closing_status += " ⚠️ (الوقت حرج جداً - تجنب الدخول)"
         elif seconds_remaining < 30:
@@ -1577,6 +1649,9 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         news_impact = "🟢 منخفض"
         news_warning = ""
         news_risk_multiplier = 1.0
+        
+        current_hour = gaza_time.hour
+        current_minute = gaza_time.minute
         
         high_impact_hours = [
             (14, 30), (16, 0), (20, 0),
@@ -1598,20 +1673,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
                 break
         
-        # الفلتر الزمني (Kill Zones)
-        kill_zone_status = ""
-        if 10 <= current_hour < 13:
-            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
-        elif 15 <= current_hour < 18:
-            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
-        elif 0 <= current_hour < 9 or current_hour >= 22:
-            kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
-        else:
-            kill_zone_status = "خارج مناطق القتل الرئيسية"
-        
-        # معالجة "دقيقة الغدر"
-        is_last_minute = 1 if current_minute in [29, 59, 14, 44] else 0
-        last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
+        # معالجة "دقيقة الغدر" - نستخدم القيمة من الدالة
+        is_last_minute = 1 if seconds_remaining <= 10 else 0
         
         # ربط معطيات الإعدادات
         candle_category = ""
@@ -1708,7 +1771,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 • تأثير الأخبار: {{news_impact}} (معامل ×{{news_risk_multiplier}})
 • تحذير الأخبار: {{news_warning if news_warning else "✅ الوضع آمن"}}
 • منطقة القتل السعري: {{kill_zone_status}}
-• حالة دقيقة الغدر: {{last_minute_status}}
+• حالة دقيقة الغدر: {{last_min_status}}
 • حالة إغلاق الشمعة: {{candle_closing_status}}
 • الوقت المتبقي للإغلاق: {{seconds_remaining}} ثانية
 • توقيت التحليل: {{gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}}
@@ -2081,7 +2144,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 • السياق السوقي: {{session_name}} - {{session_vol}} سيولة - تقدير من نشاط السعر
 
 ⚡ **المستوى 2: التحليل التكتيكي (الخطة التنفيذية) - الاستخراج من الصورة:**
-• أنماط الشموع: تحليل 5 شموع سابقة + الشمعة الحالية - استخراج كل شمعة بشكل منفصل
+• أنماط الشموع: تحليل 5 شموع سابقة + الشمعة الحالية - استخراج كل شمعة بشكل منفرد
 • **【تعديل أولوية الابتلاع - Marubozu Supremacy (قانون سيادة الجسم)】**
   - **هذا تعديل إلزامي: البوت يعامل الفتيلة كعدو، وهذا خطأ في الـ OTC الاندفاعي.**
   - **القاعدة:** إذا كان جسم الشمعة يمثل >90% من حجمها الكلي (Marubozu)، **يتم تجاهل أي ذيل علوي/سفلي صغير يمثل أقل من 20% من طول الشمعة.**
@@ -2430,7 +2493,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 • جلسة السوق: {{session_name}} ({{session_time}})
 • حالة السيولة: {{session_vol}}
 • تأثير الأخبار: {{news_impact}} (معامل ×{{news_risk_multiplier}})
-• **حالة دقيقة الغدر:** {{last_minute_status}} **(مع استثناءات فريمات S5/S10: تخفيض الحظر إلى ثانيتين إذا زخم >90%)**
+• **حالة دقيقة الغدر:** {{last_min_status}} **(مع استثناءات فريمات S5/S10: تخفيض الحظر إلى ثانيتين إذا زخم >90%)**
 • {{candle_closing_status}}
 • الوقت المتبقي للإغلاق: {{seconds_remaining}} ثانية
 • توقيت التحليل: {{gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}}
@@ -2693,7 +2756,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 • استراتيجية التداول: {{trading_strategy}}
 • جلسة السوق: {{session_name}} ({{session_time}}), السيولة: {{session_vol}}
 • تأثير الأخبار: {{news_impact}} ×{{news_risk_multiplier}}
-• حالة دقيقة الغدر: {{last_minute_status}} (مقيدة: ثانيتين فقط للفريمات S5/S10 بزخم >90%)
+• حالة دقيقة الغدر: {{last_min_status}} (مقيدة: ثانيتين فقط للفريمات S5/S10 بزخم >90%)
 • توقيت إغلاق الشمعة: {{candle_closing_status}}
 • توقيت التحليل: {{gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}}
 • المستوى: Professional باك تيست 15000 صفقة
