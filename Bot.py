@@ -12,8 +12,6 @@ import asyncio
 import json
 import shutil
 import io
-import hashlib
-import secrets
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
@@ -32,9 +30,6 @@ MISTRAL_MODEL_AUDIT = "mistral-large-latest"        # للتحليل المنط�
 MODEL_SUMMARY = "mistral-medium-latest"        # للتلخيص السريع
 
 DB_NAME = "abood-gpt.db"
-
-# المستخدم المسموح له بتوليد الأكواد
-ADMIN_USER_ID = 6207431030
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
@@ -77,160 +72,6 @@ if not os.path.exists(IMAGE_CACHE_DIR):
 
 # حالات المحادثة
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
-
-# حالات توليد الكود
-CODE_GEN_AWAITING_DEVICES, CODE_GEN_AWAITING_DURATION = range(7, 9)
-
-# --- نظام الاشتراك والتحقق ---
-
-def init_subscription_db():
-    """تهيئة قاعدة بيانات الاشتراكات"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    # جدول المستخدمين المسموح لهم
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS authorized_users (
-            user_id INTEGER PRIMARY KEY,
-            subscription_end DATETIME,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # جدول أكواد الاشتراك
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS subscription_codes (
-            code TEXT PRIMARY KEY,
-            devices INTEGER,
-            duration_hours INTEGER,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            used_by INTEGER DEFAULT NULL,
-            used_at DATETIME DEFAULT NULL,
-            expires_at DATETIME
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
-    print("✅ Subscription database initialized")
-
-def generate_subscription_code(devices, duration_hours):
-    """توليد كود اشتراك فريد"""
-    # إنشاء كود عشوائي
-    random_part = secrets.token_hex(4).upper()
-    code = f"OBD-{devices}D-{duration_hours}H-{random_part}"
-    
-    # حساب تاريخ انتهاء الصلاحية
-    expires_at = datetime.now() + timedelta(hours=duration_hours)
-    
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        INSERT INTO subscription_codes (code, devices, duration_hours, expires_at)
-        VALUES (?, ?, ?, ?)
-    ''', (code, devices, duration_hours, expires_at))
-    
-    conn.commit()
-    conn.close()
-    
-    return code, expires_at
-
-def redeem_subscription_code(user_id, code):
-    """تفعيل كود اشتراك لمستخدم"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    # التحقق من وجود الكود وصلاحيته
-    cursor.execute('''
-        SELECT code, devices, duration_hours, used_by, expires_at 
-        FROM subscription_codes 
-        WHERE code = ?
-    ''', (code,))
-    
-    result = cursor.fetchone()
-    
-    if not result:
-        conn.close()
-        return False, "❌ الكود غير صحيح"
-    
-    code_text, devices, duration_hours, used_by, expires_at = result
-    
-    # التحقق من عدم استخدام الكود
-    if used_by is not None:
-        conn.close()
-        return False, "❌ هذا الكود مستخدم بالفعل"
-    
-    # التحقق من صلاحية الكود
-    expires_at_dt = datetime.fromisoformat(expires_at) if isinstance(expires_at, str) else expires_at
-    if datetime.now() > expires_at_dt:
-        conn.close()
-        return False, "❌ هذا الكود منتهي الصلاحية"
-    
-    # حساب تاريخ انتهاء الاشتراك للمستخدم
-    subscription_end = datetime.now() + timedelta(hours=duration_hours)
-    
-    # إضافة المستخدم للقائمة المسموح لهم
-    cursor.execute('''
-        INSERT OR REPLACE INTO authorized_users (user_id, subscription_end)
-        VALUES (?, ?)
-    ''', (user_id, subscription_end))
-    
-    # تحديث حالة الكود
-    cursor.execute('''
-        UPDATE subscription_codes 
-        SET used_by = ?, used_at = CURRENT_TIMESTAMP
-        WHERE code = ?
-    ''', (user_id, code))
-    
-    conn.commit()
-    conn.close()
-    
-    return True, f"✅ تم تفعيل الاشتراك بنجاح لمدة {duration_hours} ساعة"
-
-def is_user_authorized(user_id):
-    """التحقق من أن المستخدم مسموح له باستخدام البوت"""
-    # المستخدم المسؤول مسموح له دائماً
-    if user_id == ADMIN_USER_ID:
-        return True, None
-    
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT subscription_end FROM authorized_users WHERE user_id = ?
-    ''', (user_id,))
-    
-    result = cursor.fetchone()
-    conn.close()
-    
-    if not result:
-        return False, "❌ ليس لديك صلاحية لاستخدام البوت. يرجى استخدام كود اشتراك صالح."
-    
-    subscription_end = result[0]
-    if isinstance(subscription_end, str):
-        subscription_end = datetime.fromisoformat(subscription_end)
-    
-    if datetime.now() > subscription_end:
-        return False, "❌ انتهت صلاحية اشتراكك. يرجى تجديد الاشتراك."
-    
-    return True, None
-
-def get_all_codes():
-    """الحصول على جميع الأكواد"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT code, devices, duration_hours, created_at, used_by, used_at, expires_at
-        FROM subscription_codes
-        ORDER BY created_at DESC
-    ''')
-    
-    results = cursor.fetchall()
-    conn.close()
-    
-    return results
 
 # --- Flask Server ---
 app = Flask(__name__)
@@ -397,6 +238,8 @@ def download_chart_image(symbol="BTCUSDT"):
             chart_symbol = "NASDAQ:MSFT"
         elif symbol == "Tesla (OTC)":
             chart_symbol = "NASDAQ:TSLA"
+        elif symbol == "Netflix (OTC)":
+            chart_symbol = "NASDAQ:NFLX"
         elif symbol == "Intel (OTC)":
             chart_symbol = "NASDAQ:INTC"
         elif symbol == "Boeing (OTC)":
@@ -467,9 +310,6 @@ def init_db():
     conn.commit()
     conn.close()
     print("✅ Database initialized")
-    
-    # تهيئة قاعدة بيانات الاشتراكات
-    init_subscription_db()
 
 def save_user_setting(user_id, col, val):
     conn = sqlite3.connect(DB_NAME)
@@ -508,12 +348,9 @@ def get_analysis_context(user_id):
     if res:
         context, context_time = res
         if context_time:
-            try:
-                time_diff = (datetime.now() - datetime.fromisoformat(context_time)).total_seconds() / 60
-                if time_diff > 10:
-                    return "", None
-            except:
-                pass
+            time_diff = (datetime.now() - datetime.fromisoformat(context_time)).total_seconds() / 60
+            if time_diff > 10:
+                return "", None
         return context, context_time
     return "", None
 
@@ -708,254 +545,6 @@ def save_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE, symbol: 
 def get_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE):
     """الحصول على آخر رمز تم اختياره في التوصيات"""
     return context.user_data.get('last_recommendation_symbol', 'BTC (OTC)')
-
-# --- أوامر نظام الاشتراك ---
-
-async def redeem_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """تفعيل كود اشتراك"""
-    user_id = update.effective_user.id
-    
-    # التحقق من وجود الكود
-    if not context.args or len(context.args) == 0:
-        await update.message.reply_text(
-            "🔑 **تفعيل كود الاشتراك**\n\n"
-            "الاستخدام: `/redeem الكود`\n"
-            "مثال: `/redeem OBD-1D-24H-ABCD1234`",
-            parse_mode="Markdown"
-        )
-        return
-    
-    code = context.args[0].strip()
-    
-    # تفعيل الكود
-    success, message = redeem_subscription_code(user_id, code)
-    
-    if success:
-        await update.message.reply_text(
-            f"✅ **تم تفعيل الاشتراك بنجاح!**\n\n"
-            f"{message}\n\n"
-            f"🚀 يمكنك الآن استخدام جميع ميزات البوت.",
-            parse_mode="Markdown"
-        )
-    else:
-        await update.message.reply_text(
-            f"❌ **فشل تفعيل الاشتراك**\n\n"
-            f"{message}",
-            parse_mode="Markdown"
-        )
-
-async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """التحقق من حالة الاشتراك"""
-    user_id = update.effective_user.id
-    
-    if user_id == ADMIN_USER_ID:
-        await update.message.reply_text(
-            "👑 **أنت المسؤول الرئيسي**\n"
-            "لديك صلاحية كاملة بدون اشتراك.",
-            parse_mode="Markdown"
-        )
-        return
-    
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT subscription_end FROM authorized_users WHERE user_id = ?
-    ''', (user_id,))
-    
-    result = cursor.fetchone()
-    conn.close()
-    
-    if not result:
-        await update.message.reply_text(
-            "❌ **لا يوجد اشتراك نشط**\n\n"
-            "استخدم الأمر `/redeem الكود` لتفعيل اشتراكك.",
-            parse_mode="Markdown"
-        )
-        return
-    
-    subscription_end = result[0]
-    if isinstance(subscription_end, str):
-        subscription_end = datetime.fromisoformat(subscription_end)
-    
-    now = datetime.now()
-    
-    if now > subscription_end:
-        await update.message.reply_text(
-            f"❌ **انتهت صلاحية الاشتراك**\n\n"
-            f"تاريخ الانتهاء: {subscription_end.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"استخدم `/redeem` لتفعيل اشتراك جديد.",
-            parse_mode="Markdown"
-        )
-    else:
-        remaining = subscription_end - now
-        days = remaining.days
-        hours = remaining.seconds // 3600
-        minutes = (remaining.seconds % 3600) // 60
-        
-        await update.message.reply_text(
-            f"✅ **الاشتراك نشط**\n\n"
-            f"تاريخ الانتهاء: {subscription_end.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"الوقت المتبقي: {days} يوم {hours} ساعة {minutes} دقيقة",
-            parse_mode="Markdown"
-        )
-
-async def code_gen_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء عملية توليد كود (للمسؤول فقط)"""
-    user_id = update.effective_user.id
-    
-    # التحقق من أن المستخدم هو المسؤول
-    if user_id != ADMIN_USER_ID:
-        await update.message.reply_text(
-            "❌ **غير مصرح**\n"
-            "هذا الأمر متاح فقط للمسؤول.",
-            parse_mode="Markdown"
-        )
-        return ConversationHandler.END
-    
-    await update.message.reply_text(
-        "🔑 **توليد كود اشتراك جديد**\n\n"
-        "الرجاء إدخال **عدد الأجهزة** المسموح بها للكود:\n"
-        "(مثال: 1 أو 2 أو 5)\n\n"
-        "أو أرسل /cancel للإلغاء.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    return CODE_GEN_AWAITING_DEVICES
-
-async def code_gen_devices(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """استقبال عدد الأجهزة"""
-    text = update.message.text.strip()
-    
-    try:
-        devices = int(text)
-        if devices <= 0:
-            raise ValueError("يجب أن يكون عدد الأجهزة أكبر من 0")
-        
-        context.user_data['code_gen_devices'] = devices
-        
-        await update.message.reply_text(
-            f"✅ تم استلام عدد الأجهزة: {devices}\n\n"
-            f"الرجاء إدخال **المدة**:\n"
-            f"• استخدم `d` للأيام (مثال: 1d = يوم واحد)\n"
-            f"• استخدم `h` للساعات (مثال: 24h = 24 ساعة)\n\n"
-            f"أمثلة: 7d, 30d, 12h, 48h",
-            parse_mode="Markdown"
-        )
-        return CODE_GEN_AWAITING_DURATION
-        
-    except ValueError:
-        await update.message.reply_text(
-            "❌ إدخال غير صحيح. الرجاء إدخال رقم صحيح لعدد الأجهزة.\n"
-            "مثال: 1 أو 2 أو 5"
-        )
-        return CODE_GEN_AWAITING_DEVICES
-
-async def code_gen_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """استقبال المدة وتوليد الكود"""
-    text = update.message.text.strip().lower()
-    
-    # تحليل المدة
-    duration_match = re.match(r'^(\d+)([dh])$', text)
-    if not duration_match:
-        await update.message.reply_text(
-            "❌ صيغة غير صحيحة.\n"
-            "الرجاء استخدام الصيغة: رقم + d أو h\n"
-            "مثال: 1d, 7d, 24h"
-        )
-        return CODE_GEN_AWAITING_DURATION
-    
-    value, unit = duration_match.groups()
-    value = int(value)
-    
-    if unit == 'd':
-        duration_hours = value * 24
-        duration_text = f"{value} يوم"
-    else:  # h
-        duration_hours = value
-        duration_text = f"{value} ساعة"
-    
-    devices = context.user_data.get('code_gen_devices', 1)
-    
-    # توليد الكود
-    code, expires_at = generate_subscription_code(devices, duration_hours)
-    
-    # تنسيق تاريخ الانتهاء
-    expires_at_str = expires_at.strftime('%Y-%m-%d %H:%M:%S')
-    
-    # إرسال الكود للمسؤول
-    await update.message.reply_text(
-        f"✅ **تم توليد كود الاشتراك بنجاح!**\n\n"
-        f"🔑 **الكود:** `{code}`\n"
-        f"📱 عدد الأجهزة: {devices}\n"
-        f"⏱️ المدة: {duration_text} ({duration_hours} ساعة)\n"
-        f"⌛ ينتهي في: {expires_at_str}\n\n"
-        f"📤 يمكنك إرسال هذا الكود للمستخدم لتفعيل اشتراكه.\n"
-        f"📋 استخدام: `/redeem {code}`",
-        parse_mode="Markdown"
-    )
-    
-    # تنظيف البيانات
-    del context.user_data['code_gen_devices']
-    
-    # العودة للقائمة الرئيسية
-    keyboard = [
-        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["💬 دردشة", "📈 توصية"]
-    ]
-    
-    await update.message.reply_text(
-        "🏠 العودة للقائمة الرئيسية",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-    )
-    
-    return MAIN_MENU
-
-async def list_codes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض جميع الأكواد (للمسؤول فقط)"""
-    user_id = update.effective_user.id
-    
-    # التحقق من أن المستخدم هو المسؤول
-    if user_id != ADMIN_USER_ID:
-        await update.message.reply_text(
-            "❌ **غير مصرح**\n"
-            "هذا الأمر متاح فقط للمسؤول.",
-            parse_mode="Markdown"
-        )
-        return
-    
-    codes = get_all_codes()
-    
-    if not codes:
-        await update.message.reply_text(
-            "📋 **لا توجد أكواد اشتراك حتى الآن**",
-            parse_mode="Markdown"
-        )
-        return
-    
-    # تجميع الأكواد في رسالة
-    message = "📋 **قائمة أكواد الاشتراك:**\n\n"
-    
-    for code, devices, duration_hours, created_at, used_by, used_at, expires_at in codes[:10]:  # آخر 10 أكواد فقط
-        status = "✅ مستخدم" if used_by else "🟢 غير مستخدم"
-        if used_by:
-            status += f" (بواسطة: {used_by})"
-        
-        # تنسيق التواريخ
-        created_at_dt = datetime.fromisoformat(created_at) if isinstance(created_at, str) else created_at
-        expires_at_dt = datetime.fromisoformat(expires_at) if isinstance(expires_at, str) else expires_at
-        
-        created_str = created_at_dt.strftime('%Y-%m-%d %H:%M')
-        expires_str = expires_at_dt.strftime('%Y-%m-%d %H:%M')
-        
-        message += f"🔑 **{code}**\n"
-        message += f"📱 الأجهزة: {devices} | ⏱️ {duration_hours} ساعة\n"
-        message += f"📅 أنشئ: {created_str} | ينتهي: {expires_str}\n"
-        message += f"📊 الحالة: {status}\n"
-        message += "━━━━━━━━━━━━━━━━\n"
-    
-    # تنسيق للنسخ
-    formatted_message = format_as_copyable_code(message, "text")
-    await update.message.reply_text(formatted_message, parse_mode="Markdown")
 
 # --- وظائف نظام التوصية الجديد ---
 def get_mistral_analysis(symbol):
@@ -3354,33 +2943,9 @@ async def periodic_cleanup():
         except Exception as e:
             print(f"⚠️ خطأ في التنظيف الدوري: {e}")
 
-# --- دالة التحقق من الصلاحية قبل أي أمر ---
-async def check_authorization(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """التحقق من أن المستخدم مسموح له باستخدام البوت"""
-    user_id = update.effective_user.id
-    
-    authorized, message = is_user_authorized(user_id)
-    
-    if not authorized:
-        await update.message.reply_text(
-            f"🔒 **البوت مقفل بنظام الاشتراكات**\n\n"
-            f"{message}\n\n"
-            f"إذا كان لديك كود اشتراك، استخدم الأمر:\n"
-            f"`/redeem الكود`\n\n"
-            f"للاستفسار، تواصل مع المسؤول.",
-            parse_mode="Markdown"
-        )
-        return False
-    
-    return True
-
-# --- الدوال الأساسية مع التحقق من الصلاحية ---
+# --- الدوال الأساسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء البوت مع التحقق من الصلاحية"""
-    # التحقق من الصلاحية
-    if not await check_authorization(update, context):
-        return ConversationHandler.END
-    
+    """بدء البوت"""
     if update.effective_user:
         cleanup_user_data(context, update.effective_user.id)
     
@@ -3403,11 +2968,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات القائمة الرئيسية مع التحقق من الصلاحية"""
-    # التحقق من الصلاحية
-    if not await check_authorization(update, context):
-        return MAIN_MENU
-    
+    """معالجة اختيارات القائمة الرئيسية"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
@@ -3470,11 +3031,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار سرعة الشموع مع التحقق من الصلاحية"""
-    # التحقق من الصلاحية
-    if not await check_authorization(update, context):
-        return SETTINGS_CANDLE
-    
+    """معالجة اختيار سرعة الشموع"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
@@ -3512,11 +3069,7 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
     return SETTINGS_CANDLE
 
 async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار مدة الصفقة مع التحقق من الصلاحية"""
-    # التحقق من الصلاحية
-    if not await check_authorization(update, context):
-        return SETTINGS_TIME
-    
+    """معالجة اختيار مدة الصفقة"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
@@ -3555,11 +3108,7 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
     return SETTINGS_TIME
 
 async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة وضع التحليل مع التحقق من الصلاحية"""
-    # التحقق من الصلاحية
-    if not await check_authorization(update, context):
-        return ANALYZE_MODE
-    
+    """معالجة وضع التحليل"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
@@ -3581,32 +3130,16 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ANALYZE_MODE
 
 async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور في وضع التحليل مع التحقق من الصلاحية"""
-    # التحقق من الصلاحية
-    if not await check_authorization(update, context):
-        return ANALYZE_MODE
-    
+    """معالجة الصور في وضع التحليل"""
     return await handle_photo_analysis(update, context)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر المساعدة مع التحقق من الصلاحية"""
-    # التحقق من الصلاحية
-    if not await check_authorization(update, context):
-        return
-    
+    """أمر المساعدة"""
     help_text = f"""
     🤖 **أوامر البوت:**
     
     /start - بدء البوت والعودة للقائمة الرئيسية
     /help - عرض رسالة المساعدة
-    
-    🔑 **أوامر الاشتراك:**
-    /redeem [الكود] - تفعيل كود اشتراك
-    /check - التحقق من حالة اشتراكك
-    
-    (للمسؤول فقط)
-    /codepy - توليد كود اشتراك جديد
-    /listcodes - عرض جميع الأكواد
     
     ⚙️ **كيفية الاستخدام:**
     1. استخدم أزرار القائمة للتنقل
@@ -3658,7 +3191,6 @@ def main():
     """الدالة الرئيسية - النسخة السهلة"""
     print("🤖 Starting Powered by - Obeida Trading ...")
     print("📋 تم تفعيل نظام النسخ السريع - جميع التحليلات قابلة للنسخ بنقرة واحدة")
-    print("🔒 تم تفعيل نظام الاشتراكات - البوت مقفل لغير المسموح لهم")
     
     # تشغيل Flask
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
@@ -3672,7 +3204,7 @@ def main():
     # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
     
-    # معالج المحادثة الرئيسي
+    # معالج المحادثة
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -3699,45 +3231,19 @@ def main():
             CATEGORY_SELECTION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection)
             ],
-            # حالات توليد الكود
-            CODE_GEN_AWAITING_DEVICES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, code_gen_devices)
-            ],
-            CODE_GEN_AWAITING_DURATION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, code_gen_duration)
-            ],
         },
         fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
         allow_reentry=True
     )
     
-    # إضافة الأوامر
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cancel", cancel))
     
-    # أوامر الاشتراك
-    application.add_handler(CommandHandler("redeem", redeem_code))
-    application.add_handler(CommandHandler("check", check_subscription))
-    application.add_handler(CommandHandler("listcodes", list_codes))
-    
-    # معالج توليد الكود (للمسؤول فقط)
-    code_gen_handler = ConversationHandler(
-        entry_points=[CommandHandler('codepy', code_gen_start)],
-        states={
-            CODE_GEN_AWAITING_DEVICES: [MessageHandler(filters.TEXT & ~filters.COMMAND, code_gen_devices)],
-            CODE_GEN_AWAITING_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, code_gen_duration)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-        allow_reentry=True
-    )
-    application.add_handler(code_gen_handler)
-    
     # إضافة معالج للأخطاء
     application.add_error_handler(error_handler)
     
-    print("✅ Telegram Bot started in secure mode with subscription system...")
-    print(f"📡 Admin user ID: {ADMIN_USER_ID}")
+    print("✅ Telegram Bot  safe mode ...")
     print("📡 Bot Obeida Trading online...")
     
     # تشغيل البوت
@@ -3745,3 +3251,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
