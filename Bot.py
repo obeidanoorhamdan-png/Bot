@@ -958,12 +958,41 @@ def add_user_subscription(username, duration_seconds=86400):
         return False
 
 async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """ديكوريتور للتحقق من الاشتراك"""
+    """ديكوريتور للتحقق من الاشتراك - مع إخفاء الأزرار تماماً للمستخدمين غير المشتركين"""
     user_id = update.effective_user.id
     
     # المشرف دائماً له صلاحية
     if user_id == ADMIN_ID:
         return True
+    
+    status, message = check_subscription(user_id)
+    
+    if not status:
+        # إخفاء جميع الأزرار وإظهار رسالة اشتراك فقط
+        keyboard = [[InlineKeyboardButton("📞 التواصل مع المشرف", url="https://t.me/Sz2zv")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # مسح أي أزرار موجودة وإظهار رسالة الاشتراك فقط
+        await update.message.reply_text(
+            f"⚠️ **عذراً، ليس لديك صلاحية استخدام البوت**\n\n"
+            f"❌ الحالة: {message}\n\n"
+            f"📞 للاشتراك والتجديد، تواصل مع المشرف:\n"
+            f"👤 @Sz2zv\n\n"
+            f"بعد الاشتراك، أرسل /start مرة أخرى",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        return False
+    
+    return True
+
+async def show_subscription_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض رسالة الاشتراك للمستخدمين غير المشتركين"""
+    user_id = update.effective_user.id
+    
+    # المشرف لا يحتاج هذه الرسالة
+    if user_id == ADMIN_ID:
+        return
     
     status, message = check_subscription(user_id)
     
@@ -975,13 +1004,13 @@ async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TY
             f"⚠️ **عذراً، ليس لديك صلاحية استخدام البوت**\n\n"
             f"❌ الحالة: {message}\n\n"
             f"📞 للاشتراك والتجديد، تواصل مع المشرف:\n"
-            f"👤 @Sz2zv",
+            f"👤 @Sz2zv\n\n"
+            f"بعد الاشتراك، أرسل /start مرة أخرى",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
-        return False
-    
-    return True
+        return True
+    return False
 
 # --- دوال المساعدة ---
 def cleanup_old_images():
@@ -4026,7 +4055,7 @@ async def periodic_cleanup():
             print(f"⚠️ خطأ في التنظيف الدوري: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء البوت"""
+    """بدء البوت - مع إخفاء الأزرار لغير المشتركين"""
     user = update.effective_user
     user_id = user.id
     username = user.username or str(user_id)
@@ -4050,38 +4079,65 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # تنظيف الذاكرة المؤقتة
     cleanup_user_data(context, user_id)
     
-    # التحقق من صلاحية المشرف
+    # التحقق من صلاحية المشرف والاشتراك
     is_admin = (user_id == ADMIN_ID)
-    
-    keyboard = [
-        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["💬 دردشة", "📈 توصية"]
-    ]
+    status, message = check_subscription(user_id)
     
     if is_admin:
-        keyboard.append(["👑 لوحة التحكم"])
-    
-    welcome_msg = (
-        "🚀 *أهلاً بك في Obeida Trading*\n\n"
-        "🤖 *⬇️ نقدم لكم الخدمات التالية ⬇️*\n"
-        "• 📊 نظام تحليل شارت \n"
-        "• 📈 نظام توصيات الجاهزة \n"
-        "• 💬 نظام دردشة الذكية \n"
-        "•⚙️ إعدادات تخصيص كاملة ⚙️ \n\n"
-    )
-    
-    if is_admin:
-        welcome_msg += "👑 أنت مسؤول النظام - لديك صلاحيات كاملة.\n\n"
+        # المشرف - يرى جميع الأزرار
+        keyboard = [
+            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+            ["💬 دردشة", "📈 توصية"],
+            ["👑 لوحة التحكم"]
+        ]
+        
+        welcome_msg = (
+            "🚀 *أهلاً بك في Obeida Trading*\n\n"
+            "👑 أنت مسؤول النظام - لديك صلاحيات كاملة.\n\n"
+            "🤖 *الخدمات المتاحة:*\n"
+            "• 📊 تحليل الشارتات\n"
+            "• 📈 توصيات فورية\n"
+            "• 💬 دردشة ذكية\n"
+            "• ⚙️ إعدادات متقدمة\n\n"
+            "اختر أحد الخيارات:"
+        )
+        
+    elif status:
+        # مستخدم مشترك - يرى جميع الأزرار
+        keyboard = [
+            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+            ["💬 دردشة", "📈 توصية"]
+        ]
+        
+        welcome_msg = (
+            f"🚀 *أهلاً بك في Obeida Trading*\n\n"
+            f"✅ حالة اشتراكك: {message}\n\n"
+            f"🤖 *الخدمات المتاحة:*\n"
+            f"• 📊 تحليل الشارتات\n"
+            f"• 📈 توصيات فورية\n"
+            f"• 💬 دردشة ذكية\n"
+            f"• ⚙️ إعدادات متقدمة\n\n"
+            f"اختر أحد الخيارات:"
+        )
+        
     else:
-        # التحقق من حالة الاشتراك
-        status, message = check_subscription(user_id)
-        if status:
-            welcome_msg += f"✅ حالة اشتراكك: {message}\n\n"
-        else:
-            welcome_msg += "⚠️ تحتاج إلى اشتراك لاستخدام البوت. تواصل مع المشرف @Sz2zv\n\n"
+        # مستخدم غير مشترك - لا يرى أي أزرار، فقط زر التواصل
+        keyboard = []  # لا أزرار
+        inline_keyboard = [[InlineKeyboardButton("📞 التواصل مع المشرف", url="https://t.me/Sz2zv")]]
+        reply_markup = InlineKeyboardMarkup(inline_keyboard)
+        
+        await update.message.reply_text(
+            f"⚠️ **عذراً، ليس لديك صلاحية استخدام البوت**\n\n"
+            f"❌ الحالة: {message}\n\n"
+            f"📞 للاشتراك والتجديد، تواصل مع المشرف:\n"
+            f"👤 @Sz2zv\n\n"
+            f"بعد الاشتراك، أرسل /start مرة أخرى",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
     
-    welcome_msg += "اختر أحد الخيارات:"
-    
+    # إظهار القائمة للمستخدمين المشتركين فقط
     await update.message.reply_text(
         welcome_msg,
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
@@ -4094,14 +4150,23 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     user_id = update.effective_user.id
     
+    # التحقق من الاشتراك (لغير المشرف)
+    if user_id != ADMIN_ID:
+        status, _ = check_subscription(user_id)
+        if not status:
+            # إخفاء الأزرار فوراً
+            inline_keyboard = [[InlineKeyboardButton("📞 التواصل مع المشرف", url="https://t.me/Sz2zv")]]
+            reply_markup = InlineKeyboardMarkup(inline_keyboard)
+            await update.message.reply_text(
+                "⚠️ انتهت صلاحية اشتراكك. تواصل مع المشرف للتجديد.",
+                reply_markup=reply_markup
+            )
+            return MAIN_MENU
+    
     if user_message == "👑 لوحة التحكم" and user_id == ADMIN_ID:
         return await start_admin_panel(update, context)
     
     if user_message == "⚙️ إعدادات التحليل":
-        # التحقق من الاشتراك
-        if not await subscription_required(update, context):
-            return MAIN_MENU
-        
         keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
         keyboard.append(["الرجوع للقائمة الرئيسية"])
         
@@ -4113,10 +4178,6 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SETTINGS_CANDLE
     
     elif user_message == "📊 تحليل صورة":
-        # التحقق من الاشتراك
-        if not await subscription_required(update, context):
-            return MAIN_MENU
-        
         candle, trade_time, _, _ = get_user_setting(user_id)
         
         if not candle or not trade_time:
@@ -4174,6 +4235,18 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
     user_message = update.message.text
     user_id = update.effective_user.id
     
+    # التحقق من الاشتراك
+    if user_id != ADMIN_ID:
+        status, _ = check_subscription(user_id)
+        if not status:
+            inline_keyboard = [[InlineKeyboardButton("📞 التواصل مع المشرف", url="https://t.me/Sz2zv")]]
+            reply_markup = InlineKeyboardMarkup(inline_keyboard)
+            await update.message.reply_text(
+                "⚠️ انتهت صلاحية اشتراكك. تواصل مع المشرف للتجديد.",
+                reply_markup=reply_markup
+            )
+            return SETTINGS_CANDLE
+    
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
@@ -4214,6 +4287,18 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
     """معالجة اختيار مدة الصفقة"""
     user_message = update.message.text
     user_id = update.effective_user.id
+    
+    # التحقق من الاشتراك
+    if user_id != ADMIN_ID:
+        status, _ = check_subscription(user_id)
+        if not status:
+            inline_keyboard = [[InlineKeyboardButton("📞 التواصل مع المشرف", url="https://t.me/Sz2zv")]]
+            reply_markup = InlineKeyboardMarkup(inline_keyboard)
+            await update.message.reply_text(
+                "⚠️ انتهت صلاحية اشتراكك. تواصل مع المشرف للتجديد.",
+                reply_markup=reply_markup
+            )
+            return SETTINGS_TIME
     
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [
@@ -4258,6 +4343,18 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
     """معالجة وضع التحليل"""
     user_message = update.message.text
     user_id = update.effective_user.id
+    
+    # التحقق من الاشتراك
+    if user_id != ADMIN_ID:
+        status, _ = check_subscription(user_id)
+        if not status:
+            inline_keyboard = [[InlineKeyboardButton("📞 التواصل مع المشرف", url="https://t.me/Sz2zv")]]
+            reply_markup = InlineKeyboardMarkup(inline_keyboard)
+            await update.message.reply_text(
+                "⚠️ انتهت صلاحية اشتراكك. تواصل مع المشرف للتجديد.",
+                reply_markup=reply_markup
+            )
+            return ANALYZE_MODE
     
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [
@@ -4345,6 +4442,7 @@ def main():
     print("🤖 Starting Obeida Trading with Subscription System ...")
     print("📋 تم تفعيل نظام النسخ السريع - جميع التحليلات قابلة للنسخ بنقرة واحدة")
     print("👑 المشرف الرئيسي: 6207431030 (@Sz2zv)")
+    print("🔒 نظام إخفاء الأزرار لغير المشتركين - مفعل")
     
     # تشغيل Flask
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
