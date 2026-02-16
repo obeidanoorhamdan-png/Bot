@@ -13,10 +13,10 @@ import json
 import shutil
 import io
 from datetime import datetime, timedelta
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from telegram.error import NetworkError, TimedOut
-from flask import Flask
+from flask import Flask, request, jsonify, render_template_string
 from PIL import Image
 import pytz
 
@@ -30,6 +30,9 @@ MISTRAL_MODEL_AUDIT = "mistral-large-latest"        # للتحليل المنط�
 MODEL_SUMMARY = "mistral-medium-latest"        # للتلخيص السريع
 
 DB_NAME = "abood-gpt.db"
+
+# معرف المشرف الرئيسي
+ADMIN_ID = 6207431030
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
@@ -66,15 +69,557 @@ IMAGE_CACHE_DIR = "image_cache"
 MAX_IMAGE_SIZE = (1024, 1024)  # أقصى حجم للصورة بعد الضغط
 IMAGE_QUALITY = 85  # جودة الصورة بعد الضغط (من 0-100)
 
+# حالات المحادثة
+MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION, ADMIN_MENU, ADD_USER, REMOVE_USER, SET_USER_DURATION = range(11)
+
 # إنشاء مجلد التخزين المؤقت إذا لم يكن موجوداً
 if not os.path.exists(IMAGE_CACHE_DIR):
     os.makedirs(IMAGE_CACHE_DIR)
 
-# حالات المحادثة
-MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION = range(7)
-
-# --- Flask Server ---
+# --- Flask Server مع واجهة تحكم ---
 app = Flask(__name__)
+
+# HTML template for admin panel
+ADMIN_PANEL_HTML = """
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة تحكم Obeida Trading</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .header h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .header p {
+            color: #666;
+            font-size: 1.1em;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.05);
+            transition: transform 0.3s;
+        }
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        .stat-card h3 {
+            color: #666;
+            font-size: 1em;
+            margin-bottom: 10px;
+        }
+        .stat-card .number {
+            color: #667eea;
+            font-size: 2.5em;
+            font-weight: bold;
+        }
+        .users-section {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.05);
+        }
+        .section-title {
+            color: #333;
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        .users-table {
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th {
+            background: #667eea;
+            color: white;
+            padding: 12px;
+            font-weight: 600;
+            text-align: center;
+        }
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #f0f0f0;
+            text-align: center;
+        }
+        tr:hover {
+            background: #f8f9ff;
+        }
+        .status-badge {
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+            display: inline-block;
+        }
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status-expired {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .status-never {
+            background: #cce5ff;
+            color: #004085;
+        }
+        .actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 0.9em;
+        }
+        .btn-add {
+            background: #28a745;
+            color: white;
+            margin-bottom: 20px;
+        }
+        .btn-add:hover {
+            background: #218838;
+        }
+        .btn-edit {
+            background: #ffc107;
+            color: #333;
+        }
+        .btn-edit:hover {
+            background: #e0a800;
+        }
+        .btn-delete {
+            background: #dc3545;
+            color: white;
+        }
+        .btn-delete:hover {
+            background: #c82333;
+        }
+        .btn-renew {
+            background: #17a2b8;
+            color: white;
+        }
+        .btn-renew:hover {
+            background: #138496;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 500px;
+        }
+        .modal-content h3 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+            font-weight: 600;
+        }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #f0f0f0;
+            border-radius: 10px;
+            font-size: 1em;
+        }
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+        .btn-save {
+            background: #28a745;
+            color: white;
+        }
+        .btn-cancel {
+            background: #6c757d;
+            color: white;
+        }
+        .search-box {
+            margin-bottom: 20px;
+        }
+        .search-box input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #f0f0f0;
+            border-radius: 10px;
+            font-size: 1em;
+        }
+        .search-box input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .duration-badge {
+            background: #e9ecef;
+            padding: 3px 8px;
+            border-radius: 15px;
+            font-size: 0.85em;
+            color: #495057;
+        }
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 لوحة تحكم Obeida Trading</h1>
+            <p>إدارة المستخدمين والاشتراكات - المشرف: @Sz2zv</p>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>إجمالي المستخدمين</h3>
+                <div class="number">{{ total_users }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>المستخدمين النشطين</h3>
+                <div class="number">{{ active_users }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>المنتهية اشتراكاتهم</h3>
+                <div class="number">{{ expired_users }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>تحليلات اليوم</h3>
+                <div class="number">{{ today_analyses }}</div>
+            </div>
+        </div>
+
+        <div class="users-section">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 class="section-title">👥 قائمة المستخدمين</h2>
+                <button class="btn btn-add" onclick="showAddModal()">➕ إضافة مستخدم جديد</button>
+            </div>
+            
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="🔍 بحث باسم المستخدم أو المعرف..." onkeyup="searchUsers()">
+            </div>
+
+            <div class="users-table">
+                <table id="usersTable">
+                    <thead>
+                        <tr>
+                            <th>المعرف</th>
+                            <th>اسم المستخدم</th>
+                            <th>تاريخ الاشتراك</th>
+                            <th>انتهاء الاشتراك</th>
+                            <th>الحالة</th>
+                            <th>الإجراءات</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for user in users %}
+                        <tr>
+                            <td>{{ user.user_id }}</td>
+                            <td>@{{ user.username }}</td>
+                            <td>{{ user.subscription_date }}</td>
+                            <td>
+                                {% if user.subscription_end %}
+                                    {{ user.subscription_end }}
+                                    <span class="duration-badge">{{ user.duration_text }}</span>
+                                {% else %}
+                                    غير محدد
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if user.subscription_end %}
+                                    {% if user.is_active %}
+                                        <span class="status-badge status-active">✅ نشط</span>
+                                    {% else %}
+                                        <span class="status-badge status-expired">❌ منتهي</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="status-badge status-never">🔄 غير محدد</span>
+                                {% endif %}
+                            </td>
+                            <td class="actions">
+                                <button class="btn btn-edit" onclick="showDurationModal('{{ user.user_id }}', '@{{ user.username }}')">⏱️ تمديد</button>
+                                <button class="btn btn-delete" onclick="deleteUser('{{ user.user_id }}')">🗑️ حذف</button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal إضافة مستخدم -->
+    <div id="addModal" class="modal">
+        <div class="modal-content">
+            <h3>➕ إضافة مستخدم جديد</h3>
+            <div class="form-group">
+                <label>معرف المستخدم (Username):</label>
+                <input type="text" id="newUsername" placeholder="أدخل username بدون @">
+            </div>
+            <div class="form-group">
+                <label>مدة الاشتراك:</label>
+                <select id="subscriptionDuration">
+                    <option value="3600">ساعة واحدة</option>
+                    <option value="86400">يوم واحد</option>
+                    <option value="604800">أسبوع</option>
+                    <option value="2592000">شهر</option>
+                    <option value="0">غير محدد</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-save" onclick="addUser()">حفظ</button>
+                <button class="btn btn-cancel" onclick="hideAddModal()">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal تعديل المدة -->
+    <div id="durationModal" class="modal">
+        <div class="modal-content">
+            <h3>⏱️ تعديل مدة الاشتراك</h3>
+            <p id="durationUserInfo"></p>
+            <div class="form-group">
+                <label>المدة الجديدة:</label>
+                <select id="newDuration">
+                    <option value="3600">ساعة واحدة</option>
+                    <option value="86400">يوم واحد</option>
+                    <option value="604800">أسبوع</option>
+                    <option value="2592000">شهر</option>
+                    <option value="0">غير محدد</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-save" onclick="updateDuration()">تحديث</button>
+                <button class="btn btn-cancel" onclick="hideDurationModal()">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>Obeida Trading - نظام إدارة الاشتراكات المتقدم</p>
+    </div>
+
+    <script>
+        let currentUserId = null;
+
+        function searchUsers() {
+            let input = document.getElementById('searchInput');
+            let filter = input.value.toLowerCase();
+            let table = document.getElementById('usersTable');
+            let tr = table.getElementsByTagName('tr');
+
+            for (let i = 1; i < tr.length; i++) {
+                let tdUsername = tr[i].getElementsByTagName('td')[1];
+                let tdId = tr[i].getElementsByTagName('td')[0];
+                if (tdUsername || tdId) {
+                    let txtValueUsername = tdUsername.textContent || tdUsername.innerText;
+                    let txtValueId = tdId.textContent || tdId.innerText;
+                    if (txtValueUsername.toLowerCase().indexOf(filter) > -1 || txtValueId.indexOf(filter) > -1) {
+                        tr[i].style.display = '';
+                    } else {
+                        tr[i].style.display = 'none';
+                    }
+                }
+            }
+        }
+
+        function showAddModal() {
+            document.getElementById('addModal').style.display = 'flex';
+        }
+
+        function hideAddModal() {
+            document.getElementById('addModal').style.display = 'none';
+            document.getElementById('newUsername').value = '';
+        }
+
+        function showDurationModal(userId, username) {
+            currentUserId = userId;
+            document.getElementById('durationUserInfo').innerText = `المستخدم: ${username}`;
+            document.getElementById('durationModal').style.display = 'flex';
+        }
+
+        function hideDurationModal() {
+            document.getElementById('durationModal').style.display = 'none';
+            currentUserId = null;
+        }
+
+        async function addUser() {
+            let username = document.getElementById('newUsername').value.trim();
+            let duration = document.getElementById('subscriptionDuration').value;
+            
+            if (!username) {
+                alert('الرجاء إدخال اسم المستخدم');
+                return;
+            }
+
+            try {
+                let response = await fetch('/admin/add_user', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        duration: parseInt(duration)
+                    })
+                });
+                
+                let result = await response.json();
+                if (result.success) {
+                    alert('✅ تم إضافة المستخدم بنجاح');
+                    location.reload();
+                } else {
+                    alert('❌ ' + result.error);
+                }
+            } catch (error) {
+                alert('حدث خطأ في الاتصال');
+            }
+            
+            hideAddModal();
+        }
+
+        async function updateDuration() {
+            if (!currentUserId) return;
+            
+            let duration = document.getElementById('newDuration').value;
+            
+            try {
+                let response = await fetch('/admin/update_duration', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: parseInt(currentUserId),
+                        duration: parseInt(duration)
+                    })
+                });
+                
+                let result = await response.json();
+                if (result.success) {
+                    alert('✅ تم تحديث مدة الاشتراك بنجاح');
+                    location.reload();
+                } else {
+                    alert('❌ ' + result.error);
+                }
+            } catch (error) {
+                alert('حدث خطأ في الاتصال');
+            }
+            
+            hideDurationModal();
+        }
+
+        async function deleteUser(userId) {
+            if (!confirm('هل أنت متأكد من حذف هذا المستخدم؟')) {
+                return;
+            }
+            
+            try {
+                let response = await fetch('/admin/delete_user', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: parseInt(userId)
+                    })
+                });
+                
+                let result = await response.json();
+                if (result.success) {
+                    alert('✅ تم حذف المستخدم بنجاح');
+                    location.reload();
+                } else {
+                    alert('❌ ' + result.error);
+                }
+            } catch (error) {
+                alert('حدث خطأ في الاتصال');
+            }
+        }
+
+        // Close modals when clicking outside
+        window.onclick = function(event) {
+            let addModal = document.getElementById('addModal');
+            let durationModal = document.getElementById('durationModal');
+            if (event.target == addModal) {
+                addModal.style.display = 'none';
+            }
+            if (event.target == durationModal) {
+                durationModal.style.display = 'none';
+            }
+        }
+    </script>
+</body>
+</html>
+"""
 
 @app.route('/')
 def home():
@@ -84,30 +629,361 @@ def home():
     <head>
         <title>Obeida Trading</title>
         <style>
-            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-            h1 { color: #2c3e50; }
-            .status { background: #2ecc71; color: white; padding: 10px 20px; border-radius: 5px; display: inline-block; }
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+            h1 { font-size: 3em; margin-bottom: 20px; }
+            .status { background: rgba(255,255,255,0.2); padding: 20px 40px; border-radius: 10px; display: inline-block; margin: 20px; }
+            .admin-link { background: #28a745; color: white; padding: 15px 30px; border-radius: 5px; text-decoration: none; display: inline-block; margin: 20px; }
         </style>
     </head>
     <body>
         <h1> 📊 Obeida Trading Telegram Bot 📊</h1>
-        <p>Chat & Technical Analysis Bot</p>
-        <div class="status">✅ Obeida Trading Running</div>
+        <p>Chat & Technical Analysis Bot with Subscription System</p>
+        <div class="status">✅ البوت يعمل بنظام الاشتراكات</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <p>Obeida Trading - (Dual Model System)</p>
+        <a href="/admin" class="admin-link">🔐 لوحة تحكم المشرف</a>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
-    return {"status": "active", "ai_provider": "Mistral AI", "model": f"{MISTRAL_MODEL} + {MISTRAL_MODEL_AUDIT}", "timestamp": time.time()}
+    return {"status": "active", "ai_provider": "Mistral AI", "subscription_system": "active", "timestamp": time.time()}
+
+@app.route('/admin')
+def admin_panel():
+    """لوحة تحكم المشرف"""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # إحصائيات
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM users WHERE subscription_end > datetime('now') OR subscription_end IS NULL")
+        active_users = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM users WHERE subscription_end < datetime('now') AND subscription_end IS NOT NULL")
+        expired_users = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM chat_history WHERE date(timestamp) = date('now')")
+        today_analyses = cursor.fetchone()[0]
+        
+        # قائمة المستخدمين
+        cursor.execute("""
+            SELECT user_id, username, subscription_start, subscription_end 
+            FROM users ORDER BY 
+            CASE 
+                WHEN subscription_end IS NULL THEN 1 
+                ELSE 0 
+            END,
+            subscription_end DESC
+        """)
+        users_data = cursor.fetchall()
+        
+        users = []
+        for user in users_data:
+            user_id, username, sub_start, sub_end = user
+            
+            # حساب حالة المستخدم
+            is_active = False
+            if sub_end:
+                try:
+                    end_time = datetime.fromisoformat(sub_end)
+                    is_active = end_time > datetime.now()
+                except:
+                    is_active = False
+            else:
+                is_active = True
+            
+            # تنسيق التواريخ
+            sub_start_str = sub_start if sub_start else "غير محدد"
+            sub_end_str = sub_end if sub_end else "غير محدد"
+            
+            # حساب مدة الاشتراك
+            duration_text = ""
+            if sub_end and sub_start:
+                try:
+                    start = datetime.fromisoformat(sub_start)
+                    end = datetime.fromisoformat(sub_end)
+                    delta = end - start
+                    
+                    if delta.days >= 30:
+                        months = delta.days // 30
+                        duration_text = f"{months} شهر"
+                    elif delta.days >= 7:
+                        weeks = delta.days // 7
+                        duration_text = f"{weeks} أسبوع"
+                    elif delta.days >= 1:
+                        duration_text = f"{delta.days} يوم"
+                    elif delta.seconds >= 3600:
+                        hours = delta.seconds // 3600
+                        duration_text = f"{hours} ساعة"
+                    else:
+                        duration_text = "أقل من ساعة"
+                except:
+                    duration_text = "غير محدد"
+            
+            users.append({
+                'user_id': user_id,
+                'username': username or 'لا يوجد',
+                'subscription_date': sub_start_str[:16] if sub_start_str != "غير محدد" else "غير محدد",
+                'subscription_end': sub_end_str[:16] if sub_end_str != "غير محدد" else "غير محدد",
+                'is_active': is_active,
+                'duration_text': duration_text
+            })
+        
+        conn.close()
+        
+        return render_template_string(
+            ADMIN_PANEL_HTML,
+            total_users=total_users,
+            active_users=active_users,
+            expired_users=expired_users,
+            today_analyses=today_analyses,
+            users=users
+        )
+    except Exception as e:
+        return f"خطأ في تحميل لوحة التحكم: {str(e)}"
+
+@app.route('/admin/add_user', methods=['POST'])
+def add_user():
+    """إضافة مستخدم جديد عبر API"""
+    try:
+        data = request.json
+        username = data.get('username', '').strip().replace('@', '')
+        duration = data.get('duration', 0)  # 0 يعني غير محدد
+        
+        if not username:
+            return jsonify({'success': False, 'error': 'اسم المستخدم مطلوب'})
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # البحث عن المستخدم في قاعدة بيانات التليجرام (هذا يتطلب تفاعل المستخدم مع البوت أولاً)
+        # سنقوم بإضافة المستخدم بشكل مؤقت حتى يتفاعل مع البوت
+        cursor.execute("""
+            INSERT OR IGNORE INTO users (user_id, username, candle, trade_time)
+            VALUES (?, ?, ?, ?)
+        """, (0, username, "M1", "قصير (1m-15m)"))
+        
+        # تحديث معلومات الاشتراك
+        if duration > 0:
+            end_date = datetime.now() + timedelta(seconds=duration)
+            cursor.execute("""
+                UPDATE users 
+                SET subscription_start = datetime('now'),
+                    subscription_end = ?,
+                    username = ?
+                WHERE username = ? OR user_id = ?
+            """, (end_date.isoformat(), username, username, 0))
+        else:
+            cursor.execute("""
+                UPDATE users 
+                SET subscription_start = datetime('now'),
+                    subscription_end = NULL,
+                    username = ?
+                WHERE username = ? OR user_id = ?
+            """, (username, username, 0))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/update_duration', methods=['POST'])
+def update_duration():
+    """تحديث مدة الاشتراك"""
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        duration = data.get('duration', 0)
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        if duration > 0:
+            end_date = datetime.now() + timedelta(seconds=duration)
+            cursor.execute("""
+                UPDATE users 
+                SET subscription_end = ?
+                WHERE user_id = ?
+            """, (end_date.isoformat(), user_id))
+        else:
+            cursor.execute("""
+                UPDATE users 
+                SET subscription_end = NULL
+                WHERE user_id = ?
+            """, (user_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/delete_user', methods=['POST'])
+def delete_user():
+    """حذف مستخدم"""
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        # حذف المستخدم وسجل محادثاته
+        cursor.execute("DELETE FROM chat_history WHERE user_id = ?", (user_id,))
+        cursor.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/ping')
 def ping():
     return "PONG"
 
-# --- دوال المساعدة الجديدة ---
+# --- دوال التحقق من الاشتراك ---
+def init_db_with_subscription():
+    """تهيئة قاعدة البيانات مع نظام الاشتراكات"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    # جدول المستخدمين الأساسي
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY, 
+            username TEXT,
+            candle TEXT DEFAULT 'M1', 
+            trade_time TEXT DEFAULT 'قصير (1m-15m)',
+            chat_context TEXT DEFAULT '',
+            last_analysis_context TEXT DEFAULT '',
+            last_analysis_time DATETIME DEFAULT NULL,
+            subscription_start DATETIME DEFAULT NULL,
+            subscription_end DATETIME DEFAULT NULL,
+            is_admin INTEGER DEFAULT 0
+        )
+    ''')
+    
+    # جدول سجل المحادثات
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            role TEXT,
+            content TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # إضافة المشرف الرئيسي
+    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, is_admin) VALUES (?, ?, ?)", 
+                  (ADMIN_ID, "Sz2zv", 1))
+    
+    conn.commit()
+    conn.close()
+    print("✅ Database initialized with subscription system")
+
+def check_subscription(user_id):
+    """التحقق من صلاحية اشتراك المستخدم"""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT is_admin, subscription_end FROM users WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if not result:
+            return False, "غير مسجل"
+        
+        is_admin, sub_end = result
+        
+        # المشرف دائماً له صلاحية
+        if is_admin == 1:
+            return True, "مشرف"
+        
+        # إذا لم يكن هناك اشتراك محدد
+        if not sub_end:
+            return False, "غير مشترك"
+        
+        # التحقق من تاريخ انتهاء الاشتراك
+        try:
+            end_date = datetime.fromisoformat(sub_end)
+            if end_date > datetime.now():
+                remaining = end_date - datetime.now()
+                hours = remaining.total_seconds() / 3600
+                if hours < 24:
+                    return True, f"ينتهي بعد {int(hours)} ساعة"
+                else:
+                    return True, f"ينتهي بعد {remaining.days} يوم"
+            else:
+                return False, "انتهى الاشتراك"
+        except:
+            return False, "خطأ في تاريخ الاشتراك"
+            
+    except Exception as e:
+        print(f"⚠️ خطأ في التحقق من الاشتراك: {e}")
+        return False, "خطأ في النظام"
+
+def add_user_subscription(username, duration_seconds=86400):
+    """إضافة مستخدم جديد مع اشتراك"""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        if duration_seconds > 0:
+            end_date = datetime.now() + timedelta(seconds=duration_seconds)
+            cursor.execute("""
+                INSERT OR REPLACE INTO users (user_id, username, subscription_start, subscription_end, candle, trade_time)
+                VALUES (?, ?, datetime('now'), ?, ?, ?)
+            """, (0, username, end_date.isoformat(), "M1", "قصير (1m-15m)"))
+        else:
+            cursor.execute("""
+                INSERT OR REPLACE INTO users (user_id, username, subscription_start, subscription_end, candle, trade_time)
+                VALUES (?, ?, datetime('now'), NULL, ?, ?)
+            """, (0, username, "M1", "قصير (1m-15m)"))
+        
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"⚠️ خطأ في إضافة المستخدم: {e}")
+        return False
+
+async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """ديكوريتور للتحقق من الاشتراك"""
+    user_id = update.effective_user.id
+    
+    # المشرف دائماً له صلاحية
+    if user_id == ADMIN_ID:
+        return True
+    
+    status, message = check_subscription(user_id)
+    
+    if not status:
+        keyboard = [[InlineKeyboardButton("📞 التواصل مع المشرف", url="https://t.me/Sz2zv")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            f"⚠️ **عذراً، ليس لديك صلاحية استخدام البوت**\n\n"
+            f"❌ الحالة: {message}\n\n"
+            f"📞 للاشتراك والتجديد، تواصل مع المشرف:\n"
+            f"👤 @Sz2zv",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        return False
+    
+    return True
+
+# --- دوال المساعدة ---
 def cleanup_old_images():
     """تنظيف الصور القديمة التي مضى عليها أكثر من 30 دقيقة"""
     try:
@@ -153,7 +1029,6 @@ def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
         print(f"⚠️ خطأ في ضغط الصورة: {e}")
         return image_path
 
-# --- سحب الصور من TradingView ---
 def download_chart_image(symbol="BTCUSDT"):
     """سحب صورة شارت من TradingView"""
     try:
@@ -284,34 +1159,8 @@ def download_chart_image(symbol="BTCUSDT"):
         print(f"⚠️ خطأ في سحب الصورة: {e}")
         return None
 
-# --- قاعدة البيانات ---
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY, 
-            candle TEXT DEFAULT 'M1', 
-            trade_time TEXT DEFAULT 'قصير (1m-15m)',
-            chat_context TEXT DEFAULT '',
-            last_analysis_context TEXT DEFAULT '',
-            last_analysis_time DATETIME DEFAULT NULL
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS chat_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            role TEXT,
-            content TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
-    print("✅ Database initialized")
-
 def save_user_setting(user_id, col, val):
+    """حفظ إعدادات المستخدم"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute(f"INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
@@ -320,6 +1169,7 @@ def save_user_setting(user_id, col, val):
     conn.close()
 
 def get_user_setting(user_id):
+    """الحصول على إعدادات المستخدم"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT candle, trade_time, last_analysis_context, last_analysis_time FROM users WHERE user_id = ?", (user_id,))
@@ -402,7 +1252,6 @@ def format_trade_time_for_prompt(trade_time):
     else:
         return f"مدة الصفقة المتوقعة: {trade_time}"
 
-# --- معالجة الصور بشكل صحيح ---
 def encode_image(image_path):
     """تحويل الصورة إلى base64 بشكل صحيح"""
     try:
@@ -413,7 +1262,6 @@ def encode_image(image_path):
         print(f"Error encoding image: {e}")
         return None
 
-# --- دوال المساعدة للتعامل مع النصوص وتحسين النسخ ---
 def clean_repeated_text(text):
     """تنظيف النص من التكرارات وتحسين التنسيق - الإصدار المحسّن"""
     if not text:
@@ -447,16 +1295,10 @@ def clean_repeated_text(text):
 
 def format_as_copyable_code(text, language="markdown"):
     """تنسيق النص على شكل Code Block قابل للنسخ بنقرة واحدة"""
-    # تنظيف النص من أي تنسيق Markdown زائد
     text = clean_repeated_text(text)
-    
-    # إزالة أي محاولات سابقة لتنسيق code block
     text = re.sub(r'```[\w]*\n?', '', text)
     text = re.sub(r'```\n?', '', text)
-    
-    # إضافة الهيكل الصحيح للنسخ السريع في تيليجرام
     formatted_text = f"```{language}\n{text}\n```"
-    
     return formatted_text
 
 def split_message_with_copy_support(text, max_length=3500):
@@ -468,8 +1310,7 @@ def split_message_with_copy_support(text, max_length=3500):
     current_part = ""
     
     for line in text.split('\n'):
-        if len(current_part) + len(line) + 1 > max_length - 50:  # مسافة أمان للفواصل
-            # إغلاق الجزء الحالي
+        if len(current_part) + len(line) + 1 > max_length - 50:
             if current_part:
                 parts.append(current_part)
                 current_part = ""
@@ -479,7 +1320,6 @@ def split_message_with_copy_support(text, max_length=3500):
     if current_part:
         parts.append(current_part)
     
-    # إضافة فواصل واضحة بين الأجزاء
     formatted_parts = []
     for i, part in enumerate(parts):
         if i < len(parts) - 1:
@@ -509,7 +1349,6 @@ def split_message(text, max_length=4000):
     
     return parts
 
-# --- وظائف إدارة الذاكرة ---
 def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None):
     """تنظيف البيانات المؤقتة للمستخدم - الإصدار المحسّن"""
     try:
@@ -546,7 +1385,6 @@ def get_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE):
     """الحصول على آخر رمز تم اختياره في التوصيات"""
     return context.user_data.get('last_recommendation_symbol', 'BTC (OTC)')
 
-# --- وظائف نظام التوصية الجديد ---
 def get_mistral_analysis(symbol):
     """الحصول على تحليل من Mistral AI API للعملة"""
     headers = {
@@ -607,6 +1445,10 @@ def get_mistral_analysis(symbol):
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء وضع التوصية"""
+    # التحقق من الاشتراك
+    if not await subscription_required(update, context):
+        return RECOMMENDATION_MODE
+    
     reply_keyboard = [[key] for key in CATEGORIES.keys()]
     reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
     
@@ -619,11 +1461,17 @@ async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAUL
 
 async def handle_recommendation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة اختيارات نظام التوصية مع سحب الصور"""
+    # التحقق من الاشتراك
+    if not await subscription_required(update, context):
+        return RECOMMENDATION_MODE
+    
     user_text = update.message.text.strip()
     
     # العودة للقائمة الرئيسية
     if user_text == "الرجوع للقائمة الرئيسية":
         keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+        if update.effective_user.id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -875,15 +1723,9 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         else:
             kill_zone_status = "خارج مناطق القتل الرئيسية"
         
-        # معالجة "دقيقة الغدر" - مع التعديل الجديد
+        # معالجة "دقيقة الغدر"
         is_last_minute = 1 if current_minute in [29, 59, 14, 44] else 0
-        # التعديل: تحديد ما إذا كان الفريم من فئة S5 أو S10 والزخم >90% لاستثناء قاعدة دقيقة الغدر
-        is_small_timeframe_exception = False
-        # سنقوم بتقييم الزخم لاحقاً في التحليل، لكن هنا نعدل النص التحذيري
-        if candle in ['S5', 'S10']:
-            last_minute_status = f"⚠️ دقيقة الغدر - الفريم {candle}: يُسمح بالدخول حتى آخر ثانيتين إذا كان الزخم >90%"
-        else:
-            last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
+        last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
         
         # ربط معطيات الإعدادات
         candle_category = ""
@@ -952,18 +1794,12 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             except:
                 previous_context_info = ""
         
-        # البرومبت الرئيسي المحدث مع جميع الإضافات الجديدة + التعديلات الحرجة
+        # البرومبت الرئيسي (نفس البرومبت الطويل السابق)
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
 مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
 
 🎯 **قاعدة فلتر المسافة الذهبية:** أنت ملزم باستخراج السعر من المحور الأيمن (Y-axis) ومقارنته بأقرب رقم مستدير (.000). إذا كانت المسافة أقل من 0.00010، تُلغى جميع أوامر البيع/الشراء العكسية ويتم تفعيل نظام 'اللحاق بالمغناطيس السعري' - أي متابعة الاتجاه حتى لمس الرقم المستدير.
-
-🎯 **تعديلات منع الخسارة الفورية (Critical Patch) - الإضافات الجديدة:**
-1. **قاعدة "اللمس قبل العكس":** يُمنع منعاً باتاً توقع ارتداد من رقم مستدير أو منطقة عرض إلا بعد أن يلمس السعر المستوى فعلياً (بذيل أو جسم). الفراغ السعري (Gap) قبل المستوى يعني أن السعر سيندفع للمسه أولاً.
-2. **فلتر "زخم الشمعة الضخمة":** إذا كانت الشمعة الحالية أكبر بـ 300% من الشموع السابقة، فهي شمعة خبر أو تلاعب. القرار "احتفاظ 🟡" فوراً حتى تستقر الشموع الثلاث التالية.
-3. **استثناء "سيادة الجسم":** إذا كان الجسم ممتلئاً بنسبة >95% (Marubozu)، تجاهل أي إشارة انعكاس حتى لو كان السعر عند قمة تاريخية؛ انتظر شمعة رفض واضحة أولاً.
-4. **تعديل منطق "دقيقة الغدر":** في فريمات S5/S10، إذا كان الزخم >90% (3 شموع متتالية ممتلئة)، قلص فترة الحظر إلى ثانيتين فقط للسماح باللحاق بالانفجار السعري. وإلا، التزم بالحظر الكامل لآخر 10 ثوانٍ.
 
 {previous_context_info}
 
@@ -994,7 +1830,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 1.2 كشف مخاطر OTC:
 • إشارات التلاعب: اختراق ثم عودة، انعكاس لحظي، حركة بدون حجم
-• حماية: تجنب آخر 10 ثوانٍ (مع استثناء فريمات S5/S10 إذا الزخم >90%، يُسمح حتى آخر ثانيتين)، أوامر معلقة، SL +20%
+• حماية: تجنب آخر 10 ثوانٍ، أوامر معلقة، SL +20%
 
 1.3 تحليل الارتباط السعري:
 • Forex: مؤشر الدولار، العملات المرتبطة، السندات
@@ -1237,6 +2073,10 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور في وضع التوصية"""
+    # التحقق من الاشتراك
+    if not await subscription_required(update, context):
+        return RECOMMENDATION_MODE
+    
     user_id = update.effective_user.id
     
     # الحصول على آخر عملة تم اختيارها
@@ -1286,9 +2126,12 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
     )
     return RECOMMENDATION_MODE
 
-# --- 🚀 برومبت قوي للدردشة ---
 async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء وضع الدردشة المتقدم"""
+    # التحقق من الاشتراك
+    if not await subscription_required(update, context):
+        return CHAT_MODE
+    
     keyboard = [
         ["🚀 مساعد شامل", "💼 استشارات احترافية"],
         ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
@@ -1308,12 +2151,18 @@ async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة رسائل الدردشة مع برومبت قوي"""
+    # التحقق من الاشتراك
+    if not await subscription_required(update, context):
+        return CHAT_MODE
+    
     user_message = update.message.text
     user_id = update.effective_user.id
     
     # التحقق من الأوامر الخاصة
     if user_message == "ايقاف الدردشة":
         main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+        if user_id == ADMIN_ID:
+            main_keyboard.append(["👑 لوحة التحكم"])
         await update.message.reply_text(
             "✅ تم إنهاء وضع الدردشة.",
             reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -1322,6 +2171,8 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     elif user_message == "الرجوع للقائمة الرئيسية":
         main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+        if user_id == ADMIN_ID:
+            main_keyboard.append(["👑 لوحة التحكم"])
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
             reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -1526,82 +2377,19 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return CHAT_MODE
 
-# ====================================================
-# الجزء 1: إضافة "ساعة الذكاء" (الوقت والسيولة) 🕒
-# ====================================================
-
-def get_detailed_market_info(candle_setting):
-    """هذه الدالة هي التي تخبر البوت بحالة الوقت والسيولة"""
-    now = datetime.now(pytz.timezone('Asia/Gaza'))
-    secs = now.second
-    minute = now.minute
-    hour = now.hour
-    
-    # 1. حساب الثواني المتبقية للشمعة
-    try:
-        if "S" in candle_setting:
-            # فريمات الثواني
-            period = int(candle_setting[1:])
-            secs_rem = period - (secs % period)
-        elif "M" in candle_setting:
-            # فريمات الدقائق
-            period = int(candle_setting[1:])
-            secs_rem = (period * 60) - ((minute % period) * 60 + secs)
-        elif "H" in candle_setting:
-            # فريمات الساعات
-            period = int(candle_setting[1:])
-            mins_passed = (hour % period) * 60 + minute
-            secs_rem = (period * 3600) - (mins_passed * 60 + secs)
-        elif "D" in candle_setting:
-            # فريم يومي
-            secs_rem = (24 * 3600) - (hour * 3600 + minute * 60 + secs)
-        else:
-            secs_rem = 0
-    except:
-        secs_rem = 0
-
-    # 2. تحديد "دقيقة الغدر"
-    if secs_rem <= 5:
-        last_min_status = "🔥 خطر شديد: ثواني الغدر (أقل من 5 ثوان)"
-    elif secs_rem <= 10:
-        last_min_status = "⚠️ خطر: دقيقة الغدر (أقل من 10 ثوان)"
-    elif secs_rem <= 30:
-        last_min_status = "⚡ تنبيه: اقتراب من الإغلاق"
-    else:
-        last_min_status = "✅ الوقت آمن للدخول"
-    
-    # 3. تحديد الجلسة والسيولة
-    if 8 <= hour < 16: 
-        session, vol = "لندن/أوروبا", "عالية"
-        kill_zone = "منطقة قتل لندن (8-16)"
-    elif 15 <= hour < 23: 
-        session, vol = "نيويورك", "ضخمة"
-        kill_zone = "منطقة قتل نيويورك (15-23)"
-    elif 23 <= hour < 24 or 0 <= hour < 9:
-        session, vol = "آسيوية/هادئة", "منخفضة"
-        kill_zone = "جلسة آسيوية (خارج مناطق القتل)"
-    else:
-        session, vol = "متوسطة", "متوسطة"
-        kill_zone = "جلسة متداخلة"
-    
-    # 4. تحديد الثواني المتبقية كـ نص
-    if secs_rem < 60:
-        time_remaining = f"{secs_rem} ثانية"
-    elif secs_rem < 3600:
-        time_remaining = f"{secs_rem // 60} دقيقة و {secs_rem % 60} ثانية"
-    else:
-        time_remaining = f"{secs_rem // 3600} ساعة و {(secs_rem % 3600) // 60} دقيقة"
-    
-    return last_min_status, secs_rem, session, vol, now, kill_zone, time_remaining
-
-
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور للتحليل الفني المتقدم"""
+    # التحقق من الاشتراك
+    if not await subscription_required(update, context):
+        return MAIN_MENU
+    
     user_id = update.effective_user.id
     candle, trade_time, prev_context, prev_time = get_user_setting(user_id)
     
     if not candle or not trade_time:
         keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
         await update.message.reply_text(
             "❌ **يجب ضبط الإعدادات أولاً**\n\n"
             "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
@@ -1630,16 +2418,24 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 os.remove(compressed_path)
             return MAIN_MENU
         
-        # ====================================================
-        # استخدام دالة get_detailed_market_info للحصول على معلومات الوقت والسيولة
-        # ====================================================
-        last_min_status, seconds_remaining, session_name, session_vol, gaza_time, kill_zone_status, time_remaining = get_detailed_market_info(candle)
+        # الحصول على معلومات السيولة والتوقيت
+        session_name, session_time, session_vol = get_market_session()
+        gaza_time = datetime.now(GAZA_TIMEZONE)
+        current_hour = gaza_time.hour
+        current_minute = gaza_time.minute
+        current_second = gaza_time.second
         
-        # تنسيق وقت الجلسة
-        session_time = f"{gaza_time.hour:02d}:{gaza_time.minute:02d}"
+        # حساب الثواني المتبقية لإغلاق الشمعة
+        seconds_remaining = 60 - current_second
+        if candle.startswith('M'):
+            candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
+            seconds_remaining = (candle_minutes * 60) - ((current_minute % candle_minutes) * 60 + current_second)
+        elif candle.startswith('H'):
+            candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
+            minutes_passed = gaza_time.hour % candle_hours * 60 + current_minute
+            seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
         
-        # حالة إغلاق الشمعة المنسقة
-        candle_closing_status = f"الوقت المتبقي للشمعة: {time_remaining}"
+        candle_closing_status = f"الوقت المتبقي الشمعة: {seconds_remaining} ثانية"
         if seconds_remaining < 10:
             candle_closing_status += " ⚠️ (الوقت حرج جداً - تجنب الدخول)"
         elif seconds_remaining < 30:
@@ -1649,9 +2445,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         news_impact = "🟢 منخفض"
         news_warning = ""
         news_risk_multiplier = 1.0
-        
-        current_hour = gaza_time.hour
-        current_minute = gaza_time.minute
         
         high_impact_hours = [
             (14, 30), (16, 0), (20, 0),
@@ -1673,8 +2466,20 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
                 break
         
-        # معالجة "دقيقة الغدر" - نستخدم القيمة من الدالة
-        is_last_minute = 1 if seconds_remaining <= 10 else 0
+        # الفلتر الزمني (Kill Zones)
+        kill_zone_status = ""
+        if 10 <= current_hour < 13:
+            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بتوقيت غزة)"
+        elif 15 <= current_hour < 18:
+            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بتوقيت غزة)"
+        elif 0 <= current_hour < 9 or current_hour >= 22:
+            kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
+        else:
+            kill_zone_status = "خارج مناطق القتل الرئيسية"
+        
+        # معالجة "دقيقة الغدر"
+        is_last_minute = 1 if current_minute in [29, 59, 14, 44] else 0
+        last_minute_status = "🔥 حرجة - آخر دقيقة للإغلاق" if is_last_minute else "✅ عادية"
         
         # ربط معطيات الإعدادات
         candle_category = ""
@@ -1743,7 +2548,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             except:
                 previous_context_info = ""
         
-        # البرومبت الرئيسي المحدث مع جميع الإضافات
+        # البرومبت الرئيسي (نفس البرومبت الطويل السابق)
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
 مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
@@ -1771,7 +2576,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 • تأثير الأخبار: {{news_impact}} (معامل ×{{news_risk_multiplier}})
 • تحذير الأخبار: {{news_warning if news_warning else "✅ الوضع آمن"}}
 • منطقة القتل السعري: {{kill_zone_status}}
-• حالة دقيقة الغدر: {{last_min_status}}
+• حالة دقيقة الغدر: {{last_minute_status}}
 • حالة إغلاق الشمعة: {{candle_closing_status}}
 • الوقت المتبقي للإغلاق: {{seconds_remaining}} ثانية
 • توقيت التحليل: {{gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}}
@@ -2144,7 +2949,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 • السياق السوقي: {{session_name}} - {{session_vol}} سيولة - تقدير من نشاط السعر
 
 ⚡ **المستوى 2: التحليل التكتيكي (الخطة التنفيذية) - الاستخراج من الصورة:**
-• أنماط الشموع: تحليل 5 شموع سابقة + الشمعة الحالية - استخراج كل شمعة بشكل منفرد
+• أنماط الشموع: تحليل 5 شموع سابقة + الشمعة الحالية - استخراج كل شمعة بشكل منفصل
 • **【تعديل أولوية الابتلاع - Marubozu Supremacy (قانون سيادة الجسم)】**
   - **هذا تعديل إلزامي: البوت يعامل الفتيلة كعدو، وهذا خطأ في الـ OTC الاندفاعي.**
   - **القاعدة:** إذا كان جسم الشمعة يمثل >90% من حجمها الكلي (Marubozu)، **يتم تجاهل أي ذيل علوي/سفلي صغير يمثل أقل من 20% من طول الشمعة.**
@@ -2493,7 +3298,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 • جلسة السوق: {{session_name}} ({{session_time}})
 • حالة السيولة: {{session_vol}}
 • تأثير الأخبار: {{news_impact}} (معامل ×{{news_risk_multiplier}})
-• **حالة دقيقة الغدر:** {{last_min_status}} **(مع استثناءات فريمات S5/S10: تخفيض الحظر إلى ثانيتين إذا زخم >90%)**
+• **حالة دقيقة الغدر:** {{last_minute_status}} **(مع استثناءات فريمات S5/S10: تخفيض الحظر إلى ثانيتين إذا زخم >90%)**
 • {{candle_closing_status}}
 • الوقت المتبقي للإغلاق: {{seconds_remaining}} ثانية
 • توقيت التحليل: {{gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}}
@@ -2756,7 +3561,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 • استراتيجية التداول: {{trading_strategy}}
 • جلسة السوق: {{session_name}} ({{session_time}}), السيولة: {{session_vol}}
 • تأثير الأخبار: {{news_impact}} ×{{news_risk_multiplier}}
-• حالة دقيقة الغدر: {{last_min_status}} (مقيدة: ثانيتين فقط للفريمات S5/S10 بزخم >90%)
+• حالة دقيقة الغدر: {{last_minute_status}} (مقيدة: ثانيتين فقط للفريمات S5/S10 بزخم >90%)
 • توقيت إغلاق الشمعة: {{candle_closing_status}}
 • توقيت التحليل: {{gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}}
 • المستوى: Professional باك تيست 15000 صفقة
@@ -2827,6 +3632,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         save_analysis_context(user_id, audit_result)
         
         keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
         
         # تنسيق وقت الصفقة للعرض
         time_display = format_trade_time_for_prompt(trade_time)
@@ -2892,7 +3699,283 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     
     return MAIN_MENU
 
-# --- حارس الأخطاء (Error Handler) ---
+async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء لوحة تحكم المشرف"""
+    user_id = update.effective_user.id
+    
+    # التحقق من أن المستخدم هو المشرف
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية الوصول للوحة التحكم.")
+        return MAIN_MENU
+    
+    keyboard = [
+        ["👥 عرض المستخدمين", "➕ إضافة مستخدم"],
+        ["⏱️ تمديد اشتراك", "🗑️ حذف مستخدم"],
+        ["📊 إحصائيات", "🔙 العودة للقائمة الرئيسية"]
+    ]
+    
+    await update.message.reply_text(
+        "👑 **لوحة تحكم المشرف** 👑\n\n"
+        "اختر الإجراء المطلوب:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+        parse_mode="Markdown"
+    )
+    return ADMIN_MENU
+
+async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيارات لوحة تحكم المشرف"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية الوصول للوحة التحكم.")
+        return MAIN_MENU
+    
+    if user_message == "🔙 العودة للقائمة الرئيسية":
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"], ["👑 لوحة التحكم"]]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    elif user_message == "👥 عرض المستخدمين":
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT user_id, username, subscription_start, subscription_end, is_admin 
+            FROM users ORDER BY subscription_end DESC
+        """)
+        users = cursor.fetchall()
+        conn.close()
+        
+        if not users:
+            await update.message.reply_text("📭 لا يوجد مستخدمين بعد.")
+        else:
+            msg = "👥 **قائمة المستخدمين:**\n\n"
+            for u in users:
+                uid, uname, sstart, send, is_admin = u
+                status = "👑 مشرف" if is_admin == 1 else "👤 مستخدم"
+                sub_info = f"📅 الاشتراك: {send[:16] if send else 'غير محدد'}"
+                msg += f"• {uname or uid} - {status}\n  {sub_info}\n\n"
+            
+            for part in split_message(msg, 4000):
+                await update.message.reply_text(part, parse_mode="Markdown")
+        
+        return ADMIN_MENU
+    
+    elif user_message == "➕ إضافة مستخدم":
+        await update.message.reply_text(
+            "➕ **إضافة مستخدم جديد**\n\n"
+            "أرسل اسم المستخدم (بدون @) والمدة بالثواني:\n"
+            "مثال: `Sz2zv 86400` (يوم واحد)\n\n"
+            "المدد المتاحة:\n"
+            "• ساعة: 3600\n"
+            "• يوم: 86400\n"
+            "• أسبوع: 604800\n"
+            "• شهر: 2592000\n"
+            "• غير محدد: 0",
+            parse_mode="Markdown"
+        )
+        return ADD_USER
+    
+    elif user_message == "⏱️ تمديد اشتراك":
+        await update.message.reply_text(
+            "⏱️ **تمديد اشتراك مستخدم**\n\n"
+            "أرسل معرف المستخدم والمدة الجديدة:\n"
+            "مثال: `123456789 86400`",
+            parse_mode="Markdown"
+        )
+        return SET_USER_DURATION
+    
+    elif user_message == "🗑️ حذف مستخدم":
+        await update.message.reply_text(
+            "🗑️ **حذف مستخدم**\n\n"
+            "أرسل معرف المستخدم للحذف:\n"
+            "مثال: `123456789`",
+            parse_mode="Markdown"
+        )
+        return REMOVE_USER
+    
+    elif user_message == "📊 إحصائيات":
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(*) FROM users")
+        total_users = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM users WHERE subscription_end > datetime('now') OR subscription_end IS NULL")
+        active_users = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM users WHERE subscription_end < datetime('now') AND subscription_end IS NOT NULL")
+        expired_users = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM chat_history WHERE date(timestamp) = date('now')")
+        today_analyses = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
+        admins = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        stats = (
+            "📊 **إحصائيات النظام:**\n\n"
+            f"👥 إجمالي المستخدمين: {total_users}\n"
+            f"✅ المستخدمين النشطين: {active_users}\n"
+            f"❌ المنتهية اشتراكاتهم: {expired_users}\n"
+            f"👑 عدد المشرفين: {admins}\n"
+            f"📊 تحليلات اليوم: {today_analyses}\n"
+        )
+        
+        await update.message.reply_text(stats, parse_mode="Markdown")
+        return ADMIN_MENU
+    
+    return ADMIN_MENU
+
+async def handle_add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إضافة مستخدم جديد"""
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية.")
+        return MAIN_MENU
+    
+    try:
+        parts = update.message.text.strip().split()
+        if len(parts) != 2:
+            await update.message.reply_text(
+                "❌ صيغة خاطئة. استخدم: `username 86400`\n"
+                "مثال: `Sz2zv 86400`",
+                parse_mode="Markdown"
+            )
+            return ADD_USER
+        
+        username = parts[0].replace('@', '')
+        duration = int(parts[1])
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        if duration > 0:
+            end_date = datetime.now() + timedelta(seconds=duration)
+            cursor.execute("""
+                INSERT OR REPLACE INTO users (user_id, username, subscription_start, subscription_end, candle, trade_time)
+                VALUES (?, ?, datetime('now'), ?, ?, ?)
+            """, (0, username, end_date.isoformat(), "M1", "قصير (1m-15m)"))
+        else:
+            cursor.execute("""
+                INSERT OR REPLACE INTO users (user_id, username, subscription_start, subscription_end, candle, trade_time)
+                VALUES (?, ?, datetime('now'), NULL, ?, ?)
+            """, (0, username, "M1", "قصير (1m-15m)"))
+        
+        conn.commit()
+        conn.close()
+        
+        duration_text = "غير محدد" if duration == 0 else f"{duration//3600} ساعة" if duration < 86400 else f"{duration//86400} يوم"
+        await update.message.reply_text(
+            f"✅ تم إضافة المستخدم @{username}\n"
+            f"📅 مدة الاشتراك: {duration_text}\n\n"
+            f"ملاحظة: المستخدم سيتم تفعيله بعد أول تفاعل مع البوت."
+        )
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ: {str(e)}")
+    
+    return ADMIN_MENU
+
+async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة حذف مستخدم"""
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية.")
+        return MAIN_MENU
+    
+    try:
+        target_user_id = int(update.message.text.strip())
+        
+        if target_user_id == ADMIN_ID:
+            await update.message.reply_text("❌ لا يمكن حذف المشرف الرئيسي.")
+            return ADMIN_MENU
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        
+        cursor.execute("DELETE FROM chat_history WHERE user_id = ?", (target_user_id,))
+        cursor.execute("DELETE FROM users WHERE user_id = ?", (target_user_id,))
+        
+        conn.commit()
+        conn.close()
+        
+        await update.message.reply_text(f"✅ تم حذف المستخدم {target_user_id} بنجاح.")
+        
+    except ValueError:
+        await update.message.reply_text("❌ الرجاء إرسال معرف المستخدم (أرقام فقط).")
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ: {str(e)}")
+    
+    return ADMIN_MENU
+
+async def handle_set_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة تمديد اشتراك مستخدم"""
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية.")
+        return MAIN_MENU
+    
+    try:
+        parts = update.message.text.strip().split()
+        if len(parts) != 2:
+            await update.message.reply_text(
+                "❌ صيغة خاطئة. استخدم: `user_id 86400`\n"
+                "مثال: `123456789 86400`",
+                parse_mode="Markdown"
+            )
+            return SET_USER_DURATION
+        
+        target_user_id = int(parts[0])
+        duration = int(parts[1])
+        
+        if duration > 0:
+            end_date = datetime.now() + timedelta(seconds=duration)
+            
+            conn = sqlite3.connect(DB_NAME)
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE users 
+                SET subscription_end = ?
+                WHERE user_id = ?
+            """, (end_date.isoformat(), target_user_id))
+            conn.commit()
+            conn.close()
+            
+            duration_text = f"{duration//3600} ساعة" if duration < 86400 else f"{duration//86400} يوم"
+            await update.message.reply_text(
+                f"✅ تم تحديث اشتراك المستخدم {target_user_id}\n"
+                f"📅 المدة الجديدة: {duration_text}\n"
+                f"📆 ينتهي في: {end_date.strftime('%Y-%m-%d %H:%M')}"
+            )
+        else:
+            conn = sqlite3.connect(DB_NAME)
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE users 
+                SET subscription_end = NULL
+                WHERE user_id = ?
+            """, (target_user_id,))
+            conn.commit()
+            conn.close()
+            
+            await update.message.reply_text(f"✅ تم تحويل المستخدم {target_user_id} إلى اشتراك غير محدد.")
+        
+    except ValueError:
+        await update.message.reply_text("❌ الرجاء إرسال معرف المستخدم والمدة بشكل صحيح.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ: {str(e)}")
+    
+    return ADMIN_MENU
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """معالجة الأخطاء في البوت"""
     try:
@@ -2930,7 +4013,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         print(f"❌ خطأ في معالج الأخطاء نفسه: {e}")
 
-# --- وظيفة تنظيف دورية للملفات المؤقتة ---
 async def periodic_cleanup():
     """تنظيف دوري للملفات المؤقتة"""
     while True:
@@ -2943,25 +4025,65 @@ async def periodic_cleanup():
         except Exception as e:
             print(f"⚠️ خطأ في التنظيف الدوري: {e}")
 
-# --- الدوال الأساسية ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء البوت"""
-    if update.effective_user:
-        cleanup_user_data(context, update.effective_user.id)
+    user = update.effective_user
+    user_id = user.id
+    username = user.username or str(user_id)
+    
+    # تسجيل المستخدم في قاعدة البيانات إذا لم يكن موجوداً
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    
+    # التحقق من وجود المستخدم
+    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+    if not cursor.fetchone():
+        # إضافة المستخدم مع اشتراك غير محدد (يحتاج تفعيل من المشرف)
+        cursor.execute("""
+            INSERT INTO users (user_id, username, candle, trade_time, subscription_start)
+            VALUES (?, ?, ?, ?, datetime('now'))
+        """, (user_id, username, "M1", "قصير (1m-15m)"))
+        conn.commit()
+    
+    conn.close()
+    
+    # تنظيف الذاكرة المؤقتة
+    cleanup_user_data(context, user_id)
+    
+    # التحقق من صلاحية المشرف
+    is_admin = (user_id == ADMIN_ID)
     
     keyboard = [
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
         ["💬 دردشة", "📈 توصية"]
     ]
     
-    await update.message.reply_text(
+    if is_admin:
+        keyboard.append(["👑 لوحة التحكم"])
+    
+    welcome_msg = (
         "🚀 *أهلاً بك في Obeida Trading*\n\n"
         "🤖 *⬇️ نقدم لكم الخدمات التالية ⬇️*\n"
         "• 📊 نظام تحليل شارت \n"
         "• 📈 نظام توصيات الجاهزة \n"
         "• 💬 نظام دردشة الذكية \n"
         "•⚙️ إعدادات تخصيص كاملة ⚙️ \n\n"
-        "اختر أحد الخيارات:",
+    )
+    
+    if is_admin:
+        welcome_msg += "👑 أنت مسؤول النظام - لديك صلاحيات كاملة.\n\n"
+    else:
+        # التحقق من حالة الاشتراك
+        status, message = check_subscription(user_id)
+        if status:
+            welcome_msg += f"✅ حالة اشتراكك: {message}\n\n"
+        else:
+            welcome_msg += "⚠️ تحتاج إلى اشتراك لاستخدام البوت. تواصل مع المشرف @Sz2zv\n\n"
+    
+    welcome_msg += "اختر أحد الخيارات:"
+    
+    await update.message.reply_text(
+        welcome_msg,
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
     )
@@ -2972,7 +4094,14 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     user_id = update.effective_user.id
     
+    if user_message == "👑 لوحة التحكم" and user_id == ADMIN_ID:
+        return await start_admin_panel(update, context)
+    
     if user_message == "⚙️ إعدادات التحليل":
+        # التحقق من الاشتراك
+        if not await subscription_required(update, context):
+            return MAIN_MENU
+        
         keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
         keyboard.append(["الرجوع للقائمة الرئيسية"])
         
@@ -2984,10 +4113,16 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SETTINGS_CANDLE
     
     elif user_message == "📊 تحليل صورة":
+        # التحقق من الاشتراك
+        if not await subscription_required(update, context):
+            return MAIN_MENU
+        
         candle, trade_time, _, _ = get_user_setting(user_id)
         
         if not candle or not trade_time:
             keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
+            if user_id == ADMIN_ID:
+                keyboard.append(["👑 لوحة التحكم"])
             await update.message.reply_text(
                 "❌ *يجب ضبط الإعدادات أولاً*\n\n"
                 "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
@@ -3020,10 +4155,14 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_message == "📈 توصية":
         return await start_recommendation_mode(update, context)
     
+    # إعادة عرض القائمة الرئيسية
     keyboard = [
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
         ["💬 دردشة", "📈 توصية"]
     ]
+    if user_id == ADMIN_ID:
+        keyboard.append(["👑 لوحة التحكم"])
+    
     await update.message.reply_text(
         "اختر أحد الخيارات من القائمة:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -3040,6 +4179,9 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
             ["💬 دردشة", "📈 توصية"]
         ]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
+        
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -3078,6 +4220,9 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
             ["💬 دردشة", "📈 توصية"]
         ]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
+        
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -3088,6 +4233,8 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
         save_user_setting(user_id, "trade_time", user_message)
         
         keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
         
         candle, _, _, _ = get_user_setting(user_id)
         
@@ -3117,6 +4264,9 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
             ["💬 دردشة", "📈 توصية"]
         ]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
+        
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -3158,6 +4308,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة
     • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
     
+    👑 **للمشرفين فقط:**
+    • لوحة تحكم كاملة عبر الرابط /admin
+    • إدارة المستخدمين والاشتراكات
+    
     📡 **مميزات البوت المتقدمة:**
     • 📊 تحليل فني للرسوم البيانية بتقنيات متطورة
     • 💬 دردشة ذكية متعددة التخصصات
@@ -3181,25 +4335,26 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# --- الحل النهائي ---
 def run_flask_server():
     """تشغيل Flask server"""
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def main():
-    """الدالة الرئيسية - النسخة السهلة"""
-    print("🤖 Starting Powered by - Obeida Trading ...")
+    """الدالة الرئيسية - النسخة النهائية مع نظام الاشتراكات"""
+    print("🤖 Starting Obeida Trading with Subscription System ...")
     print("📋 تم تفعيل نظام النسخ السريع - جميع التحليلات قابلة للنسخ بنقرة واحدة")
+    print("👑 المشرف الرئيسي: 6207431030 (@Sz2zv)")
     
     # تشغيل Flask
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
     print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
+    print(f"📊 لوحة تحكم المشرف: http://localhost:{os.environ.get('PORT', 8080)}/admin")
     
-    # تهيئة قاعدة البيانات
-    init_db()
+    # تهيئة قاعدة البيانات مع نظام الاشتراكات
+    init_db_with_subscription()
     
     # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
@@ -3231,6 +4386,18 @@ def main():
             CATEGORY_SELECTION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection)
             ],
+            ADMIN_MENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_menu)
+            ],
+            ADD_USER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_user)
+            ],
+            REMOVE_USER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)
+            ],
+            SET_USER_DURATION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_set_duration)
+            ],
         },
         fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
         allow_reentry=True
@@ -3243,8 +4410,8 @@ def main():
     # إضافة معالج للأخطاء
     application.add_error_handler(error_handler)
     
-    print("✅ Telegram Bot  safe mode ...")
-    print("📡 Bot Obeida Trading online...")
+    print("✅ Telegram Bot with Subscription System ready ...")
+    print("📡 Bot Obeida Trading online with admin panel...")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
