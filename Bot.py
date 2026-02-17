@@ -16,6 +16,8 @@ import pickle
 import hashlib
 import random
 import string
+import uuid
+import secrets
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
@@ -35,8 +37,8 @@ MODEL_SUMMARY = "mistral-medium-latest"        # للتلخيص السريع
 
 DB_NAME = "abood-gpt.db"
 BACKUP_DIR = "backups"
-CODES_DB_NAME = "subscription_codes.db"  # قاعدة بيانات الأكواد الجديدة
-DATA_VERSION = "1.0.0"  # نسخة البيانات للحماية من التغييرات
+SUBSCRIPTION_DB_NAME = "subscription_system.db"  # قاعدة بيانات نظام الاشتراك الجديدة
+DATA_VERSION = "2.0.0"  # نسخة البيانات للحماية من التغييرات
 
 # معرف المشرف الرئيسي
 ADMIN_ID = 6207431030
@@ -76,8 +78,8 @@ IMAGE_CACHE_DIR = "image_cache"
 MAX_IMAGE_SIZE = (1024, 1024)  # أقصى حجم للصورة بعد الضغط
 IMAGE_QUALITY = 85  # جودة الصورة بعد الضغط (من 0-100)
 
-# حالات المحادثة
-MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION, ADMIN_MENU, ADD_USER, REMOVE_USER, SET_USER_DURATION, GENERATE_CODE, ACTIVATE_CODE = range(13)
+# حالات المحادثة (للنسخة الجديدة V2)
+MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION, ADMIN_MENU, ADD_SUBSCRIPTION, SELECT_DURATION, REMOVE_USER, BROADCAST_MESSAGE, SET_USER_DURATION = range(13)
 
 # إنشاء المجلدات الضرورية
 for directory in [IMAGE_CACHE_DIR, BACKUP_DIR]:
@@ -85,1625 +87,827 @@ for directory in [IMAGE_CACHE_DIR, BACKUP_DIR]:
         os.makedirs(directory)
         print(f"📁 تم إنشاء المجلد: {directory}")
 
-# دالة للتحقق من الأكواد الموجودة
-def debug_check_codes():
-    """دالة للتحقق من الأكواد الموجودة في قاعدة البيانات"""
-    try:
-        if not os.path.exists(CODES_DB_NAME):
-            print(f"❌ ملف قاعدة البيانات {CODES_DB_NAME} غير موجود")
-            return
-            
-        conn = sqlite3.connect(CODES_DB_NAME)
-        cursor = conn.cursor()
-        
-        # عرض جميع الأكواد
-        cursor.execute("SELECT code, duration, created_at, used_by, status FROM subscription_codes")
-        codes = cursor.fetchall()
-        
-        print("\n🔍 الأكواد الموجودة في قاعدة البيانات:")
-        print("-" * 50)
-        if codes:
-            for code in codes:
-                print(f"كود: {code[0]}")
-                print(f"مدة: {code[1]} ثانية")
-                print(f"تاريخ الإنشاء: {code[2]}")
-                print(f"مستخدم بواسطة: {code[3] if code[3] else 'لم يستخدم بعد'}")
-                print(f"الحالة: {code[4]}")
-                print("-" * 30)
-        else:
-            print("❌ لا توجد أكواد في قاعدة البيانات")
-            
-        conn.close()
-    except Exception as e:
-        print(f"❌ خطأ في التحقق من الأكواد: {e}")
+# ============================================
+# نظام الاشتراك المتطور الجديد (Subscription System V2)
+# ============================================
 
-# --- نظام توليد الأكواد العشوائية والمتطورة (نسخة مصححة) ---
-class CodeGenerator:
-    """نظام توليد وإدارة أكواد الاشتراك"""
+class SubscriptionSystem:
+    """
+    نظام اشتراك متطور وآمن بالكامل
+    """
+    
+    # أنواع الاشتراكات
+    SUBSCRIPTION_TYPES = {
+        'trial': {'name': 'تجريبي', 'duration': 86400, 'features': ['basic_analysis']},
+        'hourly': {'name': 'ساعة', 'duration': 3600, 'features': ['basic_analysis']},
+        'daily': {'name': 'يوم', 'duration': 86400, 'features': ['basic_analysis', 'chat']},
+        'weekly': {'name': 'أسبوع', 'duration': 604800, 'features': ['basic_analysis', 'chat', 'recommendations']},
+        'monthly': {'name': 'شهر', 'duration': 2592000, 'features': ['basic_analysis', 'chat', 'recommendations', 'advanced_analysis']},
+        'yearly': {'name': 'سنة', 'duration': 31536000, 'features': ['basic_analysis', 'chat', 'recommendations', 'advanced_analysis', 'priority']},
+        'lifetime': {'name': 'مدى الحياة', 'duration': -1, 'features': ['all']}
+    }
     
     @staticmethod
-    def generate_code():
-        """توليد كود عشوائي يبدأ بـ Obeida- و 6 أحرف/أرقام عشوائية"""
-        random_part = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        return f"Obeida-{random_part}"
-    
-    @staticmethod
-    def init_codes_db():
-        """تهيئة قاعدة بيانات الأكواد"""
-        conn = sqlite3.connect(CODES_DB_NAME)
+    def init_db():
+        """تهيئة قاعدة بيانات نظام الاشتراك المتطور"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
-        # جدول الأكواد
+        # جدول المستخدمين الرئيسي
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS subscription_codes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                code TEXT UNIQUE NOT NULL,
-                duration INTEGER NOT NULL,
-                created_by INTEGER,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                used_by INTEGER DEFAULT NULL,
-                used_at DATETIME DEFAULT NULL,
-                is_active INTEGER DEFAULT 1,
-                status TEXT DEFAULT 'active'
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                language_code TEXT,
+                is_bot BOOLEAN DEFAULT 0,
+                is_premium BOOLEAN DEFAULT 0,
+                added_to_attachment_menu BOOLEAN DEFAULT 0,
+                can_join_groups BOOLEAN DEFAULT 1,
+                can_read_all_group_messages BOOLEAN DEFAULT 0,
+                supports_inline_queries BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_blocked BOOLEAN DEFAULT 0,
+                blocked_reason TEXT,
+                metadata TEXT DEFAULT '{}'
             )
         ''')
         
-        # جدول ربط المستخدمين بالأكواد
+        # جدول الاشتراكات النشطة
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS user_subscriptions (
+            CREATE TABLE IF NOT EXISTS active_subscriptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
-                code TEXT NOT NULL,
-                activated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                subscription_start DATETIME DEFAULT CURRENT_TIMESTAMP,
-                subscription_end DATETIME,
-                is_active INTEGER DEFAULT 1,
-                UNIQUE(user_id, code)
+                subscription_type TEXT NOT NULL,
+                subscription_name TEXT NOT NULL,
+                start_date TIMESTAMP NOT NULL,
+                end_date TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                auto_renew BOOLEAN DEFAULT 0,
+                payment_method TEXT,
+                payment_reference TEXT,
+                price REAL,
+                currency TEXT DEFAULT 'USD',
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                metadata TEXT DEFAULT '{}',
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (added_by) REFERENCES users(user_id)
             )
         ''')
         
-        # جدول سجل الأكواد
+        # جدول سجل الاشتراكات
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS code_log (
+            CREATE TABLE IF NOT EXISTS subscription_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                action TEXT,
-                code TEXT,
-                user_id INTEGER,
-                details TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                user_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                old_subscription TEXT,
+                new_subscription TEXT,
+                reason TEXT,
+                performed_by INTEGER,
+                performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                metadata TEXT DEFAULT '{}',
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (performed_by) REFERENCES users(user_id)
+            )
+        ''')
+        
+        # جدول الصلاحيات
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                permission TEXT NOT NULL,
+                granted_by INTEGER,
+                granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                metadata TEXT DEFAULT '{}',
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                FOREIGN KEY (granted_by) REFERENCES users(user_id),
+                UNIQUE(user_id, permission)
+            )
+        ''')
+        
+        # جدول إحصائيات الاستخدام
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usage_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                feature TEXT NOT NULL,
+                count INTEGER DEFAULT 0,
+                last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                total_time_used REAL DEFAULT 0,
+                metadata TEXT DEFAULT '{}',
+                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                UNIQUE(user_id, feature)
+            )
+        ''')
+        
+        # جدول سجل التغييرات
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS change_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                table_name TEXT NOT NULL,
+                record_id INTEGER,
+                action TEXT NOT NULL,
+                old_data TEXT,
+                new_data TEXT,
+                changed_by INTEGER,
+                changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                metadata TEXT DEFAULT '{}'
             )
         ''')
         
         conn.commit()
         conn.close()
-        print("✅ تم تهيئة قاعدة بيانات أكواد الاشتراك")
+        
+        # إنشاء فهارس لتحسين الأداء
+        SubscriptionSystem.create_indexes()
+        
+        print("✅ تم تهيئة نظام الاشتراك المتطور بنجاح")
     
     @staticmethod
-    def create_code(duration, created_by=ADMIN_ID):
-        """إنشاء كود جديد - نسخة نهائية"""
-        conn = None
+    def create_indexes():
+        """إنشاء فهارس لتحسين أداء قاعدة البيانات"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)",
+            "CREATE INDEX IF NOT EXISTS idx_users_created ON users(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_active_subscriptions_user ON active_subscriptions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_active_subscriptions_active ON active_subscriptions(is_active)",
+            "CREATE INDEX IF NOT EXISTS idx_active_subscriptions_end ON active_subscriptions(end_date)",
+            "CREATE INDEX IF NOT EXISTS idx_subscription_history_user ON subscription_history(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_subscription_history_time ON subscription_history(performed_at)",
+            "CREATE INDEX IF NOT EXISTS idx_permissions_user ON permissions(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_usage_stats_user ON usage_stats(user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_change_log_table ON change_log(table_name)",
+            "CREATE INDEX IF NOT EXISTS idx_change_log_time ON change_log(changed_at)"
+        ]
+        
+        for index in indexes:
+            try:
+                cursor.execute(index)
+            except:
+                pass
+        
+        conn.commit()
+        conn.close()
+        print("📊 تم إنشاء فهارس قاعدة البيانات")
+    
+    @staticmethod
+    def register_user(user_id, username=None, first_name=None, last_name=None, language_code=None, is_bot=False):
+        """تسجيل مستخدم جديد في النظام"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
         try:
-            # التأكد من وجود ملف قاعدة البيانات
-            if not os.path.exists(CODES_DB_NAME):
-                print(f"📦 إنشاء ملف قاعدة البيانات {CODES_DB_NAME}")
-                CodeGenerator.init_codes_db()
-            
-            code = CodeGenerator.generate_code()
-            print(f"📝 محاولة إنشاء كود: {code}")
-            
-            conn = sqlite3.connect(CODES_DB_NAME)
-            cursor = conn.cursor()
-            
-            # التأكد من أن الكود غير موجود
-            cursor.execute("SELECT code FROM subscription_codes WHERE code = ?", (code,))
+            # التحقق من وجود المستخدم
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             if cursor.fetchone():
-                print(f"⚠️ الكود {code} موجود مسبقاً، جاري توليد كود جديد")
-                code = CodeGenerator.generate_code()
+                # تحديث وقت آخر نشاط
+                cursor.execute("""
+                    UPDATE users 
+                    SET last_active = CURRENT_TIMESTAMP,
+                        username = COALESCE(?, username),
+                        first_name = COALESCE(?, first_name),
+                        last_name = COALESCE(?, last_name),
+                        language_code = COALESCE(?, language_code)
+                    WHERE user_id = ?
+                """, (username, first_name, last_name, language_code, user_id))
+                
+                conn.commit()
+                return True, "مستخدم موجود بالفعل"
             
-            # إدراج الكود
-            cursor.execute('''
-                INSERT INTO subscription_codes (code, duration, created_by, status, is_active)
-                VALUES (?, ?, ?, 'active', 1)
-            ''', (code, duration, created_by))
+            # إضافة مستخدم جديد
+            cursor.execute("""
+                INSERT INTO users (
+                    user_id, username, first_name, last_name, language_code, is_bot
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (user_id, username, first_name, last_name, language_code, is_bot))
             
             conn.commit()
             
-            # التحقق من الحفظ
-            cursor.execute("SELECT code, status FROM subscription_codes WHERE code = ?", (code,))
-            saved = cursor.fetchone()
+            # تسجيل الحدث
+            SubscriptionSystem.log_change('users', user_id, 'INSERT', 
+                                        old_data=None, 
+                                        new_data={'user_id': user_id, 'username': username},
+                                        changed_by=user_id)
             
-            if saved:
-                print(f"✅ تم حفظ الكود {code} بنجاح في قاعدة البيانات")
-                
-                # تسجيل العملية
-                cursor.execute('''
-                    INSERT INTO code_log (action, code, user_id, details)
-                    VALUES (?, ?, ?, ?)
-                ''', ('create', code, created_by, f'Duration: {duration}'))
-                
-                conn.commit()
-                
-                # عرض جميع الأكواد للتأكد
-                cursor.execute("SELECT code FROM subscription_codes")
-                all_codes = cursor.fetchall()
-                print(f"📋 الأكواد الموجودة حالياً: {[c[0] for c in all_codes]}")
-                
-                return code
-            else:
-                print(f"❌ فشل في حفظ الكود {code}")
-                return None
-                
-        except sqlite3.IntegrityError as e:
-            print(f"❌ خطأ في تكامل قاعدة البيانات: {e}")
-            if conn:
-                conn.rollback()
-            return CodeGenerator.create_code(duration, created_by)
+            return True, "تم تسجيل المستخدم بنجاح"
+            
         except Exception as e:
-            print(f"❌ خطأ في إنشاء الكود: {e}")
-            if conn:
-                conn.rollback()
-            return None
+            conn.rollback()
+            return False, str(e)
         finally:
-            if conn:
-                conn.close()
+            conn.close()
     
     @staticmethod
-    def validate_code(code):
-        """التحقق من صحة الكود - نسخة محسنة"""
-        conn = None
+    def add_subscription(user_id, subscription_type, added_by=ADMIN_ID, reason=""):
+        """إضافة اشتراك مباشر لمستخدم"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
         try:
-            conn = sqlite3.connect(CODES_DB_NAME)
-            cursor = conn.cursor()
-            
-            # التحقق من وجود الكود وصلاحيته
-            cursor.execute('''
-                SELECT code, duration, status, used_by, is_active 
-                FROM subscription_codes 
-                WHERE code = ? AND is_active = 1 AND status = 'active' AND used_by IS NULL
-            ''', (code,))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                print(f"✅ الكود {code} صالح ومتاح للاستخدام")
-                return True, result[1]  # المدة بالثواني
-            else:
-                # التحقق من سبب عدم الصلاحية
-                cursor.execute('''
-                    SELECT status, used_by, is_active FROM subscription_codes WHERE code = ?
-                ''', (code,))
-                
-                existing = cursor.fetchone()
-                if existing:
-                    status, used_by, is_active = existing
-                    if used_by:
-                        print(f"❌ الكود {code} مستخدم بالفعل بواسطة {used_by}")
-                    elif not is_active:
-                        print(f"❌ الكود {code} غير نشط")
-                    elif status != 'active':
-                        print(f"❌ الكود {code} حالته: {status}")
-                else:
-                    print(f"❌ الكود {code} غير موجود في قاعدة البيانات")
-                
-                return False, None
-                
-        except Exception as e:
-            print(f"❌ خطأ في التحقق من الكود: {e}")
-            return False, None
-        finally:
-            if conn:
-                conn.close()
-    
-    @staticmethod
-    def activate_code(code, user_id):
-        """تفعيل الكود لمستخدم - نسخة محسنة"""
-        conn = None
-        try:
-            conn = sqlite3.connect(CODES_DB_NAME)
-            cursor = conn.cursor()
-            
-            # بدء transaction
+            # بدء المعاملة
             cursor.execute("BEGIN TRANSACTION")
             
-            # التحقق من صلاحية الكود
-            cursor.execute('''
-                SELECT duration, status, is_active FROM subscription_codes 
-                WHERE code = ? AND is_active = 1 AND status = 'active' AND used_by IS NULL
-            ''', (code,))
+            # التحقق من صحة نوع الاشتراك
+            if subscription_type not in SubscriptionSystem.SUBSCRIPTION_TYPES:
+                conn.rollback()
+                return False, "نوع اشتراك غير صالح"
+            
+            # التحقق من وجود المستخدم
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            if not cursor.fetchone():
+                # تسجيل المستخدم إذا لم يكن موجوداً
+                cursor.execute("""
+                    INSERT INTO users (user_id) VALUES (?)
+                """, (user_id,))
+            
+            # الحصول على مدة الاشتراك
+            duration = SubscriptionSystem.SUBSCRIPTION_TYPES[subscription_type]['duration']
+            
+            # حساب تاريخ انتهاء الاشتراك
+            start_date = datetime.now()
+            end_date = None
+            if duration > 0:
+                end_date = start_date + timedelta(seconds=duration)
+            
+            # إلغاء أي اشتراكات سابقة نشطة
+            cursor.execute("""
+                UPDATE active_subscriptions 
+                SET is_active = 0
+                WHERE user_id = ? AND is_active = 1
+            """, (user_id,))
+            
+            # إنشاء اشتراك جديد
+            sub_name = SubscriptionSystem.SUBSCRIPTION_TYPES[subscription_type]['name']
+            cursor.execute("""
+                INSERT INTO active_subscriptions (
+                    user_id, subscription_type, subscription_name, 
+                    start_date, end_date, is_active, added_by
+                ) VALUES (?, ?, ?, ?, ?, 1, ?)
+            """, (user_id, subscription_type, sub_name, 
+                  start_date.isoformat(), end_date.isoformat() if end_date else None, 
+                  added_by))
+            
+            sub_id = cursor.lastrowid
+            
+            # إضافة الصلاحيات المرتبطة بالاشتراك
+            features = SubscriptionSystem.SUBSCRIPTION_TYPES[subscription_type]['features']
+            for feature in features:
+                if feature == 'all':
+                    # إضافة جميع الصلاحيات
+                    all_features = ['basic_analysis', 'chat', 'recommendations', 'advanced_analysis', 'priority']
+                    for f in all_features:
+                        try:
+                            cursor.execute("""
+                                INSERT OR REPLACE INTO permissions (user_id, permission, granted_by, is_active)
+                                VALUES (?, ?, ?, 1)
+                            """, (user_id, f, added_by))
+                        except:
+                            pass
+                else:
+                    try:
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO permissions (user_id, permission, granted_by, is_active)
+                            VALUES (?, ?, ?, 1)
+                        """, (user_id, feature, added_by))
+                    except:
+                        pass
+            
+            # تسجيل في سجل الاشتراكات
+            cursor.execute("""
+                INSERT INTO subscription_history (
+                    user_id, action, new_subscription, reason, performed_by
+                ) VALUES (?, ?, ?, ?, ?)
+            """, (user_id, 'add', subscription_type, reason, added_by))
+            
+            conn.commit()
+            
+            # تحديث قاعدة البيانات الرئيسية
+            SubscriptionSystem.sync_with_main_db(user_id, end_date.isoformat() if end_date else None)
+            
+            return True, {
+                'subscription_type': subscription_type,
+                'subscription_name': sub_name,
+                'start_date': start_date.isoformat(),
+                'end_date': end_date.isoformat() if end_date else None
+            }
+            
+        except Exception as e:
+            conn.rollback()
+            return False, str(e)
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def sync_with_main_db(user_id, end_date):
+        """مزامنة مع قاعدة البيانات الرئيسية"""
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_NAME)
+            cursor = conn.cursor()
+            
+            # الحصول على اسم المستخدم من قاعدة البيانات الجديدة
+            sub_conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+            sub_cursor = sub_conn.cursor()
+            sub_cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
+            user_result = sub_cursor.fetchone()
+            username = user_result[0] if user_result else None
+            sub_conn.close()
+            
+            # التحقق من وجود المستخدم في قاعدة البيانات الرئيسية
+            cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            if cursor.fetchone():
+                cursor.execute("""
+                    UPDATE users 
+                    SET subscription_end = ?,
+                        username = COALESCE(?, username)
+                    WHERE user_id = ?
+                """, (end_date, username, user_id))
+            else:
+                cursor.execute("""
+                    INSERT INTO users (user_id, username, subscription_end, candle, trade_time)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (user_id, username, end_date, "M1", "قصير (1m-15m)"))
+            
+            conn.commit()
+            print(f"✅ تمت مزامنة المستخدم {user_id} مع قاعدة البيانات الرئيسية")
+            
+        except Exception as e:
+            print(f"⚠️ خطأ في مزامنة قاعدة البيانات: {e}")
+        finally:
+            if conn:
+                conn.close()
+    
+    @staticmethod
+    def check_subscription(user_id):
+        """التحقق من صلاحية اشتراك المستخدم"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            # التحقق من حظر المستخدم
+            cursor.execute("""
+                SELECT is_blocked FROM users WHERE user_id = ?
+            """, (user_id,))
+            result = cursor.fetchone()
+            if result and result[0] == 1:
+                return False, "محظور", {'blocked': True}
+            
+            # البحث عن اشتراك نشط
+            cursor.execute("""
+                SELECT subscription_type, subscription_name, start_date, end_date, metadata
+                FROM active_subscriptions 
+                WHERE user_id = ? AND is_active = 1
+                ORDER BY id DESC LIMIT 1
+            """, (user_id,))
             
             result = cursor.fetchone()
             if not result:
-                conn.rollback()
-                return False, "الكود غير صالح أو مستخدم بالفعل"
+                return False, "لا يوجد اشتراك نشط", None
             
-            duration, status, is_active = result
+            sub_type, sub_name, start_date, end_date, metadata = result
             
-            # حساب تاريخ الانتهاء
-            end_date = None
-            if duration > 0:
-                end_date = (datetime.now() + timedelta(seconds=duration)).isoformat()
+            # التحقق من تاريخ الانتهاء
+            if end_date:
+                try:
+                    end = datetime.fromisoformat(end_date)
+                    if end < datetime.now():
+                        # تحديث حالة الاشتراك
+                        cursor.execute("""
+                            UPDATE active_subscriptions 
+                            SET is_active = 0
+                            WHERE user_id = ? AND is_active = 1
+                        """, (user_id,))
+                        conn.commit()
+                        return False, "انتهت صلاحية الاشتراك", None
+                except:
+                    pass
             
-            # تحديث الكود
-            cursor.execute('''
-                UPDATE subscription_codes 
-                SET used_by = ?, used_at = CURRENT_TIMESTAMP, is_active = 0, status = 'used'
-                WHERE code = ?
-            ''', (user_id, code))
+            # الحصول على الصلاحيات
+            cursor.execute("""
+                SELECT permission FROM permissions 
+                WHERE user_id = ? AND is_active = 1
+            """, (user_id,))
             
-            if cursor.rowcount == 0:
-                conn.rollback()
-                return False, "فشل في تحديث الكود"
+            permissions = [p[0] for p in cursor.fetchall()]
             
-            # ربط المستخدم بالكود
-            cursor.execute('''
-                INSERT INTO user_subscriptions (user_id, code, subscription_start, subscription_end, is_active)
-                VALUES (?, ?, CURRENT_TIMESTAMP, ?, 1)
-            ''', (user_id, code, end_date))
-            
-            # تسجيل العملية
-            cursor.execute('''
-                INSERT INTO code_log (action, code, user_id, details)
-                VALUES (?, ?, ?, ?)
-            ''', ('activate', code, user_id, f'Duration: {duration}, End: {end_date}'))
-            
-            conn.commit()
-            print(f"✅ تم تفعيل الكود {code} للمستخدم {user_id} بنجاح")
-            return True, end_date
+            return True, sub_name, {
+                'type': sub_type,
+                'name': sub_name,
+                'start_date': start_date,
+                'end_date': end_date,
+                'permissions': permissions
+            }
             
         except Exception as e:
-            if conn:
-                conn.rollback()
-            print(f"❌ خطأ في تفعيل الكود: {e}")
-            return False, str(e)
+            return False, str(e), None
         finally:
-            if conn:
-                conn.close()
+            conn.close()
     
     @staticmethod
-    def deactivate_code(code, admin_id=ADMIN_ID):
-        """إلغاء تفعيل كود (إيقاف كود غير مستخدم)"""
-        conn = None
+    def has_permission(user_id, permission):
+        """التحقق من صلاحية محددة للمستخدم"""
+        if user_id == ADMIN_ID:
+            return True
+        
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
         try:
-            conn = sqlite3.connect(CODES_DB_NAME)
-            cursor = conn.cursor()
-            
-            cursor.execute("BEGIN TRANSACTION")
-            
-            cursor.execute('''
-                UPDATE subscription_codes 
-                SET is_active = 0, status = 'cancelled'
-                WHERE code = ? AND used_by IS NULL
-            ''', (code,))
-            
-            if cursor.rowcount > 0:
-                cursor.execute('''
-                    INSERT INTO code_log (action, code, user_id, details)
-                    VALUES (?, ?, ?, ?)
-                ''', ('deactivate', code, admin_id, 'Code cancelled by admin'))
-                
-                conn.commit()
-                print(f"✅ تم إلغاء الكود {code}")
-                return True
-            else:
-                conn.rollback()
+            # التحقق من الحظر أولاً
+            cursor.execute("SELECT is_blocked FROM users WHERE user_id = ?", (user_id,))
+            result = cursor.fetchone()
+            if result and result[0] == 1:
                 return False
-                
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            print(f"❌ خطأ في إلغاء الكود: {e}")
+            
+            cursor.execute("""
+                SELECT id FROM permissions 
+                WHERE user_id = ? AND permission = ? AND is_active = 1
+            """, (user_id, permission))
+            
+            return cursor.fetchone() is not None
+        except:
             return False
         finally:
-            if conn:
-                conn.close()
+            conn.close()
     
     @staticmethod
-    def revoke_user_subscription(user_id, admin_id=ADMIN_ID):
-        """إلغاء اشتراك مستخدم (إيقاف الكود المستخدم)"""
-        conn = None
+    def increment_usage(user_id, feature, time_used=0):
+        """تسجيل استخدام ميزة"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
         try:
-            conn = sqlite3.connect(CODES_DB_NAME)
-            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO usage_stats (user_id, feature, count, total_time_used)
+                VALUES (?, ?, 1, ?)
+                ON CONFLICT(user_id, feature) DO UPDATE SET
+                    count = count + 1,
+                    total_time_used = total_time_used + ?,
+                    last_used = CURRENT_TIMESTAMP
+            """, (user_id, feature, time_used, time_used))
             
+            conn.commit()
+        except:
+            pass
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_user_subscriptions(user_id):
+        """الحصول على جميع اشتراكات المستخدم"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                SELECT subscription_type, subscription_name, start_date, end_date, is_active, added_at
+                FROM active_subscriptions 
+                WHERE user_id = ?
+                ORDER BY start_date DESC
+            """, (user_id,))
+            
+            return cursor.fetchall()
+        except:
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_all_users():
+        """الحصول على جميع المستخدمين"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                SELECT u.user_id, u.username, u.first_name, u.created_at, u.last_active, u.is_blocked,
+                       a.subscription_type, a.subscription_name, a.start_date, a.end_date, a.is_active
+                FROM users u
+                LEFT JOIN active_subscriptions a ON u.user_id = a.user_id AND a.is_active = 1
+                ORDER BY u.created_at DESC
+            """)
+            
+            return cursor.fetchall()
+        except:
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_all_subscribers():
+        """الحصول على جميع المشتركين النشطين فقط"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                SELECT u.user_id, u.username, u.first_name, u.last_active,
+                       a.subscription_type, a.subscription_name, a.start_date, a.end_date
+                FROM users u
+                INNER JOIN active_subscriptions a ON u.user_id = a.user_id
+                WHERE a.is_active = 1 AND u.is_blocked = 0
+                AND (a.end_date IS NULL OR a.end_date > datetime('now'))
+                ORDER BY u.created_at DESC
+            """)
+            
+            return cursor.fetchall()
+        except:
+            return []
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_stats():
+        """الحصول على إحصائيات النظام"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        stats = {}
+        
+        try:
+            # إجمالي المستخدمين
+            cursor.execute("SELECT COUNT(*) FROM users")
+            stats['total_users'] = cursor.fetchone()[0]
+            
+            # المستخدمين المحظورين
+            cursor.execute("SELECT COUNT(*) FROM users WHERE is_blocked = 1")
+            stats['blocked_users'] = cursor.fetchone()[0]
+            
+            # المستخدمين النشطين
+            cursor.execute("""
+                SELECT COUNT(DISTINCT user_id) 
+                FROM active_subscriptions 
+                WHERE is_active = 1 AND (end_date IS NULL OR end_date > datetime('now'))
+            """)
+            stats['active_users'] = cursor.fetchone()[0]
+            
+            # الاشتراكات حسب النوع
+            cursor.execute("""
+                SELECT subscription_type, COUNT(*) 
+                FROM active_subscriptions 
+                WHERE is_active = 1
+                GROUP BY subscription_type
+            """)
+            stats['subscriptions_by_type'] = dict(cursor.fetchall())
+            
+            # استخدام الميزات
+            cursor.execute("""
+                SELECT feature, SUM(count) as total
+                FROM usage_stats
+                GROUP BY feature
+                ORDER BY total DESC
+                LIMIT 10
+            """)
+            stats['feature_usage'] = dict(cursor.fetchall())
+            
+        except Exception as e:
+            print(f"⚠️ خطأ في جلب الإحصائيات: {e}")
+        finally:
+            conn.close()
+        
+        return stats
+    
+    @staticmethod
+    def log_change(table_name, record_id, action, old_data, new_data, changed_by):
+        """تسجيل تغيير في قاعدة البيانات"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                INSERT INTO change_log (
+                    table_name, record_id, action, old_data, new_data, changed_by
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                table_name, record_id, action,
+                json.dumps(old_data) if old_data else None,
+                json.dumps(new_data) if new_data else None,
+                changed_by
+            ))
+            conn.commit()
+        except:
+            pass
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def revoke_subscription(user_id, reason="Revoked by admin", performed_by=ADMIN_ID):
+        """إلغاء اشتراك مستخدم"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
             cursor.execute("BEGIN TRANSACTION")
             
-            # الحصول على الكود النشط للمستخدم
-            cursor.execute('''
-                SELECT code FROM user_subscriptions 
+            # الحصول على الاشتراك النشط
+            cursor.execute("""
+                SELECT subscription_type FROM active_subscriptions
                 WHERE user_id = ? AND is_active = 1
-            ''', (user_id,))
+                LIMIT 1
+            """, (user_id,))
             
             result = cursor.fetchone()
             if not result:
                 conn.rollback()
                 return False, "لا يوجد اشتراك نشط لهذا المستخدم"
             
-            code = result[0]
+            old_subscription = result[0]
             
             # إلغاء الاشتراك
-            cursor.execute('''
-                UPDATE user_subscriptions 
+            cursor.execute("""
+                UPDATE active_subscriptions 
                 SET is_active = 0
                 WHERE user_id = ? AND is_active = 1
-            ''', (user_id,))
+            """, (user_id,))
             
-            # تحديث حالة الكود
-            cursor.execute('''
-                UPDATE subscription_codes 
-                SET status = 'revoked'
-                WHERE code = ?
-            ''', (code,))
+            # إلغاء الصلاحيات
+            cursor.execute("""
+                UPDATE permissions 
+                SET is_active = 0
+                WHERE user_id = ?
+            """, (user_id,))
             
-            # تسجيل العملية
-            cursor.execute('''
-                INSERT INTO code_log (action, code, user_id, details)
-                VALUES (?, ?, ?, ?)
-            ''', ('revoke', code, admin_id, f'Subscription revoked for user {user_id}'))
+            # تسجيل في سجل الاشتراكات
+            cursor.execute("""
+                INSERT INTO subscription_history (
+                    user_id, action, old_subscription, reason, performed_by
+                ) VALUES (?, ?, ?, ?, ?)
+            """, (user_id, 'revoke', old_subscription, reason, performed_by))
             
             conn.commit()
             
             # تحديث قاعدة البيانات الرئيسية
-            update_user_subscription_from_db(user_id, None)
+            SubscriptionSystem.sync_with_main_db(user_id, None)
             
-            print(f"✅ تم إلغاء اشتراك المستخدم {user_id}")
             return True, "تم إلغاء الاشتراك بنجاح"
             
         except Exception as e:
-            if conn:
-                conn.rollback()
-            print(f"❌ خطأ في إلغاء الاشتراك: {e}")
+            conn.rollback()
             return False, str(e)
         finally:
-            if conn:
-                conn.close()
-    
-    @staticmethod
-    def get_user_subscription_info(user_id):
-        """الحصول على معلومات اشتراك المستخدم من الأكواد"""
-        conn = None
-        try:
-            conn = sqlite3.connect(CODES_DB_NAME)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT code, subscription_start, subscription_end, is_active
-                FROM user_subscriptions
-                WHERE user_id = ? AND is_active = 1
-                ORDER BY activated_at DESC LIMIT 1
-            ''', (user_id,))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                return {
-                    'code': result[0],
-                    'subscription_start': result[1],
-                    'subscription_end': result[2],
-                    'is_active': result[3]
-                }
-            return None
-            
-        except Exception as e:
-            print(f"❌ خطأ في الحصول على معلومات الاشتراك: {e}")
-            return None
-        finally:
-            if conn:
-                conn.close()
-    
-    @staticmethod
-    def check_user_active_subscription(user_id):
-        """التحقق من وجود اشتراك نشط للمستخدم"""
-        info = CodeGenerator.get_user_subscription_info(user_id)
-        if not info:
-            return False, "لا يوجد اشتراك"
-        
-        if not info['is_active']:
-            return False, "الاشتراك غير نشط"
-        
-        if info['subscription_end']:
-            try:
-                end_date = datetime.fromisoformat(info['subscription_end'])
-                if end_date <= datetime.now():
-                    return False, "انتهت صلاحية الاشتراك"
-            except:
-                pass
-        
-        return True, "اشتراك نشط"
-    
-    @staticmethod
-    def list_all_codes():
-        """عرض جميع الأكواد"""
-        conn = None
-        try:
-            conn = sqlite3.connect(CODES_DB_NAME)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT code, duration, created_at, used_by, used_at, status, is_active
-                FROM subscription_codes
-                ORDER BY created_at DESC
-            ''')
-            
-            codes = cursor.fetchall()
-            return codes
-            
-        except Exception as e:
-            print(f"❌ خطأ في عرض الأكواد: {e}")
-            return []
-        finally:
-            if conn:
-                conn.close()
-    
-    @staticmethod
-    def get_code_details(code):
-        """الحصول على تفاصيل كود محدد"""
-        conn = None
-        try:
-            conn = sqlite3.connect(CODES_DB_NAME)
-            cursor = conn.cursor()
-            
-            cursor.execute('''
-                SELECT sc.*, us.user_id, us.activated_at, us.subscription_end
-                FROM subscription_codes sc
-                LEFT JOIN user_subscriptions us ON sc.code = us.code
-                WHERE sc.code = ?
-            ''', (code,))
-            
-            result = cursor.fetchone()
-            return result
-            
-        except Exception as e:
-            print(f"❌ خطأ في الحصول على تفاصيل الكود: {e}")
-            return None
-        finally:
-            if conn:
-                conn.close()
-
-# دالة مساعدة لتحديث قاعدة البيانات الرئيسية
-def update_user_subscription_from_db(user_id, end_date):
-    """تحديث اشتراك المستخدم في قاعدة البيانات الرئيسية"""
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE users 
-            SET subscription_end = ?
-            WHERE user_id = ?
-        ''', (end_date, user_id))
-        
-        conn.commit()
-        print(f"✅ تم تحديث قاعدة البيانات الرئيسية للمستخدم {user_id}")
-    except Exception as e:
-        print(f"❌ خطأ في تحديث قاعدة البيانات: {e}")
-    finally:
-        if conn:
             conn.close()
-
-# دالة تحديث اشتراك المستخدم من الكود
-def update_user_subscription_from_code(user_id, code, end_date):
-    """تحديث اشتراك المستخدم في قاعدة البيانات الرئيسية"""
-    conn = None
-    try:
-        conn = sqlite3.connect(DB_NAME)
+    
+    @staticmethod
+    def block_user(user_id, reason="Blocked by admin", performed_by=ADMIN_ID):
+        """حظر مستخدم"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
-        # الحصول على اسم المستخدم
-        username = None
         try:
-            cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
-            result = cursor.fetchone()
-            if result:
-                username = result[0]
-        except:
-            pass
-        
-        # التحقق من وجود المستخدم
-        cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-        if cursor.fetchone():
-            # تحديث المستخدم الموجود
+            cursor.execute("BEGIN TRANSACTION")
+            
+            # حظر المستخدم
             cursor.execute("""
                 UPDATE users 
-                SET subscription_start = COALESCE(subscription_start, datetime('now')),
-                    subscription_end = ?,
-                    username = COALESCE(?, username)
+                SET is_blocked = 1, blocked_reason = ?
                 WHERE user_id = ?
-            """, (end_date, username, user_id))
-        else:
-            # إضافة مستخدم جديد
+            """, (reason, user_id))
+            
+            # إلغاء أي اشتراكات نشطة
             cursor.execute("""
-                INSERT INTO users (user_id, username, subscription_start, subscription_end, candle, trade_time)
-                VALUES (?, ?, datetime('now'), ?, ?, ?)
-            """, (user_id, username, end_date, "M1", "قصير (1m-15m)"))
-        
-        conn.commit()
-        
-        log_data_change("activate_code", user_id, f"code={code}, end_date={end_date}")
-        print(f"✅ تم تحديث اشتراك المستخدم {user_id} بنجاح حتى {end_date}")
-    except Exception as e:
-        print(f"❌ خطأ في تحديث اشتراك المستخدم: {e}")
-    finally:
-        if conn:
-            conn.close()
-
-# --- نظام النسخ الاحتياطي وحماية البيانات ---
-class DataProtection:
-    """نظام حماية البيانات من الفقدان والتغيير"""
-    
-    @staticmethod
-    def backup_database():
-        """إنشاء نسخة احتياطية من قاعدة البيانات"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = os.path.join(BACKUP_DIR, f"backup_{timestamp}.db")
+                UPDATE active_subscriptions 
+                SET is_active = 0
+                WHERE user_id = ? AND is_active = 1
+            """, (user_id,))
             
-            # نسخ الملف
-            if os.path.exists(DB_NAME):
-                shutil.copy2(DB_NAME, backup_file)
-                
-                # إنشاء ملف معلومات مع Hash للتحقق
-                info_file = backup_file.replace('.db', '_info.json')
-                with open(DB_NAME, 'rb') as f:
-                    file_hash = hashlib.md5(f.read()).hexdigest()
-                
-                info = {
-                    'timestamp': timestamp,
-                    'version': DATA_VERSION,
-                    'file_hash': file_hash,
-                    'size': os.path.getsize(DB_NAME)
-                }
-                
-                with open(info_file, 'w', encoding='utf-8') as f:
-                    json.dump(info, f, ensure_ascii=False, indent=2)
-                
-                # تنظيف النسخ القديمة (الاحتفاظ بآخر 50 نسخة)
-                backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')])
-                for old_backup in backups[:-50]:
-                    old_path = os.path.join(BACKUP_DIR, old_backup)
-                    old_info = old_path.replace('.db', '_info.json')
-                    try:
-                        os.remove(old_path)
-                        if os.path.exists(old_info):
-                            os.remove(old_info)
-                    except:
-                        pass
-                
-                print(f"💾 تم إنشاء نسخة احتياطية: {backup_file}")
-                return backup_file
-        except Exception as e:
-            print(f"⚠️ خطأ في إنشاء النسخة الاحتياطية: {e}")
-        return None
-    
-    @staticmethod
-    def backup_codes_db():
-        """نسخ احتياطي لقاعدة بيانات الأكواد"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = os.path.join(BACKUP_DIR, f"codes_backup_{timestamp}.db")
+            # إلغاء الصلاحيات
+            cursor.execute("""
+                UPDATE permissions 
+                SET is_active = 0
+                WHERE user_id = ?
+            """, (user_id,))
             
-            if os.path.exists(CODES_DB_NAME):
-                shutil.copy2(CODES_DB_NAME, backup_file)
-                print(f"💾 تم إنشاء نسخة احتياطية للأكواد: {backup_file}")
-                return backup_file
-        except Exception as e:
-            print(f"⚠️ خطأ في نسخ الأكواد: {e}")
-        return None
-    
-    @staticmethod
-    def verify_database_integrity():
-        """التحقق من سلامة قاعدة البيانات"""
-        try:
-            if not os.path.exists(DB_NAME):
-                return False, "قاعدة البيانات غير موجودة"
+            # تسجيل في سجل الاشتراكات
+            cursor.execute("""
+                INSERT INTO subscription_history (
+                    user_id, action, reason, performed_by
+                ) VALUES (?, ?, ?, ?)
+            """, (user_id, 'block', reason, performed_by))
             
-            # التحقق من إمكانية فتح قاعدة البيانات
-            conn = sqlite3.connect(DB_NAME)
-            cursor = conn.cursor()
+            conn.commit()
             
-            # التحقق من وجود الجداول المطلوبة
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row[0] for row in cursor.fetchall()]
-            
-            required_tables = ['users', 'chat_history', 'data_log']
-            missing_tables = [t for t in required_tables if t not in tables]
-            
-            if missing_tables:
-                conn.close()
-                return False, f"الجداول المفقودة: {missing_tables}"
-            
-            # التحقق من بنية جدول users
-            cursor.execute("PRAGMA table_info(users)")
-            columns = [col[1] for col in cursor.fetchall()]
-            
-            required_columns = ['user_id', 'username', 'subscription_start', 'subscription_end', 'is_admin', 'candle', 'trade_time', 'chat_context', 'last_analysis_context', 'last_analysis_time']
-            missing_columns = [c for c in required_columns if c not in columns]
-            
-            if missing_columns:
-                conn.close()
-                return False, f"الأعمدة المفقودة في جدول users: {missing_columns}"
-            
-            conn.close()
-            return True, "قاعدة البيانات سليمة"
+            return True, "تم حظر المستخدم بنجاح"
             
         except Exception as e:
+            conn.rollback()
             return False, str(e)
+        finally:
+            conn.close()
     
     @staticmethod
-    def restore_latest_backup():
-        """استعادة آخر نسخة احتياطية"""
-        try:
-            backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db') and not f.startswith('codes_')])
-            if not backups:
-                return False, "لا توجد نسخ احتياطية"
-            
-            latest_backup = os.path.join(BACKUP_DIR, backups[-1])
-            latest_info = latest_backup.replace('.db', '_info.json')
-            
-            # التحقق من صحة النسخة
-            if os.path.exists(latest_info):
-                with open(latest_info, 'r', encoding='utf-8') as f:
-                    info = json.load(f)
-                
-                # التحقق من Hash
-                with open(latest_backup, 'rb') as f:
-                    file_hash = hashlib.md5(f.read()).hexdigest()
-                
-                if file_hash != info.get('file_hash'):
-                    return False, "النسخة الاحتياطية تالفة (عدم تطابق Hash)"
-                
-                # استعادة النسخة
-                shutil.copy2(latest_backup, DB_NAME)
-                print(f"🔄 تم استعادة قاعدة البيانات من: {latest_backup}")
-                return True, f"تم الاستعادة من نسخة {info.get('timestamp')}"
-            else:
-                # استعادة بدون تحقق
-                shutil.copy2(latest_backup, DB_NAME)
-                print(f"🔄 تم استعادة قاعدة البيانات من: {latest_backup} (بدون تحقق)")
-                return True, "تم الاستعادة (بدون تحقق)"
-                
-        except Exception as e:
-            return False, str(e)
-    
-    @staticmethod
-    def auto_backup():
-        """نسخ احتياطي تلقائي - يتم استدعاؤها كل ساعة"""
-        try:
-            # التحقق من سلامة قاعدة البيانات أولاً
-            is_valid, message = DataProtection.verify_database_integrity()
-            if is_valid:
-                DataProtection.backup_database()
-                DataProtection.backup_codes_db()
-            else:
-                print(f"⚠️ قاعدة البيانات غير سليمة: {message}")
-                # محاولة استعادة آخر نسخة
-                success, msg = DataProtection.restore_latest_backup()
-                if success:
-                    print(f"✅ تم استعادة قاعدة البيانات: {msg}")
-                else:
-                    print(f"❌ فشل استعادة قاعدة البيانات: {msg}")
-        except Exception as e:
-            print(f"⚠️ خطأ في النسخ الاحتياطي التلقائي: {e}")
-
-# --- Flask Server مع واجهة تحكم ---
-app = Flask(__name__)
-
-# HTML template for admin panel (محدث مع نظام الأكواد)
-ADMIN_PANEL_HTML = """
-<!DOCTYPE html>
-<html dir="rtl" lang="ar">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>لوحة تحكم Obeida Trading</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        .header {
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            margin-bottom: 30px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-        .header h1 {
-            color: #333;
-            font-size: 2.5em;
-            margin-bottom: 10px;
-        }
-        .header p {
-            color: #666;
-            font-size: 1.1em;
-        }
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .stat-card {
-            background: white;
-            border-radius: 15px;
-            padding: 25px;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.05);
-            transition: transform 0.3s;
-        }
-        .stat-card:hover {
-            transform: translateY(-5px);
-        }
-        .stat-card h3 {
-            color: #666;
-            font-size: 1em;
-            margin-bottom: 10px;
-        }
-        .stat-card .number {
-            color: #667eea;
-            font-size: 2.5em;
-            font-weight: bold;
-        }
-        .tabs {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-        .tab {
-            background: white;
-            padding: 15px 30px;
-            border-radius: 10px;
-            cursor: pointer;
-            font-weight: 600;
-            transition: all 0.3s;
-            border: 2px solid transparent;
-        }
-        .tab.active {
-            background: #667eea;
-            color: white;
-        }
-        .tab-content {
-            display: none;
-        }
-        .tab-content.active {
-            display: block;
-        }
-        .users-section, .codes-section {
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            margin-bottom: 30px;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.05);
-        }
-        .section-title {
-            color: #333;
-            font-size: 1.8em;
-            margin-bottom: 20px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #f0f0f0;
-        }
-        .users-table, .codes-table {
-            overflow-x: auto;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        th {
-            background: #667eea;
-            color: white;
-            padding: 12px;
-            font-weight: 600;
-            text-align: center;
-        }
-        td {
-            padding: 12px;
-            border-bottom: 1px solid #f0f0f0;
-            text-align: center;
-        }
-        tr:hover {
-            background: #f8f9ff;
-        }
-        .status-badge {
-            padding: 5px 10px;
-            border-radius: 20px;
-            font-size: 0.9em;
-            font-weight: 600;
-            display: inline-block;
-        }
-        .status-active {
-            background: #d4edda;
-            color: #155724;
-        }
-        .status-expired {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        .status-never {
-            background: #cce5ff;
-            color: #004085;
-        }
-        .status-available {
-            background: #d4edda;
-            color: #155724;
-        }
-        .status-used {
-            background: #f8d7da;
-            color: #721c24;
-        }
-        .status-inactive {
-            background: #e9ecef;
-            color: #495057;
-        }
-        .code-box {
-            background: #f8f9ff;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-family: monospace;
-            font-size: 1.1em;
-            border: 1px dashed #667eea;
-        }
-        .actions {
-            display: flex;
-            gap: 10px;
-            justify-content: center;
-            flex-wrap: wrap;
-        }
-        .btn {
-            padding: 8px 16px;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 600;
-            transition: all 0.3s;
-            text-decoration: none;
-            display: inline-block;
-            font-size: 0.9em;
-        }
-        .btn-primary {
-            background: #667eea;
-            color: white;
-        }
-        .btn-primary:hover {
-            background: #5a67d8;
-        }
-        .btn-success {
-            background: #28a745;
-            color: white;
-        }
-        .btn-success:hover {
-            background: #218838;
-        }
-        .btn-warning {
-            background: #ffc107;
-            color: #333;
-        }
-        .btn-warning:hover {
-            background: #e0a800;
-        }
-        .btn-danger {
-            background: #dc3545;
-            color: white;
-        }
-        .btn-danger:hover {
-            background: #c82333;
-        }
-        .btn-info {
-            background: #17a2b8;
-            color: white;
-        }
-        .btn-info:hover {
-            background: #138496;
-        }
-        .btn-secondary {
-            background: #6c757d;
-            color: white;
-        }
-        .btn-secondary:hover {
-            background: #5a6268;
-        }
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-        .modal-content {
-            background: white;
-            padding: 30px;
-            border-radius: 20px;
-            width: 90%;
-            max-width: 500px;
-        }
-        .modal-content h3 {
-            margin-bottom: 20px;
-            color: #333;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-            color: #666;
-            font-weight: 600;
-        }
-        .form-group input, .form-group select {
-            width: 100%;
-            padding: 10px;
-            border: 2px solid #f0f0f0;
-            border-radius: 10px;
-            font-size: 1em;
-        }
-        .form-group input:focus, .form-group select:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        .modal-actions {
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-            margin-top: 20px;
-        }
-        .search-box {
-            margin-bottom: 20px;
-        }
-        .search-box input {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #f0f0f0;
-            border-radius: 10px;
-            font-size: 1em;
-        }
-        .search-box input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        .generated-code {
-            background: #e8f5e9;
-            border: 2px solid #28a745;
-            border-radius: 10px;
-            padding: 20px;
-            text-align: center;
-            margin: 20px 0;
-        }
-        .generated-code .code {
-            font-size: 2em;
-            font-weight: bold;
-            color: #28a745;
-            letter-spacing: 2px;
-            font-family: monospace;
-        }
-        .footer {
-            text-align: center;
-            color: white;
-            margin-top: 30px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🤖 لوحة تحكم Obeida Trading</h1>
-            <p>إدارة الأكواد والمستخدمين - المشرف: @Sz2zv</p>
-            <p style="color: #28a745; font-size: 0.9em;">✅ نظام أكواد الاشتراك نشط - جميع الأكواد محفوظة بشكل دائم</p>
-        </div>
-
-        <div class="stats-grid">
-            <div class="stat-card">
-                <h3>إجمالي المستخدمين</h3>
-                <div class="number">{{ total_users }}</div>
-            </div>
-            <div class="stat-card">
-                <h3>المستخدمين النشطين</h3>
-                <div class="number">{{ active_users }}</div>
-            </div>
-            <div class="stat-card">
-                <h3>الأكواد المتاحة</h3>
-                <div class="number">{{ available_codes }}</div>
-            </div>
-            <div class="stat-card">
-                <h3>الأكواد المستخدمة</h3>
-                <div class="number">{{ used_codes }}</div>
-            </div>
-        </div>
-
-        <div class="tabs">
-            <div class="tab active" onclick="showTab('users')">👥 المستخدمين</div>
-            <div class="tab" onclick="showTab('codes')">🔑 أكواد الاشتراك</div>
-        </div>
-
-        <div id="users-tab" class="tab-content active">
-            <div class="users-section">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <h2 class="section-title">👥 قائمة المستخدمين</h2>
-                    <button class="btn btn-success" onclick="showGenerateCodeModal()">➕ توليد كود جديد</button>
-                </div>
-                
-                <div class="search-box">
-                    <input type="text" id="searchUsers" placeholder="🔍 بحث عن مستخدم..." onkeyup="searchUsers()">
-                </div>
-
-                <div class="users-table">
-                    <table id="usersTable">
-                        <thead>
-                            <tr>
-                                <th>المعرف</th>
-                                <th>كود التفعيل</th>
-                                <th>تاريخ الاشتراك</th>
-                                <th>انتهاء الاشتراك</th>
-                                <th>الحالة</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for user in users %}
-                            <tr>
-                                <td>{{ user.user_id }}</td>
-                                <td><span class="code-box">{{ user.activation_code or '—' }}</span></td>
-                                <td>{{ user.subscription_date }}</td>
-                                <td>
-                                    {% if user.subscription_end %}
-                                        {{ user.subscription_end }}
-                                    {% else %}
-                                        غير محدد
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if user.is_admin %}
-                                        <span class="status-badge status-never">👑 مشرف</span>
-                                    {% elif user.subscription_end %}
-                                        {% if user.is_active %}
-                                            <span class="status-badge status-active">✅ نشط</span>
-                                        {% else %}
-                                            <span class="status-badge status-expired">❌ منتهي</span>
-                                        {% endif %}
-                                    {% else %}
-                                        <span class="status-badge status-expired">❌ غير مشترك</span>
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <div id="codes-tab" class="tab-content">
-            <div class="codes-section">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <h2 class="section-title">🔑 أكواد الاشتراك</h2>
-                    <button class="btn btn-success" onclick="showGenerateCodeModal()">➕ توليد كود جديد</button>
-                </div>
-                
-                <div class="search-box">
-                    <input type="text" id="searchCodes" placeholder="🔍 بحث عن كود..." onkeyup="searchCodes()">
-                </div>
-
-                <div class="codes-table">
-                    <table id="codesTable">
-                        <thead>
-                            <tr>
-                                <th>الكود</th>
-                                <th>المدة</th>
-                                <th>تاريخ الإنشاء</th>
-                                <th>المستخدم</th>
-                                <th>تاريخ الاستخدام</th>
-                                <th>الحالة</th>
-                                <th>الإجراءات</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for code in codes %}
-                            <tr>
-                                <td><span class="code-box">{{ code.code }}</span></td>
-                                <td>
-                                    {% if code.duration == 0 %}
-                                        غير محدد
-                                    {% elif code.duration < 86400 %}
-                                        {{ (code.duration/3600)|int }} ساعة
-                                    {% else %}
-                                        {{ (code.duration/86400)|int }} يوم
-                                    {% endif %}
-                                </td>
-                                <td>{{ code.created_at }}</td>
-                                <td>{{ code.used_by or '—' }}</td>
-                                <td>{{ code.used_at or '—' }}</td>
-                                <td>
-                                    {% if code.is_active and not code.used_by %}
-                                        <span class="status-badge status-available">✅ متاح</span>
-                                    {% elif code.used_by %}
-                                        <span class="status-badge status-used">✔️ مستخدم</span>
-                                    {% else %}
-                                        <span class="status-badge status-inactive">⭕ غير نشط</span>
-                                    {% endif %}
-                                </td>
-                                <td>
-                                    {% if code.is_active and not code.used_by %}
-                                    <button class="btn btn-danger btn-sm" onclick="deactivateCode('{{ code.code }}')">إلغاء</button>
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- Modal توليد كود -->
-        <div id="generateCodeModal" class="modal">
-            <div class="modal-content">
-                <h3>➕ توليد كود اشتراك جديد</h3>
-                <div class="form-group">
-                    <label>مدة الاشتراك:</label>
-                    <select id="codeDuration">
-                        <option value="3600">ساعة واحدة</option>
-                        <option value="86400">يوم واحد</option>
-                        <option value="604800">أسبوع</option>
-                        <option value="2592000">شهر</option>
-                        <option value="0">غير محدد</option>
-                    </select>
-                </div>
-                <div class="modal-actions">
-                    <button class="btn btn-success" onclick="generateCode()">توليد</button>
-                    <button class="btn btn-secondary" onclick="hideGenerateCodeModal()">إلغاء</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Modal عرض الكود المولد -->
-        <div id="showCodeModal" class="modal">
-            <div class="modal-content">
-                <h3>✅ تم توليد الكود بنجاح</h3>
-                <div class="generated-code">
-                    <div class="code" id="generatedCodeDisplay"></div>
-                </div>
-                <p style="text-align: center; color: #666;">يمكنك نسخ الكود وإرساله للمستخدم</p>
-                <div class="modal-actions" style="justify-content: center;">
-                    <button class="btn btn-primary" onclick="copyGeneratedCode()">📋 نسخ الكود</button>
-                    <button class="btn btn-secondary" onclick="hideShowCodeModal()">إغلاق</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="footer">
-        <p>Obeida Trading - نظام إدارة الأكواد والاشتراكات المتقدم</p>
-        <p style="font-size: 0.8em;">نسخة البيانات: {{ data_version }} - آخر نسخة احتياطية: {{ last_backup }}</p>
-    </div>
-
-    <script>
-        let generatedCode = '';
-
-        function showTab(tabName) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            
-            if (tabName === 'users') {
-                document.querySelector('.tab').classList.add('active');
-                document.getElementById('users-tab').classList.add('active');
-            } else {
-                document.querySelectorAll('.tab')[1].classList.add('active');
-                document.getElementById('codes-tab').classList.add('active');
-            }
-        }
-
-        function searchUsers() {
-            let input = document.getElementById('searchUsers');
-            let filter = input.value.toLowerCase();
-            let table = document.getElementById('usersTable');
-            let tr = table.getElementsByTagName('tr');
-
-            for (let i = 1; i < tr.length; i++) {
-                let tdId = tr[i].getElementsByTagName('td')[0];
-                let tdCode = tr[i].getElementsByTagName('td')[1];
-                if (tdId || tdCode) {
-                    let txtId = tdId.textContent || tdId.innerText;
-                    let txtCode = tdCode.textContent || tdCode.innerText;
-                    if (txtId.toLowerCase().indexOf(filter) > -1 || txtCode.toLowerCase().indexOf(filter) > -1) {
-                        tr[i].style.display = '';
-                    } else {
-                        tr[i].style.display = 'none';
-                    }
-                }
-            }
-        }
-
-        function searchCodes() {
-            let input = document.getElementById('searchCodes');
-            let filter = input.value.toLowerCase();
-            let table = document.getElementById('codesTable');
-            let tr = table.getElementsByTagName('tr');
-
-            for (let i = 1; i < tr.length; i++) {
-                let tdCode = tr[i].getElementsByTagName('td')[0];
-                if (tdCode) {
-                    let txtCode = tdCode.textContent || tdCode.innerText;
-                    if (txtCode.toLowerCase().indexOf(filter) > -1) {
-                        tr[i].style.display = '';
-                    } else {
-                        tr[i].style.display = 'none';
-                    }
-                }
-            }
-        }
-
-        function showGenerateCodeModal() {
-            document.getElementById('generateCodeModal').style.display = 'flex';
-        }
-
-        function hideGenerateCodeModal() {
-            document.getElementById('generateCodeModal').style.display = 'none';
-        }
-
-        function showShowCodeModal(code) {
-            generatedCode = code;
-            document.getElementById('generatedCodeDisplay').innerText = code;
-            document.getElementById('showCodeModal').style.display = 'flex';
-            hideGenerateCodeModal();
-        }
-
-        function hideShowCodeModal() {
-            document.getElementById('showCodeModal').style.display = 'none';
-            location.reload();
-        }
-
-        function copyGeneratedCode() {
-            navigator.clipboard.writeText(generatedCode).then(() => {
-                alert('✅ تم نسخ الكود!');
-            });
-        }
-
-        async function generateCode() {
-            let duration = document.getElementById('codeDuration').value;
-            
-            try {
-                let response = await fetch('/admin/generate_code', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        duration: parseInt(duration)
-                    })
-                });
-                
-                let result = await response.json();
-                if (result.success) {
-                    showShowCodeModal(result.code);
-                } else {
-                    alert('❌ ' + result.error);
-                }
-            } catch (error) {
-                alert('حدث خطأ في الاتصال');
-            }
-        }
-
-        async function deactivateCode(code) {
-            if (!confirm('هل أنت متأكد من إلغاء هذا الكود؟')) {
-                return;
-            }
-            
-            try {
-                let response = await fetch('/admin/deactivate_code', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        code: code
-                    })
-                });
-                
-                let result = await response.json();
-                if (result.success) {
-                    alert('✅ تم إلغاء الكود بنجاح');
-                    location.reload();
-                } else {
-                    alert('❌ ' + result.error);
-                }
-            } catch (error) {
-                alert('حدث خطأ في الاتصال');
-            }
-        }
-
-        // Close modals when clicking outside
-        window.onclick = function(event) {
-            let generateModal = document.getElementById('generateCodeModal');
-            let showModal = document.getElementById('showCodeModal');
-            if (event.target == generateModal) {
-                generateModal.style.display = 'none';
-            }
-            if (event.target == showModal) {
-                showModal.style.display = 'none';
-                location.reload();
-            }
-        }
-    </script>
-</body>
-</html>
-"""
-
-@app.route('/')
-def home():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Obeida Trading</title>
-        <style>
-            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
-            h1 { font-size: 3em; margin-bottom: 20px; }
-            .status { background: rgba(255,255,255,0.2); padding: 20px 40px; border-radius: 10px; display: inline-block; margin: 20px; }
-            .admin-link { background: #28a745; color: white; padding: 15px 30px; border-radius: 5px; text-decoration: none; display: inline-block; margin: 20px; }
-        </style>
-    </head>
-    <body>
-        <h1> 📊 Obeida Trading Telegram Bot 📊</h1>
-        <p>Chat & Technical Analysis Bot with Code Subscription System</p>
-        <div class="status">✅ نظام أكواد الاشتراك نشط - جميع الأكواد محفوظة</div>
-        <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <a href="/admin" class="admin-link">🔐 لوحة تحكم المشرف</a>
-    </body>
-    </html>
-    """
-
-@app.route('/health')
-def health():
-    codes_conn = sqlite3.connect(CODES_DB_NAME)
-    codes_cursor = codes_conn.cursor()
-    codes_cursor.execute("SELECT COUNT(*) FROM subscription_codes WHERE is_active = 1 AND used_by IS NULL")
-    available_codes = codes_cursor.fetchone()[0]
-    codes_conn.close()
-    
-    return {
-        "status": "active", 
-        "ai_provider": "Mistral AI", 
-        "subscription_system": "code-based",
-        "data_protection": "active",
-        "data_version": DATA_VERSION,
-        "available_codes": available_codes,
-        "timestamp": time.time()
-    }
-
-@app.route('/admin')
-def admin_panel():
-    """لوحة تحكم المشرف"""
-    try:
-        conn = sqlite3.connect(DB_NAME)
+    def unblock_user(user_id, performed_by=ADMIN_ID):
+        """إلغاء حظر مستخدم"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
-        # إحصائيات المستخدمين
-        cursor.execute("SELECT COUNT(*) FROM users")
-        total_users = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM users WHERE subscription_end > datetime('now') OR subscription_end IS NULL")
-        active_users = cursor.fetchone()[0]
-        
-        # قائمة المستخدمين مع أكواد التفعيل
-        cursor.execute("""
-            SELECT u.user_id, u.username, u.subscription_start, u.subscription_end, u.is_admin,
-                   COALESCE(c.code, '') as activation_code
-            FROM users u
-            LEFT JOIN user_subscriptions c ON u.user_id = c.user_id
-            ORDER BY u.subscription_end DESC
-        """)
-        users_data = cursor.fetchall()
-        
-        users = []
-        for user in users_data:
-            user_id, username, sub_start, sub_end, is_admin, activation_code = user
+        try:
+            cursor.execute("""
+                UPDATE users 
+                SET is_blocked = 0, blocked_reason = NULL
+                WHERE user_id = ?
+            """, (user_id,))
             
-            # حساب حالة المستخدم
-            is_active = False
-            if is_admin == 1:
-                is_active = True
-            elif sub_end:
+            # تسجيل في سجل الاشتراكات
+            cursor.execute("""
+                INSERT INTO subscription_history (
+                    user_id, action, performed_by
+                ) VALUES (?, ?, ?)
+            """, (user_id, 'unblock', performed_by))
+            
+            conn.commit()
+            
+            return True, "تم إلغاء حظر المستخدم بنجاح"
+            
+        except Exception as e:
+            return False, str(e)
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def extend_subscription(user_id, additional_seconds, reason="Extended by admin", performed_by=ADMIN_ID):
+        """تمديد اشتراك مستخدم"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("BEGIN TRANSACTION")
+            
+            # الحصول على الاشتراك النشط
+            cursor.execute("""
+                SELECT id, end_date FROM active_subscriptions
+                WHERE user_id = ? AND is_active = 1
+                LIMIT 1
+            """, (user_id,))
+            
+            result = cursor.fetchone()
+            if not result:
+                conn.rollback()
+                return False, "لا يوجد اشتراك نشط لهذا المستخدم"
+            
+            sub_id, current_end = result
+            
+            # حساب تاريخ الانتهاء الجديد
+            if current_end:
                 try:
-                    end_time = datetime.fromisoformat(sub_end)
-                    is_active = end_time > datetime.now()
+                    current_end_date = datetime.fromisoformat(current_end)
+                    new_end_date = current_end_date + timedelta(seconds=additional_seconds)
                 except:
-                    is_active = False
+                    new_end_date = datetime.now() + timedelta(seconds=additional_seconds)
             else:
-                is_active = False
+                new_end_date = datetime.now() + timedelta(seconds=additional_seconds)
             
-            # تنسيق التواريخ
-            sub_start_str = sub_start[:16] if sub_start else "غير محدد"
-            sub_end_str = sub_end[:16] if sub_end else "غير محدد"
+            # تحديث الاشتراك
+            cursor.execute("""
+                UPDATE active_subscriptions 
+                SET end_date = ?
+                WHERE id = ?
+            """, (new_end_date.isoformat(), sub_id))
             
-            users.append({
-                'user_id': user_id,
-                'username': username or 'لا يوجد',
-                'activation_code': activation_code if activation_code else None,
-                'subscription_date': sub_start_str,
-                'subscription_end': sub_end_str,
-                'is_active': is_active,
-                'is_admin': (is_admin == 1)
-            })
-        
-        conn.close()
-        
-        # إحصائيات الأكواد
-        codes_conn = sqlite3.connect(CODES_DB_NAME)
-        codes_cursor = codes_conn.cursor()
-        
-        codes_cursor.execute("SELECT COUNT(*) FROM subscription_codes WHERE is_active = 1 AND used_by IS NULL")
-        available_codes = codes_cursor.fetchone()[0]
-        
-        codes_cursor.execute("SELECT COUNT(*) FROM subscription_codes WHERE used_by IS NOT NULL")
-        used_codes = codes_cursor.fetchone()[0]
-        
-        # قائمة الأكواد
-        codes_cursor.execute("""
-            SELECT code, duration, created_at, used_by, used_at, status, is_active
-            FROM subscription_codes
-            ORDER BY created_at DESC
-        """)
-        codes_data = codes_cursor.fetchall()
-        
-        codes = []
-        for code_data in codes_data:
-            code, duration, created_at, used_by, used_at, status, is_active = code_data
-            codes.append({
-                'code': code,
-                'duration': duration,
-                'created_at': created_at[:16] if created_at else 'غير معروف',
-                'used_by': used_by,
-                'used_at': used_at[:16] if used_at else None,
-                'status': status,
-                'is_active': is_active
-            })
-        
-        codes_conn.close()
-        
-        # معلومات النسخ الاحتياطي
-        last_backup = "لا توجد نسخ"
-        if os.path.exists(BACKUP_DIR):
-            backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db') and not f.startswith('codes_')])
-            if backups:
-                last_backup = backups[-1].replace('backup_', '').replace('.db', '')
-        
-        return render_template_string(
-            ADMIN_PANEL_HTML,
-            total_users=total_users,
-            active_users=active_users,
-            available_codes=available_codes,
-            used_codes=used_codes,
-            users=users,
-            codes=codes,
-            data_version=DATA_VERSION,
-            last_backup=last_backup
-        )
-    except Exception as e:
-        return f"خطأ في تحميل لوحة التحكم: {str(e)}"
+            # تسجيل في سجل الاشتراكات
+            cursor.execute("""
+                INSERT INTO subscription_history (
+                    user_id, action, old_subscription, new_subscription, reason, performed_by
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (user_id, 'extend', 'active', 'extended', reason, performed_by))
+            
+            conn.commit()
+            
+            # تحديث قاعدة البيانات الرئيسية
+            SubscriptionSystem.sync_with_main_db(user_id, new_end_date.isoformat())
+            
+            return True, f"تم تمديد الاشتراك حتى {new_end_date.strftime('%Y-%m-%d %H:%M')}"
+            
+        except Exception as e:
+            conn.rollback()
+            return False, str(e)
+        finally:
+            conn.close()
 
-@app.route('/admin/generate_code', methods=['POST'])
-def generate_code():
-    """توليد كود جديد"""
-    try:
-        data = request.json
-        duration = data.get('duration', 86400)
-        
-        code = CodeGenerator.create_code(duration)
-        
-        if code:
-            # نسخ احتياطي
-            DataProtection.backup_codes_db()
-            return jsonify({'success': True, 'code': code})
-        else:
-            return jsonify({'success': False, 'error': 'فشل في توليد الكود'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+# دالة مساعدة للتحقق من الاشتراك في الدوال الأخرى
+def check_user_subscription(user_id):
+    """التحقق من صلاحية المستخدم (متوافقة مع الكود القديم)"""
+    if user_id == ADMIN_ID:
+        return True, "مشرف"
+    
+    status, message, details = SubscriptionSystem.check_subscription(user_id)
+    return status, message
 
-@app.route('/admin/deactivate_code', methods=['POST'])
-def deactivate_code():
-    """إلغاء كود"""
-    try:
-        data = request.json
-        code = data.get('code')
-        
-        CodeGenerator.deactivate_code(code)
-        DataProtection.backup_codes_db()
-        
-        return jsonify({'success': True})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+# ============================================
+# باقي الكود كما هو (بدون تغيير) - جميع الدوال الأخرى تبقى كما هي
+# ============================================
 
-@app.route('/admin/create_backup', methods=['POST'])
-def create_backup():
-    """إنشاء نسخة احتياطية يدوياً"""
-    try:
-        backup_file = DataProtection.backup_database()
-        codes_backup = DataProtection.backup_codes_db()
-        if backup_file or codes_backup:
-            return jsonify({'success': True})
-        else:
-            return jsonify({'success': False, 'error': 'فشل إنشاء النسخة الاحتياطية'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/admin/revoke_subscription', methods=['POST'])
-def revoke_subscription():
-    """إلغاء اشتراك مستخدم"""
-    try:
-        data = request.json
-        user_id = data.get('user_id')
-        
-        success, message = CodeGenerator.revoke_user_subscription(user_id, ADMIN_ID)
-        
-        if success:
-            return jsonify({'success': True, 'message': message})
-        else:
-            return jsonify({'success': False, 'error': message})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/admin/cancel_code', methods=['POST'])
-def cancel_code():
-    """إلغاء كود غير مستخدم"""
-    try:
-        data = request.json
-        code = data.get('code')
-        
-        success = CodeGenerator.deactivate_code(code, ADMIN_ID)
-        
-        if success:
-            return jsonify({'success': True})
-        else:
-            return jsonify({'success': False, 'error': 'لا يمكن إلغاء الكود - ربما يكون مستخدماً بالفعل'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/admin/check_code', methods=['POST'])
-def check_code():
-    """التحقق من حالة كود"""
-    try:
-        data = request.json
-        code = data.get('code')
-        
-        details = CodeGenerator.get_code_details(code)
-        
-        if details:
-            return jsonify({
-                'success': True,
-                'code': details[1],
-                'duration': details[2],
-                'created_at': details[4],
-                'used_by': details[5],
-                'used_at': details[6],
-                'status': details[7],
-                'is_active': details[8]
-            })
-        else:
-            return jsonify({'success': False, 'error': 'الكود غير موجود'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/ping')
-def ping():
-    return "PONG"
-
-# --- دوال قاعدة البيانات مع نظام الأكواد ---
 def init_db_with_subscription():
-    """تهيئة قاعدة البيانات مع نظام الأكواد"""
+    """تهيئة قاعدة البيانات الرئيسية"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
@@ -1790,55 +994,14 @@ def init_db_with_subscription():
     conn.commit()
     conn.close()
     
-    # تهيئة قاعدة بيانات الأكواد
-    CodeGenerator.init_codes_db()
+    print("✅ Database initialized")
     
-    # إنشاء نسخة احتياطية أولية
-    DataProtection.backup_database()
-    DataProtection.backup_codes_db()
-    
-    print("✅ Database initialized with code subscription system")
-    print("🔑 نظام أكواد الاشتراك نشط - جميع الأكواد محفوظة بشكل دائم")
+    # تهيئة نظام الاشتراك الجديد
+    SubscriptionSystem.init_db()
 
 def check_subscription(user_id):
-    """التحقق من صلاحية اشتراك المستخدم باستخدام الأكواد"""
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT is_admin, subscription_end FROM users WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-        conn.close()
-        
-        if not result:
-            return False, "غير مسجل"
-        
-        is_admin, sub_end = result
-        
-        # المشرف دائماً له صلاحية
-        if is_admin == 1:
-            return True, "مشرف"
-        
-        # التحقق من تاريخ انتهاء الاشتراك
-        if sub_end:
-            try:
-                end_date = datetime.fromisoformat(sub_end)
-                if end_date > datetime.now():
-                    remaining = end_date - datetime.now()
-                    hours = remaining.total_seconds() / 3600
-                    if hours < 24:
-                        return True, f"ينتهي بعد {int(hours)} ساعة"
-                    else:
-                        return True, f"ينتهي بعد {remaining.days} يوم"
-                else:
-                    return False, "انتهى الاشتراك"
-            except:
-                return False, "خطأ في تاريخ الاشتراك"
-        else:
-            return False, "غير مشترك"
-            
-    except Exception as e:
-        print(f"⚠️ خطأ في التحقق من الاشتراك: {e}")
-        return False, "خطأ في النظام"
+    """التحقق من صلاحية اشتراك المستخدم (متوافقة مع الكود القديم)"""
+    return check_user_subscription(user_id)
 
 def log_data_change(action, user_id, details=""):
     """تسجيل أي تغيير في البيانات"""
@@ -1854,9 +1017,8 @@ def log_data_change(action, user_id, details=""):
     except Exception as e:
         print(f"⚠️ خطأ في تسجيل التغيير: {e}")
 
-# --- دوال المساعدة الأساسية ---
 def cleanup_old_images():
-    """تنظيف الصور القديمة (لا تؤثر على بيانات المشتركين)"""
+    """تنظيف الصور القديمة"""
     try:
         current_time = time.time()
         for filename in os.listdir(IMAGE_CACHE_DIR):
@@ -2288,7 +1450,8 @@ def get_mistral_analysis(symbol):
         print(f"Error in get_mistral_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
 
-# --- دوال معالجة البوت ---
+# --- دوال معالجة البوت (محدثة لنظام الاشتراك الجديد) ---
+
 async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """التحقق من الاشتراك للمستخدمين غير المشتركين"""
     user_id = update.effective_user.id
@@ -2297,220 +1460,603 @@ async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TY
     if user_id == ADMIN_ID:
         return True
     
-    status, message = check_subscription(user_id)
+    # تسجيل المستخدم في النظام
+    user = update.effective_user
+    SubscriptionSystem.register_user(
+        user_id=user_id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        language_code=user.language_code,
+        is_bot=user.is_bot
+    )
+    
+    status, message, details = SubscriptionSystem.check_subscription(user_id)
     
     if not status:
         # إخفاء جميع الأزرار وإظهار رسالة اشتراك فقط
-        keyboard = [[InlineKeyboardButton("🔑 لدي كود تفعيل", callback_data="activate_code")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await update.message.reply_text(
             f"⚠️ **عذراً، ليس لديك صلاحية استخدام البوت**\n\n"
             f"❌ الحالة: {message}\n\n"
-            f"🔑 إذا كان لديك كود اشتراك، اضغط على الزر أدناه:\n"
-            f"📞 للاستفسار والتواصل مع المشرف: @Sz2zv",
-            reply_markup=reply_markup,
+            f"📞 للاشتراك والتواصل مع المشرف: @Sz2zv",
             parse_mode="Markdown"
         )
         return False
     
+    # تسجيل استخدام
+    SubscriptionSystem.increment_usage(user_id, 'bot_access')
+    
     return True
 
-async def activate_code_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """طلب إدخال كود التفعيل"""
-    query = update.callback_query
-    await query.answer()
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء البوت - مع إخفاء الأزرار لغير المشتركين"""
+    user = update.effective_user
+    user_id = user.id
+    username = user.username or str(user_id)
     
-    await query.edit_message_text(
-        "🔑 **تفعيل الاشتراك**\n\n"
-        "الرجاء إرسال كود الاشتراك الذي حصلت عليه:\n"
-        "مثال: `Obeida-X7K9P2`\n\n"
-        "📌 الكود يبدأ بـ Obeida- متبوعاً بـ 6 أحرف/أرقام",
-        parse_mode="Markdown"
+    # تسجيل المستخدم في النظام الجديد
+    SubscriptionSystem.register_user(
+        user_id=user_id,
+        username=username,
+        first_name=user.first_name,
+        last_name=user.last_name,
+        language_code=user.language_code,
+        is_bot=user.is_bot
     )
     
-    return ACTIVATE_CODE
-
-async def handle_code_activation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إدخال كود التفعيل بشكل متطور"""
-    user_id = update.effective_user.id
-    username = update.effective_user.username or str(user_id)
-    code = update.message.text.strip()
+    # تنظيف الذاكرة المؤقتة
+    cleanup_user_data(context, user_id)
     
-    # رسالة الانتظار
-    wait_msg = await update.message.reply_text("🔍 جاري التحقق من الكود...")
+    # التحقق من صلاحية المشرف والاشتراك
+    is_admin = (user_id == ADMIN_ID)
+    status, message, details = SubscriptionSystem.check_subscription(user_id)
     
-    # التحقق من صيغة الكود
-    if not re.match(r'^Obeida-[A-Z0-9]{6}$', code):
-        await wait_msg.edit_text(
-            "❌ **صيغة الكود غير صحيحة**\n\n"
-            "يجب أن يكون الكود بالصيغة التالية:\n"
-            "`Obeida-X7K9P2`\n\n"
-            "🔑 6 أحرف/أرقام بعد Obeida-\n"
-            "📞 للاستفسار: @Sz2zv",
-            parse_mode="Markdown"
+    if is_admin:
+        # المشرف - يرى جميع الأزرار
+        keyboard = [
+            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+            ["💬 دردشة", "📈 توصية"],
+            ["👑 لوحة التحكم"]
+        ]
+        
+        welcome_msg = (
+            "🚀 أهلاً بك في Obeida Trading\n\n"
+            "👑 أنت مسؤول النظام - لديك صلاحيات كاملة.\n\n"
+            "🤖 الخدمات المتاحة:\n"
+            "• 📊 تحليل الشارتات\n"
+            "• 📈 توصيات فورية\n"
+            "• 💬 دردشة ذكية\n"
+            "• ⚙️ إعدادات متقدمة\n\n"
+            "اختر أحد الخيارات:"
         )
-        return ACTIVATE_CODE
-    
-    # التحقق أولاً إذا كان المستخدم لديه اشتراك نشط بالفعل
-    has_active, status_msg = CodeGenerator.check_user_active_subscription(user_id)
-    if has_active:
-        # المستخدم لديه اشتراك نشط بالفعل
+        
+    elif status:
+        # مستخدم مشترك - يرى جميع الأزرار
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
             ["💬 دردشة", "📈 توصية"]
         ]
         
-        await wait_msg.edit_text(
-            f"✅ **لديك اشتراك نشط بالفعل!**\n\n"
-            f"حالة الاشتراك: {status_msg}\n"
-            f"يمكنك استخدام البوت مباشرة.",
-            parse_mode="Markdown"
+        sub_name = details['name'] if details else 'مشترك'
+        end_info = ""
+        if details and details['end_date']:
+            try:
+                end_date = datetime.fromisoformat(details['end_date'])
+                remaining = end_date - datetime.now()
+                if remaining.days > 0:
+                    end_info = f"ينتهي بعد {remaining.days} يوم"
+                else:
+                    end_info = f"ينتهي بعد {remaining.seconds//3600} ساعة"
+            except:
+                pass
+        
+        welcome_msg = (
+            f"🚀 أهلاً بك في Obeida Trading\n\n"
+            f"✅ اشتراكك: {sub_name}\n"
+            f"{end_info}\n\n"
+            f"🤖 الخدمات المتاحة:\n"
+            f"• 📊 تحليل الشارتات\n"
+            f"• 📈 توصيات فورية\n"
+            f"• 💬 دردشة ذكية\n"
+            f"• ⚙️ إعدادات متقدمة\n\n"
+            f"اختر أحد الخيارات:"
         )
         
-        await update.message.reply_text(
-            "🚀 **مرحباً بعودتك!** اختر أحد الخيارات:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    # التحقق من صحة الكود
-    is_valid, duration = CodeGenerator.validate_code(code)
-    
-    if not is_valid:
-        await wait_msg.edit_text(
-            "❌ **الكود غير صالح**\n\n"
-            "قد يكون الكود:\n"
-            "• منتهي الصلاحية\n"
-            "• مستخدم بالفعل\n"
-            "• ملغي من قبل المشرف\n"
-            "• غير موجود\n\n"
-            "📞 تواصل مع المشرف: @Sz2zv",
-            parse_mode="Markdown"
-        )
-        return ACTIVATE_CODE
-    
-    await wait_msg.edit_text("⏳ جاري تفعيل اشتراكك...")
-    
-    # تفعيل الكود للمستخدم
-    success, result = CodeGenerator.activate_code(code, user_id)
-    
-    if success:
-        end_date = result
-        
-        # تحديث اشتراك المستخدم في قاعدة البيانات الرئيسية
-        update_user_subscription_from_code(user_id, code, end_date)
-        
-        # إنشاء نسخ احتياطية
-        DataProtection.backup_codes_db()
-        DataProtection.backup_database()
-        
-        # تنظيف بيانات المستخدم المؤقتة
-        cleanup_user_data(context, user_id)
-        
-        # تجهيز القائمة الرئيسية
-        keyboard = [
-            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"]
-        ]
-        
-        # رسالة نجاح مع القائمة مباشرة
-        if end_date:
-            end_datetime = datetime.fromisoformat(end_date)
-            remaining = end_datetime - datetime.now()
-            hours = remaining.total_seconds() / 3600
-            
-            if hours < 24:
-                time_msg = f"⏱️ المتبقي: {int(hours)} ساعة"
-            else:
-                time_msg = f"⏱️ المتبقي: {remaining.days} يوم"
-            
-            await wait_msg.edit_text(
-                f"✅ **تم تفعيل الاشتراك بنجاح!**\n\n"
-                f"🔑 الكود: `{code}`\n"
-                f"📅 تاريخ التفعيل: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-                f"📅 ينتهي في: {end_datetime.strftime('%Y-%m-%d %H:%M')}\n"
-                f"{time_msg}\n\n"
-                f"🚀 **أهلاً بك في Obeida Trading**",
-                parse_mode="Markdown"
-            )
-        else:
-            await wait_msg.edit_text(
-                f"✅ **تم تفعيل الاشتراك بنجاح!**\n\n"
-                f"🔑 الكود: `{code}`\n"
-                f"📅 تاريخ التفعيل: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-                f"📅 اشتراك غير محدد المدة\n\n"
-                f"🚀 **أهلاً بك في Obeida Trading**",
-                parse_mode="Markdown"
-            )
-        
-        # عرض القائمة
-        await update.message.reply_text(
-            "اختر أحد الخيارات من القائمة أدناه:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        
-        return MAIN_MENU
     else:
-        # فشل التفعيل
-        await wait_msg.edit_text(
-            f"❌ **حدث خطأ في تفعيل الكود**\n\n"
-            f"السبب: {result}\n\n"
-            f"📞 تواصل مع المشرف: @Sz2zv",
-            parse_mode="Markdown"
+        # مستخدم غير مشترك - لا يرى أي أزرار، فقط رسالة للتواصل مع المشرف
+        await update.message.reply_text(
+            f"⚠️ عذراً، ليس لديك صلاحية استخدام البوت\n\n"
+            f"❌ الحالة: {message}\n\n"
+            f"📞 للاشتراك والتواصل مع المشرف: @Sz2zv\n\n"
+            f"بعد الاشتراك، أرسل /start مرة أخرى"
         )
-        return ACTIVATE_CODE
-
-async def debug_check_code_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر للتحقق من الكود (للمشرف فقط)"""
+        return MAIN_MENU
+    
+    # إظهار القائمة للمستخدمين المشتركين فقط
+    await update.message.reply_text(
+        welcome_msg,
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+    )
+    return MAIN_MENU
+    
+async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيارات القائمة الرئيسية"""
+    user_message = update.message.text
     user_id = update.effective_user.id
     
+    # التحقق من الاشتراك (لغير المشرف)
     if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ هذا الأمر للمشرف فقط")
-        return
+        status, _, _ = SubscriptionSystem.check_subscription(user_id)
+        if not status:
+            await update.message.reply_text(
+                "⚠️ انتهت صلاحية اشتراكك.\n\n"
+                "📞 للتواصل مع المشرف: @Sz2zv"
+            )
+            return MAIN_MENU
+    
+    if user_message == "👑 لوحة التحكم" and user_id == ADMIN_ID:
+        return await start_admin_panel(update, context)
+    
+    if user_message == "⚙️ إعدادات التحليل":
+        keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
+        keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "⚙️ *إعدادات التحليل الفني*\n\n"
+            "حدد سرعة الشموع للبدء:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return SETTINGS_CANDLE
+    
+    elif user_message == "📊 تحليل صورة":
+        candle, trade_time, _, _ = get_user_setting(user_id)
+        
+        if not candle or not trade_time:
+            keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
+            if user_id == ADMIN_ID:
+                keyboard.append(["👑 لوحة التحكم"])
+            await update.message.reply_text(
+                "❌ *يجب ضبط الإعدادات أولاً*\n\n"
+                "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return MAIN_MENU
+        else:
+            keyboard = [["الرجوع للقائمة الرئيسية"]]
+            
+            time_display = format_trade_time_for_prompt(trade_time)
+            
+            await update.message.reply_text(
+                f"📊* نظام جاهز لتحليل *:\n\n"
+                f"⚙️ الإعدادات الذي تستخدمها ⚙️:\n"
+                f"•🏃 سرعة الشموع: {candle}\n"
+                f"•🕧 استراتيجية : {time_display}\n\n"
+                f"📡 *نظام التحليل الشارات :* \n"
+                f"1. 🔧 مرحلة تفكيك هيكل الشارت \n"
+                f"2. 🔬 مرحلة تحليل صورة الشارت \n\n"
+                f"📤 قم برفع صورة  (الشارت) الآن: 📤",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return ANALYZE_MODE
+    
+    elif user_message == "💬 دردشة":
+        return await start_chat_mode(update, context)
+    
+    elif user_message == "📈 توصية":
+        return await start_recommendation_mode(update, context)
+    
+    # إعادة عرض القائمة الرئيسية
+    keyboard = [
+        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+        ["💬 دردشة", "📈 توصية"]
+    ]
+    if user_id == ADMIN_ID:
+        keyboard.append(["👑 لوحة التحكم"])
+    
+    await update.message.reply_text(
+        "اختر أحد الخيارات من القائمة:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+    )
+    return MAIN_MENU
+
+async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار سرعة الشموع"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    # التحقق من الاشتراك
+    if user_id != ADMIN_ID:
+        status, _, _ = SubscriptionSystem.check_subscription(user_id)
+        if not status:
+            await update.message.reply_text(
+                "⚠️ انتهت صلاحية اشتراكك.\n\n"
+                "📞 للتواصل مع المشرف: @Sz2zv"
+            )
+            return SETTINGS_CANDLE
+    
+    if user_message == "الرجوع للقائمة الرئيسية":
+        keyboard = [
+            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+            ["💬 دردشة", "📈 توصية"]
+        ]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
+        
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    if user_message in CANDLE_SPEEDS:
+        save_user_setting(user_id, "candle", user_message)
+        
+        keyboard = [TRADE_TIMES[i:i+2] for i in range(0, len(TRADE_TIMES), 2)]
+        keyboard.append(["الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n"
+            f" ⬇️ الآن حدد ** مدة الصفقة** المتوقعة ⬇️:\n\n"
+            f"📊 **🕧 خيارات مدة الصفقة: 🕧**\n"
+            f"•1- **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة\n"
+            f"•2- **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة\n"
+            f"•3- **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة\n\n"
+            f" 🖊️ اختر الإطار الزمني المناسب لاستراتيجيتك:🖊️",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return SETTINGS_TIME
+    
+    await update.message.reply_text("❌ الرجاء اختيار سرعة شموع صحيحة.")
+    return SETTINGS_CANDLE
+
+async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار مدة الصفقة"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    # التحقق من الاشتراك
+    if user_id != ADMIN_ID:
+        status, _, _ = SubscriptionSystem.check_subscription(user_id)
+        if not status:
+            await update.message.reply_text(
+                "⚠️ انتهت صلاحية اشتراكك.\n\n"
+                "📞 للتواصل مع المشرف: @Sz2zv"
+            )
+            return SETTINGS_TIME
+    
+    if user_message == "الرجوع للقائمة الرئيسية":
+        keyboard = [
+            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+            ["💬 دردشة", "📈 توصية"]
+        ]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
+        
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    if user_message in TRADE_TIMES:
+        save_user_setting(user_id, "trade_time", user_message)
+        
+        keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
+        
+        candle, _, _, _ = get_user_setting(user_id)
+        
+        await update.message.reply_text(
+            f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
+            f"✅ سرعة الشموع: {candle}\n"
+            f"✅ مدة الصفقة: {user_message}\n\n"
+            f"📡 ** نظام تحليل مستهدفة :** \n"
+            f"• 1- تفكيك هيكل شارت  =مفعلة ✔️\n"
+            f"• تحليل صورة شارت = مفعلة ✔️\n"
+            f" 📤 قم الأن برفع صورة شارت : 📤",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
+    
+    await update.message.reply_text("❌ الرجاء اختيار مدة صفقة صحيحة.")
+    return SETTINGS_TIME
+
+async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة وضع التحليل"""
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    # التحقق من الاشتراك
+    if user_id != ADMIN_ID:
+        status, _, _ = SubscriptionSystem.check_subscription(user_id)
+        if not status:
+            await update.message.reply_text(
+                "⚠️ انتهت صلاحية اشتراكك.\n\n"
+                "📞 للتواصل مع المشرف: @Sz2zv"
+            )
+            return ANALYZE_MODE
+    
+    if user_message == "الرجوع للقائمة الرئيسية":
+        keyboard = [
+            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+            ["💬 دردشة", "📈 توصية"]
+        ]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
+        
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    await update.message.reply_text(
+        "📤 **الرجاء إرسال صورة الشارت فقط**\nأو اضغط 'الرجوع للقائمة الرئيسية'",
+        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True, one_time_keyboard=False)
+    )
+    return ANALYZE_MODE
+
+async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بدء وضع الدردشة المتقدم"""
+    # التحقق من الاشتراك
+    if not await subscription_required(update, context):
+        return CHAT_MODE
+    
+    user_id = update.effective_user.id
+    SubscriptionSystem.increment_usage(user_id, 'chat_mode')
+    
+    keyboard = [
+        ["🚀 مساعد شامل", "💼 استشارات احترافية"],
+        ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
+        ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
+        ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
+    ]
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="🚀 **وضع الدردشة مع Obeida Trading**\n\n"
+             "أنا مساعدك الذكي متعدد المجالات :\n"
+             "اختر مجال المساعدة أو أرسل سؤالك مباشرة:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+        parse_mode="Markdown"
+    )
+    return CHAT_MODE
+
+async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة رسائل الدردشة مع برومبت قوي"""
+    # التحقق من الاشتراك
+    if not await subscription_required(update, context):
+        return CHAT_MODE
+    
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    # تسجيل استخدام
+    SubscriptionSystem.increment_usage(user_id, 'chat_message')
+    
+    # التحقق من الأوامر الخاصة
+    if user_message == "ايقاف الدردشة":
+        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+        if user_id == ADMIN_ID:
+            main_keyboard.append(["👑 لوحة التحكم"])
+        await update.message.reply_text(
+            "✅ تم إنهاء وضع الدردشة.",
+            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    elif user_message == "الرجوع للقائمة الرئيسية":
+        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
+        if user_id == ADMIN_ID:
+            main_keyboard.append(["👑 لوحة التحكم"])
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    # برومبتات متخصصة حسب الاختيار (نفس الكود السابق)
+    system_prompts = {
+        "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عميقة في:
+🎯 **التحليل الفني والمالي:** خبرة في أسواق المال، تحليل الشارتات، واستراتيجيات التداول
+💻 **البرمجة والتقنية:** إتقان Python، JavaScript، تطوير الويب، الذكاء الاصطناعي
+📊 **البيانات والتحليل:** تحليل البيانات، الإحصاء، وتقديم رؤى استراتيجية
+✍️ **الكتابة والإبداع:** صياغة المحتوى، التقارير، والمواد الإعلامية
+🧠 **التفكير النقدي:** حل المشكلات المعقدة، التحليل المنطقي، واتخاذ القرارات
+
+**مبادئك الأساسية:**
+1. **الدقة أولاً:** معلومات موثوقة ومدروسة
+2. **التنظيم:** هيكل واضح مع عناوين ونقاط
+3. **القيمة المضافة:** تقديم نصائح إضافية غير مطلوبة
+4. **الوضوح:** شرح المفاهيم المعقدة ببساطة
+5. **الإبداع:** حلول مبتكرة للمشكلات
+
+**تنسيق الإجابة المثالي:**
+🎯 **الجوهر:** (ملخص سريع)
+📋 **التفاصيل:** (نقاط مرتبة)
+💡 **الإثراء:** (معلومات إضافية مفيدة)
+🚀 **التطبيق:** (خطوات عملية)
+
+استخدم اللغة العربية بطلاقة مع لمسة عصرية وجذابة.""",
+
+        "💼 استشارات احترافية": """أنت Obeida Trading، مستشار احترافي في:
+📈 **الاستشارات المالية:** تحليل الأسواق، تقييم المخاطر، استراتيجيات الاستثمار
+👔 **التخطيط الاستراتيجي:** تحليل SWOT، وضع الأهداف، متابعة الأداء
+🤝 **العلاقات المهنية:** التواصل الفعال، التفاوض، بناء الشبكات
+📋 **إدارة المشاريع:** التخطيط، التنفيذ، المتابعة، التقييم
+
+**التزاماتك المهنية:**
+• الموضوعية والشفافية
+• احترام السرية المهنية
+• التطوير المستمر
+• الالتزام بالأخلاقيات المهنية
+• التركيز على النتائج العملية""",
+
+        "📈 تحليل استثماري": """أنت Obeida Trading، محلل استثماري متخصص في:
+📊 **التحليل الفني:** قراءة الشارتات، المؤشرات الفنية، أنماط التداول
+📉 **التحليل الأساسي:** الأرباح، القوائم المالية، المؤشرات الاقتصادية
+🎯 **إدارة المخاطر:** تحديد المخاطر، التحوط، موازنة المحفظة
+🔍 **البحث والتنقيب:** فرص الاستثمار، اتجاهات السوق، التنبؤات
+
+**قواعد التحليل:**
+• اعتماد البيانات الرسمية والموثوقة
+• تحليل متعدد الأبعاد
+• مراعاة السياق الاقتصادي
+• التوازن بين العائد والمخاطرة
+• الشفافية في الافتراضات""",
+
+        "👨‍💻 دعم برمجي": """أنت Obeida Trading، مبرمج خبير ودعم تقني في:
+🐍 **Python:** تطبيقات الويب، الذكاء الاصطناعي، تحليل البيانات
+🌐 **تطوير الويب:** Frontend, Backend, APIs, Databases
+🤖 **الذكاء الاصطناعي:** Machine Learning, NLP, Computer Vision
+🛠️ **حل المشكلات:** Debugging, Optimization, Best Practices
+
+**أسلوب العمل:**
+• كتابة أكواد نظيفة وموثوقة
+• شرح المفاهيم البرمجية بوضوح
+• تقديم حلول عملية وفعالة
+• تعليم أفضل الممارسات
+• دعم التعلم المستمر""",
+
+        "📝 كتابة إبداعية": """أنت Obeida Trading، كاتب إبداعي محترف في:
+📄 **المحتوى التقني:** تقارير، أبحاث، مستندات فنية
+🎨 **المحتوى التسويقي:** إعلانات، حملات، محتوى وسائل التواصل
+📚 **المحتوى التعليمي:** شروحات، دورات، مواد تعليمية
+✒️ **الكتابة الإبداعية:** قصص، مقالات، محتوى ممتع
+
+**مبادئ الكتابة:**
+• لغة عربية سليمة وجذابة
+• تنظيم منطقي وسهل المتابعة
+• تكييف الأسلوب حسب الجمهور
+• الإبداع مع الحفاظ على الدقة
+• جذب الانتباه والإقناع"""
+    }
+    
+    # تحديد البرومبت المناسب
+    selected_prompt = system_prompts.get(user_message, """أنت Obeida Trading، مساعد ذكي شامل يمتلك مزيجاً فريداً من:
+🧠 **الذكاء العميق:** فهم شامل لمجالات متعددة
+🎯 **الدقة الشديدة:** معلومات موثوقة ومدروسة بدقة
+🚀 **الإبداع العملي:** حلول مبتكرة وقابلة للتطبيق
+💡 **البصيرة الاستراتيجية:** رؤية أعمق من السؤال المطروح
+
+**شخصيتك المميزة:**
+- ذكي، صبور، ومتحمس للمعرفة
+- تتحدث بلغة عربية فصيحة مع لمسة عصرية
+- تحب التفاصيل ولكن تقدمها بشكل منظم
+- دائماً تبحث عن "القيمة المخفية" في كل سؤال
+
+**قواعدك الأساسية:**
+1. **لا تقل أبداً "لا أعرف"** - ابحث عن أفضل إجابة ممكنة
+2. **كن منظماً بشكل ممتاز** - استخدم التبويب والعناوين المناسبة
+3. **فكر في ما وراء السؤال** - قدم نصائح إضافية غير متوقعة
+4. **ادعم بأمثلة عملية** - اجعل الإجابة قابلة للتطبيق
+5. **حفز الفضول** - أضف معلومة تشجع على البحث أكثر
+
+**هيكل الإجابة الأمثل:**
+🎯 **اللب:** (تلخيص مركز في جملة واحدة)
+📊 **التفاصيل المنظمة:** (نقاط مرتبة ومنطقية)
+💎 **القيمة المضافة:** (معلومات إضافية ذكية)
+🚀 **الخطوة التالية:** (اقتراح عملي للتنفيذ)
+
+**تذكر جيداً:** أنت Obeida Trading، المساعد الذكي الذي يحول التعقيد إلى بساطة، ويمنحك دائماً أكثر مما تطلب!""")
+    
+    # إذا كان اختياراً من القائمة، اطلب التفاصيل
+    if user_message in system_prompts:
+        await update.message.reply_text(
+            f"✅ **تم اختيار: {user_message}**\n\n"
+            f"🎯 **جاهز لخدمتك في اي وقت **\n"
+            f"💬  أرسل سؤالك الآن 💬:",
+            parse_mode="Markdown"
+        )
+        return CHAT_MODE
+    
+    # إظهار حالة المعالجة
+    wait_msg = await update.message.reply_text("قاعد افكر استنى شوي 🤌...")
     
     try:
-        # الحصول على الكود من الرسالة
-        parts = update.message.text.split()
-        if len(parts) < 2:
-            await update.message.reply_text("❌ استخدم: /checkcode Obeida-XXXXXX")
-            return
+        # استدعاء واجهة Mistral AI
+        payload = {
+            "model": MODEL_SUMMARY,
+            "messages": [
+                {"role": "system", "content": selected_prompt},
+                {"role": "user", "content": user_message}
+            ],
+            "max_tokens": 2500,
+            "temperature": 0.10,
+            "top_p": 1.0,
+            "random_seed": 42
+        }
         
-        code = parts[1].strip()
+        headers = {
+            "Authorization": f"Bearer {MISTRAL_KEY}",
+            "Content-Type": "application/json"
+        }
         
-        # التحقق من قاعدة البيانات
-        conn = sqlite3.connect(CODES_DB_NAME)
-        cursor = conn.cursor()
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
         
-        cursor.execute('''
-            SELECT code, duration, created_at, used_by, status, is_active 
-            FROM subscription_codes 
-            WHERE code = ?
-        ''', (code,))
-        
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result:
-            msg = f"✅ **الكود موجود في قاعدة البيانات**\n\n"
-            msg += f"🔑 الكود: `{result[0]}`\n"
-            msg += f"⏱️ المدة: {result[1]} ثانية\n"
-            msg += f"📅 تاريخ الإنشاء: {result[2]}\n"
-            msg += f"👤 مستخدم بواسطة: {result[3] if result[3] else 'لم يستخدم'}\n"
-            msg += f"📊 الحالة: {result[4]}\n"
-            msg += f"🟢 نشط: {'نعم' if result[5] else 'لا'}"
+        if response.status_code == 200:
+            result = response.json()['choices'][0]['message']['content']
+            
+            # تنظيف النص من التكرارات
+            result = clean_repeated_text(result)
+            
+            # إضافة تذييل مميز
+            footer = "\n\n━━━━━━━━━━━━\n🤖 **Powered by - Obeida Trading ** 🤖"
+            result = result + footer
+            
+            # أزرار الدردشة المتقدمة
+            chat_keyboard = [
+                ["🚀 مساعد شامل", "💼 استشارات احترافية"],
+                ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
+                ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
+                ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
+            ]
+            
+            # تنسيق النتيجة مع دعم النسخ السريع
+            formatted_result = format_as_copyable_code(result, "text")
+            
+            # تقسيم الرسالة الطويلة
+            if len(formatted_result) > 4000:
+                parts = split_message_with_copy_support(result, max_length=3500)
+                for i, part in enumerate(parts):
+                    if i == 0:
+                        await wait_msg.edit_text(
+                            part,
+                            parse_mode="Markdown"
+                        )
+                    else:
+                        await update.message.reply_text(part, parse_mode="Markdown")
+            else:
+                await wait_msg.edit_text(
+                    formatted_result,
+                    parse_mode="Markdown"
+                )
+            
+            # إرسال الأزرار بعد الرد
+            await update.message.reply_text(
+                "🔽 **اختر مجالاً آخر أو اطرح سؤالاً جديداً:**",
+                reply_markup=ReplyKeyboardMarkup(chat_keyboard, resize_keyboard=True, one_time_keyboard=False)
+            )
+            
         else:
-            msg = f"❌ **الكود غير موجود في قاعدة البيانات**\n\n"
-            msg += f"الكود المدخل: `{code}`\n"
-            msg += f"📌 تأكد من:\n"
-            msg += f"• تم توليد الكود بشكل صحيح\n"
-            msg += f"• لم يتم حذف قاعدة البيانات\n"
-            msg += f"• الكود لم ينته صلاحيته"
-        
-        await update.message.reply_text(msg, parse_mode="Markdown")
-        
+            print(f"Obeida Trading Error: {response.status_code} - {response.text}")
+            await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
+    
+    except requests.exceptions.Timeout:
+        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد. السؤال يحتاج تفكيراً أعمق!\nيمكنك إعادة صياغة السؤال بشكل أوضح.")
+    except requests.exceptions.RequestException as e:
+        print(f"Network error in chat: {e}")
+        await wait_msg.edit_text("🌐 خطأ في الاتصال. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.")
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {str(e)}")
+        print(f"خطأ في الدردشة: {e}")
+        await wait_msg.edit_text("❌ حدث خطأ غير متوقع. النظام يعمل على الإصلاح تلقائياً...")
+    
+    return CHAT_MODE
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء وضع التوصية"""
@@ -2535,6 +2081,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
         return RECOMMENDATION_MODE
     
     user_text = update.message.text.strip()
+    user_id = update.effective_user.id
     
     # العودة للقائمة الرئيسية
     if user_text == "الرجوع للقائمة الرئيسية":
@@ -2569,6 +2116,9 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     if symbol_to_analyze:
         save_last_recommendation_symbol(context, symbol_to_analyze)
         wait_msg = await update.message.reply_text(f"⏳ استنى شويه بسحب صورة `{symbol_to_analyze}`🤌...")
+        
+        # تسجيل استخدام الميزة
+        SubscriptionSystem.increment_usage(user_id, 'recommendation')
         
         # سحب صورة الشارت أولاً
         chart_image_path = download_chart_image(symbol_to_analyze)
@@ -2622,7 +2172,6 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
                 temp_update = TempUpdate(update, chart_image_path)
                 
                 # الحصول على إعدادات المستخدم
-                user_id = update.effective_user.id
                 candle, trade_time, _, _ = get_user_setting(user_id)
                 
                 if not candle or not trade_time:
@@ -3071,6 +2620,9 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
     
     user_id = update.effective_user.id
     
+    # تسجيل استخدام
+    SubscriptionSystem.increment_usage(user_id, 'recommendation_photo')
+    
     # الحصول على آخر عملة تم اختيارها
     last_symbol = get_last_recommendation_symbol(context)
     
@@ -3118,256 +2670,9 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
     )
     return RECOMMENDATION_MODE
 
-async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء وضع الدردشة المتقدم"""
-    # التحقق من الاشتراك
-    if not await subscription_required(update, context):
-        return CHAT_MODE
-    
-    keyboard = [
-        ["🚀 مساعد شامل", "💼 استشارات احترافية"],
-        ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
-        ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
-        ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
-    ]
-    
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🚀 **وضع الدردشة مع Obeida Trading**\n\n"
-             "أنا مساعدك الذكي متعدد المجالات :\n"
-             "اختر مجال المساعدة أو أرسل سؤالك مباشرة:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    return CHAT_MODE
-
-async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة رسائل الدردشة مع برومبت قوي"""
-    # التحقق من الاشتراك
-    if not await subscription_required(update, context):
-        return CHAT_MODE
-    
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    # التحقق من الأوامر الخاصة
-    if user_message == "ايقاف الدردشة":
-        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
-        if user_id == ADMIN_ID:
-            main_keyboard.append(["👑 لوحة التحكم"])
-        await update.message.reply_text(
-            "✅ تم إنهاء وضع الدردشة.",
-            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    elif user_message == "الرجوع للقائمة الرئيسية":
-        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"]]
-        if user_id == ADMIN_ID:
-            main_keyboard.append(["👑 لوحة التحكم"])
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(main_keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    # برومبتات متخصصة حسب الاختيار (نفس الكود السابق)
-    system_prompts = {
-        "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عميقة في:
-🎯 **التحليل الفني والمالي:** خبرة في أسواق المال، تحليل الشارتات، واستراتيجيات التداول
-💻 **البرمجة والتقنية:** إتقان Python، JavaScript، تطوير الويب، الذكاء الاصطناعي
-📊 **البيانات والتحليل:** تحليل البيانات، الإحصاء، وتقديم رؤى استراتيجية
-✍️ **الكتابة والإبداع:** صياغة المحتوى، التقارير، والمواد الإعلامية
-🧠 **التفكير النقدي:** حل المشكلات المعقدة، التحليل المنطقي، واتخاذ القرارات
-
-**مبادئك الأساسية:**
-1. **الدقة أولاً:** معلومات موثوقة ومدروسة
-2. **التنظيم:** هيكل واضح مع عناوين ونقاط
-3. **القيمة المضافة:** تقديم نصائح إضافية غير مطلوبة
-4. **الوضوح:** شرح المفاهيم المعقدة ببساطة
-5. **الإبداع:** حلول مبتكرة للمشكلات
-
-**تنسيق الإجابة المثالي:**
-🎯 **الجوهر:** (ملخص سريع)
-📋 **التفاصيل:** (نقاط مرتبة)
-💡 **الإثراء:** (معلومات إضافية مفيدة)
-🚀 **التطبيق:** (خطوات عملية)
-
-استخدم اللغة العربية بطلاقة مع لمسة عصرية وجذابة.""",
-
-        "💼 استشارات احترافية": """أنت Obeida Trading، مستشار احترافي في:
-📈 **الاستشارات المالية:** تحليل الأسواق، تقييم المخاطر، استراتيجيات الاستثمار
-👔 **التخطيط الاستراتيجي:** تحليل SWOT، وضع الأهداف، متابعة الأداء
-🤝 **العلاقات المهنية:** التواصل الفعال، التفاوض، بناء الشبكات
-📋 **إدارة المشاريع:** التخطيط، التنفيذ، المتابعة، التقييم
-
-**التزاماتك المهنية:**
-• الموضوعية والشفافية
-• احترام السرية المهنية
-• التطوير المستمر
-• الالتزام بالأخلاقيات المهنية
-• التركيز على النتائج العملية""",
-
-        "📈 تحليل استثماري": """أنت Obeida Trading، محلل استثماري متخصص في:
-📊 **التحليل الفني:** قراءة الشارتات، المؤشرات الفنية، أنماط التداول
-📉 **التحليل الأساسي:** الأرباح، القوائم المالية، المؤشرات الاقتصادية
-🎯 **إدارة المخاطر:** تحديد المخاطر، التحوط، موازنة المحفظة
-🔍 **البحث والتنقيب:** فرص الاستثمار، اتجاهات السوق، التنبؤات
-
-**قواعد التحليل:**
-• اعتماد البيانات الرسمية والموثوقة
-• تحليل متعدد الأبعاد
-• مراعاة السياق الاقتصادي
-• التوازن بين العائد والمخاطرة
-• الشفافية في الافتراضات""",
-
-        "👨‍💻 دعم برمجي": """أنت Obeida Trading، مبرمج خبير ودعم تقني في:
-🐍 **Python:** تطبيقات الويب، الذكاء الاصطناعي، تحليل البيانات
-🌐 **تطوير الويب:** Frontend, Backend, APIs, Databases
-🤖 **الذكاء الاصطناعي:** Machine Learning, NLP, Computer Vision
-🛠️ **حل المشكلات:** Debugging, Optimization, Best Practices
-
-**أسلوب العمل:**
-• كتابة أكواد نظيفة وموثوقة
-• شرح المفاهيم البرمجية بوضوح
-• تقديم حلول عملية وفعالة
-• تعليم أفضل الممارسات
-• دعم التعلم المستمر""",
-
-        "📝 كتابة إبداعية": """أنت Obeida Trading، كاتب إبداعي محترف في:
-📄 **المحتوى التقني:** تقارير، أبحاث، مستندات فنية
-🎨 **المحتوى التسويقي:** إعلانات، حملات، محتوى وسائل التواصل
-📚 **المحتوى التعليمي:** شروحات، دورات، مواد تعليمية
-✒️ **الكتابة الإبداعية:** قصص، مقالات، محتوى ممتع
-
-**مبادئ الكتابة:**
-• لغة عربية سليمة وجذابة
-• تنظيم منطقي وسهل المتابعة
-• تكييف الأسلوب حسب الجمهور
-• الإبداع مع الحفاظ على الدقة
-• جذب الانتباه والإقناع"""
-    }
-    
-    # تحديد البرومبت المناسب
-    selected_prompt = system_prompts.get(user_message, """أنت Obeida Trading، مساعد ذكي شامل يمتلك مزيجاً فريداً من:
-🧠 **الذكاء العميق:** فهم شامل لمجالات متعددة
-🎯 **الدقة الشديدة:** معلومات موثوقة ومدروسة بدقة
-🚀 **الإبداع العملي:** حلول مبتكرة وقابلة للتطبيق
-💡 **البصيرة الاستراتيجية:** رؤية أعمق من السؤال المطروح
-
-**شخصيتك المميزة:**
-- ذكي، صبور، ومتحمس للمعرفة
-- تتحدث بلغة عربية فصيحة مع لمسة عصرية
-- تحب التفاصيل ولكن تقدمها بشكل منظم
-- دائماً تبحث عن "القيمة المخفية" في كل سؤال
-
-**قواعدك الأساسية:**
-1. **لا تقل أبداً "لا أعرف"** - ابحث عن أفضل إجابة ممكنة
-2. **كن منظماً بشكل ممتاز** - استخدم التبويب والعناوين المناسبة
-3. **فكر في ما وراء السؤال** - قدم نصائح إضافية غير متوقعة
-4. **ادعم بأمثلة عملية** - اجعل الإجابة قابلة للتطبيق
-5. **حفز الفضول** - أضف معلومة تشجع على البحث أكثر
-
-**هيكل الإجابة الأمثل:**
-🎯 **اللب:** (تلخيص مركز في جملة واحدة)
-📊 **التفاصيل المنظمة:** (نقاط مرتبة ومنطقية)
-💎 **القيمة المضافة:** (معلومات إضافية ذكية)
-🚀 **الخطوة التالية:** (اقتراح عملي للتنفيذ)
-
-**تذكر جيداً:** أنت Obeida Trading، المساعد الذكي الذي يحول التعقيد إلى بساطة، ويمنحك دائماً أكثر مما تطلب!""")
-    
-    # إذا كان اختياراً من القائمة، اطلب التفاصيل
-    if user_message in system_prompts:
-        await update.message.reply_text(
-            f"✅ **تم اختيار: {user_message}**\n\n"
-            f"🎯 **جاهز لخدمتك في اي وقت **\n"
-            f"💬  أرسل سؤالك الآن 💬:",
-            parse_mode="Markdown"
-        )
-        return CHAT_MODE
-    
-    # إظهار حالة المعالجة
-    wait_msg = await update.message.reply_text("قاعد افكر استنى شوي 🤌...")
-    
-    try:
-        # استدعاء واجهة Mistral AI
-        payload = {
-            "model": MODEL_SUMMARY,
-            "messages": [
-                {"role": "system", "content": selected_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            "max_tokens": 2500,
-            "temperature": 0.10,
-            "top_p": 1.0,
-            "random_seed": 42
-        }
-        
-        headers = {
-            "Authorization": f"Bearer {MISTRAL_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=30)
-        
-        if response.status_code == 200:
-            result = response.json()['choices'][0]['message']['content']
-            
-            # تنظيف النص من التكرارات
-            result = clean_repeated_text(result)
-            
-            # إضافة تذييل مميز
-            footer = "\n\n━━━━━━━━━━━━\n🤖 **Powered by - Obeida Trading ** 🤖"
-            result = result + footer
-            
-            # أزرار الدردشة المتقدمة
-            chat_keyboard = [
-                ["🚀 مساعد شامل", "💼 استشارات احترافية"],
-                ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
-                ["📝 كتابة إبداعية", "🧠 حلول ذكية"],
-                ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
-            ]
-            
-            # تنسيق النتيجة مع دعم النسخ السريع
-            formatted_result = format_as_copyable_code(result, "text")
-            
-            # تقسيم الرسالة الطويلة
-            if len(formatted_result) > 4000:
-                parts = split_message_with_copy_support(result, max_length=3500)
-                for i, part in enumerate(parts):
-                    if i == 0:
-                        await wait_msg.edit_text(
-                            part,
-                            parse_mode="Markdown"
-                        )
-                    else:
-                        await update.message.reply_text(part, parse_mode="Markdown")
-            else:
-                await wait_msg.edit_text(
-                    formatted_result,
-                    parse_mode="Markdown"
-                )
-            
-            # إرسال الأزرار بعد الرد
-            await update.message.reply_text(
-                "🔽 **اختر مجالاً آخر أو اطرح سؤالاً جديداً:**",
-                reply_markup=ReplyKeyboardMarkup(chat_keyboard, resize_keyboard=True, one_time_keyboard=False)
-            )
-            
-        else:
-            print(f"Obeida Trading Error: {response.status_code} - {response.text}")
-            await wait_msg.edit_text(f"❌ حدث خطأ تقني. الرمز: {response.status_code}\nيرجى المحاولة مرة أخرى.")
-    
-    except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد. السؤال يحتاج تفكيراً أعمق!\nيمكنك إعادة صياغة السؤال بشكل أوضح.")
-    except requests.exceptions.RequestException as e:
-        print(f"Network error in chat: {e}")
-        await wait_msg.edit_text("🌐 خطأ في الاتصال. تأكد من اتصالك بالإنترنت وحاول مرة أخرى.")
-    except Exception as e:
-        print(f"خطأ في الدردشة: {e}")
-        await wait_msg.edit_text("❌ حدث خطأ غير متوقع. النظام يعمل على الإصلاح تلقائياً...")
-    
-    return CHAT_MODE
+async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور في وضع التحليل"""
+    return await handle_photo_analysis(update, context)
 
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور للتحليل الفني المتقدم"""
@@ -3377,6 +2682,9 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     
     user_id = update.effective_user.id
     candle, trade_time, prev_context, prev_time = get_user_setting(user_id)
+    
+    # تسجيل استخدام
+    SubscriptionSystem.increment_usage(user_id, 'photo_analysis')
     
     if not candle or not trade_time:
         keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
@@ -3543,204 +2851,820 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         # البرومبت الرئيسي (نفس البرومبت الطويل السابق)
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
-مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة.
+مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات.
 
-🎯 **التوجيه الأساسي: استخرج كل شيء من الصورة فقط**
-1. اقرأ الأسعار من المحور اليميني بدقة بكسلية
-2. ابحث عن ساعة المنصة في الزاوية السفلية - المرجع الوحيد للوقت
-3. افحص آخر 5-7 شموع (الأجسام، الذيول، الألوان، الأحجام)
-4. حدد الدعم/المقاومة، الفجوات، مناطق السيولة
+🎯 **التوجيه الأساسي: التركيز الكامل على استخراج البيانات وتحليل الصورة**
+أنت ملزم بالتركيز التام على الصورة المرفقة فقط. يجب أن تستخرج كل البيانات والأرقام من الصورة بكامل قدراتك البصرية. لا تتشتت بأي معلومات خارجية أو افتراضات. كل ما تحتاجه موجود في الصورة:
+
+1. **استخراج الأسعار بدقة مطلقة:** اقرأ الأسعار من المحور اليميني (Y-axis) بدقة بكسلية
+2. **تحديد الزمن الحالي:** ابحث عن ساعة المنصة في الزاوية اليسرى/اليمنى السفلية - **هذا هو المرجع الوحيد لدقائق الغدر**
+3. **تحليل الشموع:** افحص آخر 5-7 شموع (الأجسام، الذيول، الألوان، الأحجام)
+4. **رسم المستويات:** حدد الدعم/المقاومة، الفجوات، مناطق السيولة
+5. **التطبيق العملي:** طبق كل القواعد أدناه على البيانات المستخرجة من الصورة فقط
 
 {previous_context_info}
 
-📌 **المتغيرات المستلمة من Bot.py:**
+🚨 **تنبيه الربط البرمجي الإلزامي (Compulsory Variable Binding):**
+هذا البرومبت يعمل ضمن نظام Bot.py ويستقبل المتغيرات التالية من الكود. تأكد من تمريرها جميعاً في دالة .format().
+
+📌 **المعطيات الذي تم إرسالها من مستخدم:**
 • إطار الشموع: {{candle}}
 • فريم التحقق: {{verification_timeframe}}
 • استراتيجية التداول: {{trading_strategy}}
-• جلسة السوق: {{session_name}} ({{session_time}}) - {{session_vol}}
-• تأثير الأخبار: {{news_impact}} (×{{news_risk_multiplier}}) - {{news_warning if news_warning else "✅ آمن"}}
-• منطقة القتل: {{kill_zone_status}}
-• دقيقة الغدر: {{last_minute_status}}
-• حالة الإغلاق: {{candle_closing_status}} - متبقي {{seconds_remaining}} ثانية
+• جلسة السوق: {{session_name}} ({{session_time}})
+• حالة السيولة: {{session_vol}}
+• تأثير الأخبار: {{news_impact}} (معامل ×{{news_risk_multiplier}})
+• تحذير الأخبار: {{news_warning if news_warning else "✅ الوضع آمن"}}
+• منطقة القتل السعري: {{kill_zone_status}}
+• حالة دقيقة الغدر: {{last_minute_status}} **(مرجع توثيقي فقط - المرجع الفعلي هو ساعة المنصة)**
+• حالة إغلاق الشمعة: {{candle_closing_status}}
+• الوقت المتبقي للإغلاق: {{seconds_remaining}} ثانية
+• توقيت التحليل: {{gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}} **(مرجع توثيقي فقط)**
 • تصنيف الفريم: {{candle_category}}
 • حجم الصفقة: {{position_sizing}}
-• سياق سابق: {{"✅ متوفر" if previous_context_info else "❌ لا يوجد"}}
+• سياق التحليل السابق: {{"✅ متوفر" if previous_context_info else "❌ غير متوفر"}}
 
-🔍 **نظام الاستخراج البصري:**
+✅ **جميع المتغيرات مستلمة ومعرّفة بشكل صحيح.**
 
-【المرحلة 1: مسح الصورة】
-• الأسعار: السعر الحالي، أعلى/أدنى، دعم/مقاومة
-• الزمن: الوقت من ساعة المنصة - المرجع الوحيد
-• الشموع: آخر 5 شموع (فتحة، إغلاق، أعلى، أدنى، الجسم، الذيول)
+🎯 **نظام الاستخراج البصري المتقدم (Advanced Visual Extraction System):**
 
-【المرحلة 2: الوصف الإلزامي】
-• الشمعة -1: [نسبة الجسم %] - [اللون]
-• الشمعة -2: [نسبة الجسم %] - [اللون]
-• الشمعة -3: [نسبة الجسم %] - [اللون]
-• اتجاه الأحجام: [تزايد / تناقص / ثابت]
+🔍 **المرحلة 1: مسح الصورة الشامل (Full Image Scan):**
+1. ابدأ بمسح شامل للصورة من الأعلى إلى الأسفل، ومن اليسار إلى اليمين
+2. حدد العناصر الأساسية: محور الأسعار (Y-axis)، محور الزمن (X-axis)، منطقة الشموع، ساعة المنصة
+3. استخرج البيانات التالية بالترتيب:
+   - **الأسعار:** السعر الحالي، أعلى سعر، أدنى سعر، مستويات الدعم/المقاومة
+   - **الزمن:** الوقت الحالي على الشارت، إطار الشموع ({{candle}}) - **(ساعة المنصة هي المرجع الوحيد)**
+   - **الشموع:** آخر 5 شموع (فتحة، إغلاق، أعلى، أدنى، الجسم، الذيول)
+   - **المؤشرات:** أي مؤشرات مرئية (إن وجدت)
 
-【المرحلة 3: الحسابات الدقيقة】
-• السعر الحالي: [_____] من المحور Y
-• السعر المستهدف: [_____]
-• المسافة: |السعر - الهدف| = [_____] نقطة
-• سرعة آخر 3 شموع: [_____] نقطة/شمعة
-• الشموع المتوقعة: المسافة ÷ السرعة = [_____]
+🔍 **المرحلة 2: التحليل الاستبعادي البصري (Visual Rejection Analysis):**
+1. **الوصف الإلزامي قبل التحليل:** ابدأ بوصف الشموع الثلاث الأخيرة بدقة:
+   • **الشمعة -1:** [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]
+   • **الشمعة -2:** [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]
+   • **الشمعة -3:** [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]
 
-【المرحلة 4: معالجة ضعف وضوح الصورة】
-• إذا كان الرقم غير واضح: قارن موضع الشمعة بأقرب مستوى دعم/مقاومة
-• دقة التقدير: +/- 1 نقطة
+2. **تحليل الاتجاه الحجمي:** 
+   • إذا كانت أحجام الأجسام في ازدياد: ↝ منع أي إشارة عكسية
+   • إذا كانت أحجام الأجسام في تناقص: ↝ احتمالية انعكاس
 
-🛡️ **بروتوكول الفشل الذاتي - توقف فوراً إذا:**
-1. ضوضاء بصرية عالية (مؤشرات تغطي الشموع)
-2. محور أسعار مقطوع (أرقام غير واضحة)
-3. ساعة منصة غير واضحة
-4. جودة صورة رديئة
+3. **الفحص الرياضي الدقيق مع معامل الانزلاق السعري (Anti-Visual Bias with Slippage Factor):**
+   • **السعر الحالي الملاحظ:** [قراءة مباشرة من المحور Y]
+   • **سعر الهدف الملاحظ:** [قراءة مباشرة من المستوى المستهدف]
+   • **المعادلة الحسابية الأساسية:** |السعر الحالي - سعر الهدف| = [النقاط]
+   • **في فريمات S5, S10:** أضف "معامل الانزلاق السعري" = خصم نقطة أمان واحدة من نقطة الدخول
+   • **نقطة الدخول المعدلة:** [السعر الحالي + (نقطة أمان في اتجاه الصفقة)]
+   • **التأكيد:** يجب أن تتطابق الحسابات مع المسافات البصرية
 
-✅ الإجراء: "الصورة غير صالحة للتحليل - أرسل صورة أوضح"
+4. **كشف التناقضات البصرية:**
+   • إذا كانت المسافة المحسوبة ≠ المسافة المقدرة بالعين → أعد المسح
+   • تأكد من تطابق كل ذيل مع رقمه على المحور اليميني
+   • تحقق من مقياس الرسم (Scale) بوحدات متساوية
+   • **عند قراءة المحور Y، إذا كان الرقم غير واضح، قم بمقارنة موضع الشمعة بمستويات الدعم/المقاومة المرئية الأقرب لتقدير السعر بدقة +/- 1 نقطة.**
 
-🔥 **قوانين التحليل الأساسية:**
+🔍 **المرحلة 3: التحقق المتعدد (Multi-Layer Verification):**
+1. **التحقق المزدوج:** كل رقم يتم استخراجه يجب التحقق منه مرتين
+2. **الربط المنطقي:** تأكد من تطابق الأسعار مع مواقع الشموع
+3. **الكشف عن التناقضات:** إذا وجدت تناقضاً، أعد المسح من البداية
 
-【قانون الفتيلة】
-• لا تثق بالذيل الطويل إلا إذا ابتلعت الشمعة التالية 50% من الجسم السابق
-• إذا لم يحدث الابتلاع = فراغ سعري سيتم ملؤه - استمر مع الاتجاه
-• نسبة الذيل >60% = مراقبة فقط، وليس دخول فوري
-• ممنوع إصدار إشارة انعكاس بناءً على الذيل وحده
+🛡️ **بروتوكول الفشل الذاتي (Self-Failure Protocol):**
+إذا كانت الصورة تحتوي على أي من العيوب التالية، يجب التوقف فوراً وإبلاغ المستخدم:
 
-【معالجة الشموع الصغيرة】
-• شمعة عكسية حجمها <25% من السابقة = تُهمل تماماً (تجميع سيولة)
+1. **ضوضاء بصرية عالية:** مؤشرات كثيرة تغطي الشموع وتحجب الرؤية
+2. **محور أسعار مقطوع:** عدم وضوح الأرقام على المحور Y
+3. **ساعة منصة غير واضحة:** عدم القدرة على تحديد الوقت بدقة
+4. **جودة صورة رديئة:** عدم وضوح تفاصيل الشموع
 
-【الأرقام المستديرة】
-• الرقم المستدير (.000) = مغناطيس وليس مقاومة
-• لا تدخل عكسه إلا بعد لمسه بذيل ثم العودة
-• قبل ذلك، الهدف هو لمس الرقم فقط
+✅ **الإجراء الإلزامي:** "الصورة غير صالحة للتحليل - يرجى إرسال صورة أوضح مع شموع ومحور أسعار واضحين."
 
-【الزخم】
-• 3 شموع متتالية بنفس اللون بأجسام >80% = استمرار فقط (ممنوع الانعكاس)
-• في OTC، الزخم يغلب الهيكل دائماً
+🔥 **قانون الفتيلة المؤكدة مع معالجة الشموع الانعكاسية الصغيرة (The Confirmed Wick Law with Micro-Rejection Filter):**
 
-【سيادة الجسم - Marubozu Supremacy】
-• إذا كان الجسم >90% والذيل <20% = الذيل "جس نبض" وليس انعكاساً
-• يُلغى قانون الفتيلة في هذه الحالة
+✅ **قاعدة التأكيد الإلزامي الصارم:**
+1. **لا تثق في الذيل الطويل (الفتيلة) إلا إذا بدأت الشمعة التالية بالتحرك عكس اتجاه الذيل لمسافة تغطي 50% على الأقل من جسم الشمعة السابقة.**
+2. إذا لم يحدث هذا التأكيد خلال الشمعة التالية، اعتبر الذيل "فراغاً سعرياً" (Price Void) سيتم ملؤه، واستمر مع الاتجاه الأصلي بقوة.
+3. نسبة الذيل >60% تعطي أولوية للمراقبة فقط، وليس للدخول المباشر.
+4. **ممنوع إصدار إشارة انعكاس بناءً على الذيل وحده تحت أي ظرف.**
 
-【كشف التلاعب】
-• القمم المتساوية = أهداف سيولة وليست مقاومات
-• انتظر اختراق القمة ثم قرر
+❌ **سيناريو الرفض الإلزامي:**
+إذا ظهر ذيل طويل ثم أغلقت الشمعة التالية دون ابتلاع 50% من الجسم السابق:
+• تجاهل إشارة الانعكاس فوراً
+• استمر مع اتجاه الزخم السابق
+• انتظر امتلاء الفراغ السعري
+• القرار الإلزامي: "احتفاظ 🟡" حتى اكتمال التأكيد
 
-【الفجوات】
-• FVG هابطة + 3 شموع خضراء متزايدة = إلغاء البيع (الزخم أقوى)
-• Inversion FVG: إغلاق فوق منتصف الفجوة = إشارة شراء فورية
+🔄 **قاعدة معالجة الشموع الانعكاسية الصغيرة (Micro-Rejection Filter):**
+• إذا ظهرت شمعة واحدة عكس الاتجاه (دوجي أو شمعة صغيرة)
+• **وحجمها أقل من 25% من حجم الشمعة الاندفاعية السابقة**
+• **تُهمل هذه الشمعة تماماً ولا تؤثر على التحليل**
+• **يستمر التحليل مع الاتجاه الأصلي وكأنها لم تظهر**
+• **المنطق:** في الـ OTC، هذه الشموع تعني "تجميع سيولة لحظي" وليس انعكاساً حقيقياً
 
-【الاندفاع المؤسسي】
-• تغطية هبوط 10 دقائق بصعود دقيقتين = اندفاع - يُمنع البيع
+💰 **ميزة التصحيح السعري الرقمي (Price Action Calibration):**
+الراديكالية في تحديد الأسعار هي المفتاح. ابحث عن "الأرقام المستديرة" (مثل 1.68000) داخل الصورة واربطها بالزخم.
+✅ **القاعدة:** إذا كان السعر متجهاً لرقم مستدير بفتحات شموع واسعة، فمن الانتحار التداول عكسه.
+📌 **التعديل الجديد:** "الرقم المستدير مغناطيس؛ لا تعطي إشارة ارتداد إلا بعد ملامسته بـ 'ذيل' (Wick) ثم العودة للإغلاق دونه. قبل ذلك، الهدف هو لمس الرقم."
 
-⚠️ **هرم الأولويات - Priority Protocol V3:**
+🚀 **دمج خوارزمية الزخم (Momentum vs Structure):**
+• في الأسواق الحقيقية (Real Market)، الهيكل (Structure) هو الملك.
+• في أسواق الـ OTC، الزخم (Momentum) هو الملك.
+✅ **الشرط الإلزامي:** إذا وجدت 3 شموع متتالية بنفس اللون وبأجسام ممتلئة (>80%)، يُحظر البيع حتى لو وصل السعر لقمة تاريخية. الزخم في هذه الحالة أقوى من أي تحليل فني.
 
-1. **الزخم:** آخر 3 شموع >85% = الرتبة الأعلى - يلغي كل قواعد الارتداد
-2. **السيولة:** الأهداف السعرية (رقم مستدير/قمة) أولى من الفجوات
-3. **الفجوات:** تُملأ بعد ضرب السيولة الخارجية
-4. **الفتيلة:** تستخدم فقط مع زخم ضعيف (<40%) وابتلاع 50%
-5. **الهيكل:** يُطبق في غياب الزخم والسيولة
-6. **المؤشرات:** آخر مرتبة عند التعارض
+🎯 **كشف التلاعب بالسيولة (Liquidity Sweep Detection):**
+بدلاً من البحث عن نماذج مثل "الرأس والكتفين"، ابحث عن "القمم المتساوية" (Equal Highs). صناع السوق يضعون أوامرهم فوقها.
+✅ **المنطق العملي:** إذا رأيت قمتين متساويتين في الصورة، يجب أن تكون التوصية: "انتظر اختراق القمة ثم ادخل بيعاً مع العودة"، وليس البيع من القمة مباشرة.
 
-💰 **فلاتر الرفض الإلزامية - إن وُجد سبب → احتفاظ:**
+🔄 **قفل الأمان للزخم (The Momentum Deadlock):**
+إذا رصدت 3 شموع متتالية بنفس اللون بجسم يمثل >80% من حجم الشمعة، يُحظر تماماً إصدار إشارة عكسية. في هذه الحالة، تتحول المهمة من 'توقع الانعكاس' إلى 'تحديد أقرب هدف مغناطيسي (Liquidity/Round Number)' والمطالبة باللحاق بالاتجاه.
 
-【فلتر المسافة】
-• المسافة بين السعر والهدف < 5 نقاط = احتفاظ 🟡
-• استثناء واحد فقط - "اللمس الحتمي": زخم >85% نحو رقم مستدير = يُسمح بدخول حتى نقطتين
+🔍 **ميزة "كشف كسر الحقيقة" (The Truth-Break Detection):**
+عند حدوث هبوط ثم صعود مفاجئ (V-Shape)، قارن حجم شمعة الارتداد بآخر شموع الهبوط. إذا ابتلعت الشمعة الخضراء آخر شمعتين حمراوين، اعتبر الهبوط السابق 'Stop Hunt' (فخ سيولة) وألغِ جميع مستويات المقاومة القريبة؛ السعر الآن في وضع اندفاع مؤسسي.
 
-【فلتر السبريد - للفريمات S5, S10, S15, S30】
-• المسافة الصافية = المسافة - (السبريد × 2)
-• السبريد التقديري: فوركس (1-2) / مؤشرات (2-5) / رقمية (3-10)
-• المسافة الصافية < 3 نقاط = احتفاظ 🟡 (إلا مع اللمس الحتمي)
+🎯 **تعديل "قاعدة الرقم المستدير كهدف" (Round Number Target Logic):**
+في سوق الـ OTC، الأرقام المستديرة (مثل 0.18900) هي أهداف وليست مقاومات. لا تعطي إشارة ارتداد من الرقم المستدير إلا بعد أن يتم اختراقه بـ 'ذيل' (Wick) ثم العودة للإغلاق دونه. قبل ذلك، الهدف هو لمس الرقم.
 
-【فلتر الأخبار】
-• شمعة حجمها >300% من المتوسط = احتفاظ 🟡 لمدة 3 شموع
-• ذيول الأخبار لا تُحتسب في التحليل
+🎯 **نظام "مضاد للخسارة" - الإضافات النهائية:**
 
-【أسباب المنع السبعة】
-1. زخم معاكس: آخر 3 شموع >80% عكس الاتجاه
-2. رقم مستدير غير ملموس: المسافة >3 نقاط (إلا مع اللمس الحتمي)
-3. دقيقة الغدر: (55-59) أو (25-29) أو (40-44) أو (10-14) - من ساعة المنصة
-4. زخم منهك: الشمعة الحالية >200% من المتوسط
-5. غياب التأكيد: عدم ابتلاع 50% (إلا مع سيادة الجسم أو Micro-Rejection)
-6. تضارب الإطارات: تعارض {{candle}} مع {{verification_timeframe}}
-7. أخبار نشطة: ±30 دقيقة من خبر قوي
+🔄 **قاعدة "إعادة اختبار الفراغ" (FVG Rejection):**
+عندما يعود السعر لفجوة (FVG) هابطة بشمعة اندفاعية خضراء ولا يحترمها (لا يرتد منها للأسفل)، فهذا يسمى **Inversion FVG**.
+✅ **القاعدة التنفيذية:** بمجرد إغلاق شمعة دقيقة **فوق منتصف الفجوة الهابطة**، تتحول وظيفة هذه المنطقة من "مقاومة للبيع" إلى "منصة إطلاق للشراء". يتم إلغاء جميع أوامر البيع وإصدار إشارة شراء فورية مع جعل قاع الفجوة نقطة وقف.
 
-🕐 **استثناءات الفريمات الصغيرة (S5, S10 فقط):**
-• إذا الزخم >90% = يُسمح بالدخول حتى آخر ثانيتين (بدلاً من 10 ثوانٍ)
-• إذا الجسم >90% والذيل <20% = استمرار وليس انعكاس
-• شمعة عكسية <25% = تُهمل
+⏰ **ميزة "تزامن الوقت مع الرقم المستدير" (Kill-Zone Timing):**
+في الـ OTC، الدقائق التي تنتهي بـ **(5، 10، 15، 30، 45)** هي دقائق "تعديل المراكز".
+✅ **القاعدة الإلزامية:** إذا كان السعر قريباً من رقم مستدير (مثل 0.18900) عند الدقيقة **44 أو 59 أو 14 أو 29**، فإنه سيقوم بـ **"قفزة انتحارية" للمس الرقم قبل إغلاق الشمعة الكبيرة**. يُحظر إصدار إشارة انعكاس قبل هذه اللحظة، والمطلوب هو متابعة الاتجاه حتى يلمس الرقم.
+**ملاحظة هامة: ساعة المنصة (المستخرجة من الصورة) هي المرجع الوحيد لحساب هذه الدقائق.**
 
-🔄 **قاعدة تكرار النمط:**
-• إذا تكرر نفس السلوك 3 مرات، توقع انعكاساً في الرابعة
+📊 **فلتر "ثبات الحجم البصري" (Visual Volume Stability):**
+إذا كانت الشمعة الصاعدة **تفتقر للذيل العلوي (Flat Top)**، فهذا يعني أن ضغط الشراء لم ينتهِ بعد، ولا يوجد بائعون تجرأوا على الدخول.
+✅ **قاعدة الحظر:** **ممنوع البيع حتى تظهر أول شمعة بـ 'ذيل علوي' يمثل 30% على الأقل من حجمها الكلي.** الشموع المسطحة القمة هي علامة على اندفاع مؤسسي مستمر.
 
-📊 **نظام التحليل متعدد المستويات:**
+🛡️ **نظام "الخوارزمية لا تقهر" - الإضافات النهائية:**
 
-【المستوى الاستراتيجي】
-• الهيكل: BOS/CHoCh - من حركة السعر
-• مرحلة Wyckoff: Accumulation/Markup/Distribution/Decline
-• السياق: {{session_name}} - {{session_vol}}
+🎯 **قاعدة "فخ القمة المزدوجة في الـ OTC - النسخة المعدلة V3":**
+في الـ OTC، القمم المتساوية (Equal Highs) **ليست مقاومات، بل هي "بنزين للصعود" وأهداف سيولة إلزامية.**
+✅ **المنطق التنفيذي الحاسم:**
+    - **لا تعتبر القمة المتساوية نقطة انعكاس أبداً.**
+    - **الوظيفة الوحيدة للقمة المتساوية هي "هدف يجب ضربه" (Liquidity Sweep Target).**
+    - إذا رأيت قمتين متساويتين والسعر يقترب منهما بزخم قوي (3 شموع خضراء)، فإن السعر **ملزم** باختراق هذه القمة (Stop Hunt) لضرب أوامر البيع المعلقة والسيولة.
+    - **القرار التنفيذي:**
+        1.  يُحظر البيع من القمة مباشرة أو قبلها.
+        2.  الهدف هو **الاختراق**.
+        3.  الدخول يكون إما **مع الاختراق** (Momentum)، أو **انتظار العودة بعد الاختراق** (Pullback) للبيع، وليس البيع من القمة قبل لمسها.
 
-【المستوى التكتيكي】
-• أنماط الشموع: آخر 5 شموع
-• Order Blocks: آخر 3 مناطق طلب/عرض
-• FVG: الفجوات غير المغطاة
-• السيولة: Equal Highs/Lows + Inducement
+🎯 **ميزة "التدقيق البكسلي للمحور Y" (Precision Y-Axis):**
+أنت ملزم بمطابقة ذيل الشمعة مع الرقم المقابل له على المسطرة اليمنى بدقة.
+✅ **القاعدة الإلزامية:** "إذا كان الذيل يلمس 0.18877، فلا تقرب الهدف لـ 0.18880؛ استخدم الرقم الفعلي لحساب الفجوة السعرية (FVG) بدقة."
 
-【المستوى التنفيذي】
-• Entry: شمعة إغلاق + حجم
-• Risk: RR ديناميكي ×{{news_risk_multiplier}}
-• Timing: من ساعة المنصة
+🎯 **قانون "السيولة المغناطيسية" (Magnet Liquidity):**
+السعر يتحرك دائماً من "سيولة داخلية" (فجوة) إلى "سيولة خارجية" (قمة/قاع).
+✅ **القاعدة التنفيذية:** "عندما يغلق السعر فوق فجوة (FVG) هابطة، تصبح هذه الفجوة 'دفعاً' (Propulsion). الهدف القادم حتماً هو القمة السابقة (Old High). **لا تقترح أي صفقة بيع طالما لم يتم لمس القمة الخارجية**."
 
-🛡️ **نظام القرارات السريع:**
-• REJECTION: ذيل طويل + إغلاق داخل النطاق = دخول عكسي
-• MOMENTUM: 3 شموع قوية = استمرار حتى أقرب رقم مستدير
-• GAP: السعر يتحرك من فجوة إلى فجوة
-• LAST MINUTE: في الفريمات العادية، تجاهل الدقيقة 59/29/14/44
-• SPREAD: هدف <5 نقاط على S5/S10/S15 = احتفاظ (إلا مع اللمس الحتمي)
-• NEWS SPIKE: شمعة >300% = حظر 3 شموع
+🛡️ **لمسات النظام المكتمل بنسبة 100%:**
 
-🎯 **النظام الزمني - المرجع الوحيد: ساعة المنصة**
+🎯 **قاعدة "إغلاق الثغرة الأمنية" (The Safety Gap Rule):**
+إذا تم تغطية مسار هابط استغرق 10 دقائق بصعود استغرق دقيقتين فقط، فهذا ليس مجرد صعود، بل هو **'اندفاع مؤسسي' (Institutional Drive)**.
+✅ **قاعدة الحظر:** "في هذه الحالة، **يُمنع البيع حتى لو ظهرت شمعة حمراء صغيرة**، لأنها ستكون مجرد 'توقف مؤقت' (Rest Point) قبل انفجار ثانٍ."
 
-【استخراج الوقت】
-• الوقت على المنصة: [_____] من الصورة
-• الفريم: {{candle}}
-• المسافة للهدف: [_____] نقطة
-• سرعة الشموع: [_____] نقطة/شمعة
-• الشموع المتوقعة: [_____]
-• وقت الوصول المتوقع: [_____]
+🎯 **ميزة "كشف الفتيلة الكاذبة" (False Wick Detection):**
+أحياناً يترك السعر ذيلاً طويلاً بالأعلى يوهمك بالهبوط، لكنه في الحقيقة "جس نبض" للسيولة.
+✅ **المنطق التنفيذي:** "إذا ترك السعر ذيلاً طويلاً (Wick) ثم أغلقت الشمعة التالية **فوق منتصف هذا الذيل**، فهذا يعني أن الذيل كان 'سحباً للسيولة' وليس رفضاً. **القرار: استمرار مع الاتجاه وليس الانعكاس**."
 
-【معامل الانزلاق - S5, S10 فقط】
-• نقطة الدخول المعدلة = السعر الحالي + نقطة أمان في اتجاه الصفقة
-• المسافة الفعلية = المسافة - 1 نقطة
+🎯 **فلتر "وقت انتهاء الصلاحية" (The 5-Minute Fatigue):**
+في الـ OTC، الزخم غالباً ما يتعب بعد 5 شموع متتالية من نفس اللون.
+✅ **القاعدة:** "عند عد 5 شموع خضراء ممتلئة متتالية، ابدأ بالبحث عن **'شمعة المنهك' (Exhaustion Candle)** وهي شمعة كبيرة جداً بشكل مبالغ فيه (أكبر بـ 3 مرات من سابقاتها). **هذه هي اللحظة الوحيدة التي يُسمح فيها بتوقع ارتداد قصير**."
 
-✅ **بروتوكول التأكيد النهائي - تأكد من:**
-1. صحة الصورة (لا يوجد سبب للفشل الذاتي)
-2. المسافة >5 نقاط أو تفعيل اللمس الحتمي
-3. المسافة الصافية >3 نقاط أو تفعيل اللمس الحتمي
-4. لا شمعة >300%
-5. الزخم ليس معاكساً
-6. لا دقيقة غدر (أو تفعيل استثناء S5/S10)
-7. توفر ابتلاع 50% (أو تفعيل سيادة الجسم/Micro-Rejection)
-8. لا تضارب في الإطارات
-9. لا أخبار نشطة
-10. لا شمعة إنهاك
+⚡ **قواعد المعايرة الذاتية (Self-Calibration):**
+1. **تفضيل الزخم:** في حال التعارض بين 'منطقة عرض' (SMC) و 'اندفاع قوي' (OTC Momentum)، **يفوز الزخم دائماً**. لا تقترح البيع إلا بعد ظهور **CHoCh واضح على فريم أصغر**.
+2. **قاعدة الـ V-Shape:** أي هبوط يتم استرداده فوراً بنسبة **>100%** يعتبر فخاً. **الهدف القادم هو القمة التي تليها مباشرة**.
+3. **ميزان القوى:** قارن حجم الشموع الخضراء بالحمراء في آخر 10 دقائق؛ **اللون المسيطر حجماً هو الذي يحدد اتجاه صفقاتك** حتى لو كان الهيكل عكس ذلك.
+
+🔥 **اللمسات النهائية للخوارزمية المتكاملة:**
+
+🎯 **قاعدة "الاندفاع الانتحاري" (The Climax Rule):**
+في الـ OTC، عندما تقترب الشمعة من هدفها النهائي (مثل رقم مستدير أو قمة تاريخية)، يزداد حجمها بشكل جنوني في آخر 10 ثوانٍ.
+✅ **قاعدة الحظر:** "إذا زاد حجم جسم الشمعة الحالية عن **200% من متوسط حجم آخر 5 شموع** وهي تقترب من مستوى سيولة، فهذا يسمى **'اندفاع الذروة'**. **لا تدخل عكسه أبداً حتى يكتمل المسح بالكامل (Full Sweep) وتظهر شمعة رفض واضحة**."
+
+🎯 **قاعدة "الفجوة المكسورة" (The Inversion Logic):**
+أي منطقة عرض (Supply) يتم اختراقها بشمعة اندفاعية (Marubozu) تتحول فوراً إلى منطقة طلب (Demand).
+✅ **القاعدة التنفيذية:** "إذا عاد السعر ليلمس منطقة عرض تم اختراقها سابقاً، فالقرار هو **شراء مع الاتجاه الجديد، وليس البيع منها مرة أخرى**."
+
+🧠 **التحديث المنطقي - القواعد المدمجة حديثاً:**
+
+1. **فلتر الإنهاك (التعامل مع الانفجار السعري):**
+"قاعدة الزخم المنهك: إذا كانت الشمعة الأخيرة ضخمة جداً وبدون ذيول مقارنة بما قبلها، يُمنع الاستمرار. انتظر ذيل رفض عكسي؛ فالانفجار السعري OTC غالباً ما يتبعه انهيار مفاجئ."
+
+2. **الفراغ المغناطيسي (الأرقام المستديرة):**
+"منطق الفراغ السعري: لا تتوقع انعكاساً قبل لمس الرقم المستدير فعلياً. إذا وجد فراغ بصري بين السعر والرقم، اعتبر السعر منجذباً للرقم لإكمال السيولة قبل أي ارتداد."
+
+3. **تناقص العزم (حجم الشموع):**
+"تلاشي القوة: إذا صغر حجم أجسام الشموع المتتالية رغم ثبات اللون، تُلغى إشارة (قوي) وتتحول لـ (توقع انعكاس وشيك)؛ لأن هذا يعني انسحاب السيولة تدريجياً."
+
+4. **حماية الدقيقة الأخيرة:**
+"فلتر التلاعب الزمني: إذا حدثت حركة عنيفة في آخر 10 ثوانٍ من الشمعة، صنفها (تلاعب سيولة). اطلب الانتظار للشمعة الجديدة ولا تدخل مع الاندفاع المتأخر."
+
+🛡️ **بروتوكول "درع الحماية من الانعكاس الوهمي" (The Anti-Fakeout Shield):**
+
+1. **قاعدة الابتلاع الإلزامي (The Mandatory Engulfing Rule):**
+يُحظر تماماً إصدار إشارة "عكس الاتجاه" بناءً على ذيل (Wick) فقط، مهما كان طوله.
+الشرط: لا يتم اعتماد الانعكاس إلا إذا ظهرت شمعة عكسية تبتلع 50% على الأقل من جسم الشمعة الاندفاعية السابقة وتغلق فوق/تحت منتصفها.
+إذا لم يتحقق شرط الابتلاع، اعتبر الذيل "فخ سيولة" (Stop Hunt) واستمر مع الاتجاه الأصلي بقوة.
+
+2. **فلتر "القطار المؤسسي" (Institutional Train Filter):**
+إذا رصدت شمعة (Marubozu) ممتلئة بنسبة >90% وبحجم ضخم (أكبر بـ 200% من الشموع السابقة)، يُمنع توقع القاع أو القمة.
+القاعدة: "الزخم الممتلئ يقتل الذيول"؛ استمر في البيع/الشراء مع اتجاه الشمعة الضخمة حتى تظهر 3 شموع عرضية صغيرة متتالية، فهي العلامة الوحيدة على توقف القطار.
+
+3. **قانون "كسر الرقم المستدير بالجسم":**
+إذا اخترق "ذيل" الشمعة الرقم المستدير، فهو مغناطيس.
+إذا اخترق "جسم" الشمعة الرقم المستدير وأغلق خلفه بمسافة تزيد عن 5 نقاط، فقد تحول الرقم من (هدف) إلى (نقطة انطلاق جديدة).
+القرار: اتبع الكسر بالجسم فوراً ولا تراهن على الارتداد من الرقم المكسور.
+
+4. **ميزان "الذيل كهدف" (Wick as a Target):**
+في سوق الـ OTC، إذا ظهر ذيل طويل ولم يتبعه ارتداد فوري في الشمعة التالية، فإن هذا الذيل يصبح "فراغاً سعرياً" (Price Void).
+المهمة: تحول وظيفة النظام من "توقع الارتداد من الذيل" إلى "استهداف كسر قمة/قاع الذيل".
+
+5. **【تعديل إلزامي V3 - قاعدة "منع الارتداد المبكر" (The Early Rejection Kill-Switch):**
+    ✅ **الشرط:** إذا تحقق الشرطان التاليان معاً:
+        1.  **الزخم:** آخر 3 شموع خضراء متتالية بأجسام متزايدة في الحجم.
+        2.  **الفجوة:** وجود فجوة سعرية هابطة (Bearish FVG) أمام السعر.
+    ✅ **القرار الإلزامي:**
+        - **يُلغى فوراً أي تحليل يشير إلى ارتداد من الفجوة أو بيع من مستويات المقاربة.**
+        - **المنطق:** الزخم الصاعد القوي والأجسام المتزايدة تغلب على وجود فجوة هابطة. الفجوة في هذه الحالة هي "ممتص زخم" مؤقت وليست "مانع اختراق".
+        - **الإجراء:** التحول من "توقع الهبوط" إلى "استهداف القمة المتساوية/الرقم المستدير التالي".
+        - **ممنوع إصدار أي إشارة بيع حتى يتم كسر شرط الـ 3 شموع الخضراء المتزايدة.**
+
+🛡️ **التعديلات الجوهرية المضافة لمنع تكرار سيناريو الخسارة:**
+
+🎯 **1. قاعدة تأكيد الابتلاع للذيول (The Wick-Fill Filter):**
+الخطأ الذي حدث هو أننا اعتبرنا الذيل الطويل في الشارت كافياً للارتداد، بينما في الـ OTC، الذيل غالباً ما يكون مجرد "إعادة تسعير" قبل الهبوط العنيف.
+✅ **القاعدة التنفيذية:** "إذا أعطيت إشارة شراء بناءً على 'فتيلة قاتلة'، يجب أن تغلق الشمعة التالية فوراً فوق 50% من جسم الشمعة الهابطة السابقة. إذا أغلقت الشمعة التالية حمراء أو بجسم صغير (Doji)، تُلغى إشارة الشراء فوراً ويتحول المركز إلى بيع لأن الذيل أصبح 'فراغ سيولة' سيتم ملؤه."
+
+🎯 **2. تعديل منطق الأرقام المستديرة (Round Number Magnet vs Support):**
+في التحليل الأخير، السعر كسر الرقم المستدير 1470.00 بجسم الشمعة.
+✅ **القاعدة التنفيذية:** "لا تعتبر الرقم المستدير دعماً إلا إذا ارتد السعر منه بمسافة تزيد عن 15 نقطة في أول 30 ثانية. إذا ظل السعر يتذبذب فوق الرقم المستدير مباشرة بذيول صغيرة، فهذا يعني أن الرقم لا يزال يعمل كمغناطيس وليس كدعم، والهدف هو كسر الرقم والإغلاق دونه."
+
+🎯 **3. فلتر أحجام الشموع المتتالية (Volume Diminishing Filter):**
+في الشارت، لاحظنا أن الشموع الخضراء كانت أصغر بكثير من الشموع الحمراء.
+✅ **القاعدة التنفيذية:** "قاعدة ميزان القوى: إذا كانت الشموع الارتدادية (الخضراء) أصغر حجماً بنسبة 50% أو أكثر من الشموع الاندفاعية (الحمراء)، فهذا صعود وهمي (Dead Cat Bounce). يُمنع الشراء في هذه الحالة، والأولوية للدخول مع أول شمعة حمراء تبتلع الشمعة الخضراء الصغيرة."
+
+🎯 **4. قاعدة الثواني الـ 30 الأولى (The 30-Second Confirmation):**
+✅ **القاعدة التنفيذية:** "إذا لم يتحرك السعر في اتجاه التوقيت (TP1) خلال أول 30 ثانية من عمر الشمعة، فاعتبر أن التحليل قد فشل بسبب تدخل خوارزمية الـ OTC. قم بتفعيل (نظام التحوط) أو الخروج المبكر إذا أغلقت الشمعة عكس الاتجاه المتوقع بـ 5 نقاط."
+
+⚠️ **بروتوكول فض التعارض - هرم السلطة النهائي (Priority Protocol):**
+في حال وجود تعارض بين القواعد، يتم الاعتماد حسب الترتيب التالي:
+
+**🚀 【تعديل هرم الأولويات - النسخة المحدثة (Priority Protocol V3)】**
+
+1.  **الزخم (Momentum) - الرتبة الأعلى مطلقاً:**
+    ✅ **إذا كانت آخر 3 شموع ممتلئة (Marubozu) بنسبة >85%، تُلغى فوراً قاعدة الفتيلة ويُحظر الشراء عكس الاتجاه. الزخم هو الرتبة الأعلى ولا يمكن تجاوزه.**
+
+2.  **السيولة (Liquidity):**
+    ✅ **【تعديل إلزامي V3】 الهدف السعري (الرقم المستدير / القمة التاريخية) له أولوية أعلى من الفجوة السعرية.**
+    - **المنطق:** السعر يتحرك لضرب السيولة الخارجية (Equal Highs/Round Numbers) أولاً.
+    - **القاعدة:** **إذا كان هناك فجوة سعرية (FVG) في الاتجاه المعاكس، ولكن السعر يتجه نحو رقم مستدير أو قمة متساوية بزخم قوي، يتم إلغاء إشارة الارتداد من الفجوة. الأولوية هي لمس الهدف.**
+    - سحب السيولة (Stop Hunt/Liquidity Sweep) يغلب الهيكل الكلاسيكي.
+
+3.  **الفجوات السعرية (FVG / Gaps):**
+    - مناطق imbalance. السعر ينجذب لملئها **بعد** ضرب السيولة الخارجية، وليس قبلها.
+
+4.  **الفتيلة (Wick):**
+    - تُستخدم كإشارة دخول فقط إذا كان الزخم ضعيفاً والأجسام صغيرة (<40% من حجم الشمعة) أو بعد تطبيق شرط الابتلاع الإلزامي.
+
+5.  **الهيكل (Structure):**
+    - يُطبق فقط في غياب الزخم القوي والسيولة النشطة والفجوات الواضحة.
+
+6.  **المؤشرات الفنية:**
+    - تأتي في المرتبة الأخيرة عند التعارض مع السلوك السعري.
+
+💰 **فلتر الفوارق السعرية الإلزامي (Mandatory Spread Filter):**
+في الفريمات الصغيرة جداً (S5, S10, S15, S30)، قد يكون السبريد (الفرق بين سعر الشراء والبيع) أكبر من الهدف نفسه.
+
+✅ **قاعدة السبريد الصارمة:**
+1.  **تحديد نوع الأصل تلقائياً من الصورة (إن أمكن):**
+    - الفوركس (عملات): السبريد المعتاد 0.5-2 نقطة
+    - المؤشرات: السبريد المعتاد 1-5 نقاط
+    - العملات الرقمية: السبريد المعتاد 1-10 نقاط
+    - الأسهم: السبريد المعتاد 1-5 سنت
+
+2.  **حساب السبريد التقديري (إن لم يظهر في الشارت):**
+    - إذا كان الفريم {{candle}} في [S5, S10, S15, S30, M1]:
+    - افترض حد أدنى للسبريد = 1 نقطة (للأصول عالية السيولة)
+    - افترض حد أعلى للسبريد = 3 نقاط (للأصول متوسطة السيولة)
+
+3.  **فلتر الجدوى مع السبريد:**
+    - **المسافة الصافية = المسافة بين السعر والهدف - (السبريد × 2)**
+    - **【تعديل: قاعدة اللمس الحتمي (Mandatory Touch Exception)】**
+    - **إذا كانت المسافة الصافية < 3 نقاط وكان السعر يتجه نحو رقم مستدير بزخم عال (>85%)، يتم إلغاء فلتر السبريد والسماح بالدخول.**
+    - **إذا كانت المسافة الصافية < 3 نقاط بدون استثناء، القرار الإلزامي = (احتفاظ 🟡)**
+
+4.  **حظر مطلق للفريمات الصغيرة مع أهداف ضيقة:**
+    - إذا كان {{candle}} في [S5, S10, S15] والهدف أقل من 5 نقاط:
+    - **【تعديل: يتم إلغاء هذا الحظر تلقائياً إذا تم تفعيل "قاعدة اللمس الحتمي"]**
+    - **ممنوع إصدار أي إشارة (شراء/بيع) - القرار الوحيد = احتفاظ 🟡 (إلا مع استثناء اللمس الحتمي)**
+
+📊 **التطبيق في التحليل:**
+• السبريد التقديري: [X] نقطة
+• المسافة الإجمالية: [Y] نقطة
+• المسافة الصافية بعد السبريد: [Y - (X×2)] نقطة
+• استثناء اللمس الحتمي: [مفعل / غير مفعل]
+• قرار السبريد: [مقبول / غير مقبول]
+
+📰 **قاعدة ذيول الأخبار - الحماية من التذبذب العنيف (News Spike Protection):**
+عند صدور الأخبار الاقتصادية القوية، يحدث "تذبذب عنيف" (Volatility Spike) يلغي جميع قوانين التحليل الفني (SMC, ICT, Wyckoff, OTC).
+
+✅ **كشف مرحلة الخبر بصرياً من الصورة:**
+1.  **علامات الخبر النشط في الشارت:**
+    - شمعة واحدة ضخمة جداً (أكبر بـ 5 مرات من المتوسط)
+    - ذيل علوي وسفلي طويلان جداً في نفس الشمعة (شموع البين بار)
+    - فجوات سعرية (Gaps) بين إغلاق شمعة وافتتاح التالية
+    - حركة عمودية حادة جداً خلال ثوانٍ (V-Shape حاد)
+
+2.  **قاعدة الحظر المطلق أثناء الخبر:**
+    - **إذا رصدت شمعة حجمها > 300% من متوسط آخر 5 شموع:**
+    - **تُلغى جميع إشارات الدخول لمدة 3 شموع تالية على الأقل**
+    - **القرار الإلزامي = (احتفاظ 🟡) مع تعليق: "تذبذب خبر - انتظر الاستقرار"**
+
+3.  **قاعدة ذيول الأخبار (News Wicks):**
+    - أي ذيل يظهر أثناء أو بعد الخبر مباشرة **لا يحسب** كذيل تحليل فني
+    - هذه الذيول هي "ارتداد خوارزمي" (Algorithmic Reversion) وليست رفض سوق حقيقي
+    - **ممنوع استخدام هذه الذيول في أي قاعدة من قواعد الفتيلة**
+
+4.  **فترة التهدئة (Cooling Period):**
+    - بعد الخبر القوي، انتظر 3-5 شموع على الأقل
+    - ابحث عن عودة الأحجام إلى المستويات الطبيعية
+    - لا تحلل الهيكل (Structure) خلال فترة التهدئة
+
+📊 **التطبيق في التحليل:**
+• حالة الخبر: [نشط / غير نشط]
+• حجم الشذوذ: [أكبر من المتوسط بـ X مرات]
+• فترة التهدئة المطلوبة: [عدد الشموع]
+• قرار الخبر: [حظر / مسموح]
+
+🛡️ **فلتر الرفض الإلزامي - المسافة الحقيقية (The Mandatory Rejection Filter):**
+قبل إصدار الإشارة، قم بتطبيق الفلاتر التالية:
+
+✅ **1. فلتر المسافة الحقيقية مع معامل الانزلاق السعري (Real Distance Filter with Slippage):**
+    • **قبل إصدار الإشارة، قم بطرح السعر الحالي من الهدف يدوياً.**
+    • **في فريمات S5, S10، أضف نقطة أمان واحدة لصالح الصفقة (خصم من نقطة الدخول).**
+    • **إذا كانت المسافة أقل من 5 نقاط (بعد احتساب الانزلاق)، القاعدة الأساسية = (احتفاظ 🟡).**
+    
+    🚨 **【قاعدة اللمس الحتمي - استثناء إلزامي (Mandatory Touch Exception)】**
+    • **إذا كان الزخم (Momentum) > 85% والهدف هو رقم مستدير (.000/.500)**
+    • **يتم إلغاء فلتر الـ 5 نقاط فوراً**
+    • **يُسمح بالدخول حتى لو كانت المسافة نقطتين فقط**
+    • **المنطق:** في الـ OTC، الـ 3 نقاط المتبقية قبل الرقم المستدير هي الأضمن للربح
+    • **التطبيق:** اذكر في التحليل "استثناء اللمس الحتمي - زخم >85% نحو رقم مستدير"
+
+✅ **2. فلتر السبريد (Spread Filter):**
+    • احسب المسافة الصافية = المسافة - (السبريد × 2)
+    • إذا كانت المسافة الصافية < 3 نقاط → احتفاظ 🟡
+    • **الاستثناء:** إذا توفر شرط اللمس الحتمي أعلاه، يُسمح بالدخول
+
+✅ **3. فلتر الأخبار (News Filter):**
+    • إذا كانت شمعة الخبر > 300% من المتوسط → احتفاظ 🟡 لمدة 3 شموع
+
+✅ **4. قائمة أسباب المنع (7 أسباب):**
+1.  **زخم معاكس قوي:** آخر 3 شموع ممتلئة (>80%) في الاتجاه المعاكس
+2.  **رقم مستدير غير ملموس:** السعر لم يلمس الرقم المستدير (.000/.500) بمسافة 3 نقاط على الأقل **(يُلغى هذا السبب إذا تحقق شرط اللمس الحتمي)**
+3.  **دقيقة الغدر:** داخل الدقائق (55-59) أو (25-29) أو (40-44) أو (10-14) **(تُحسب بناءً على ساعة المنصة، وليس توقيت غزة)** 【راجع استثناء فريمات S5/S10 أدناه】
+4.  **زخم منهك:** الشمعة الحالية أكبر بضعفين من متوسط آخر 3 شموع
+5. **غياب التأكيد:** عدم وجود شمعة ابتلاع للجسم السابق **(يُلغى هذا السبب إذا تحقق شرط Marubozu Supremacy أو Micro-Rejection)**
+6.  **تضارب الإطارات:** تعارض بين {{candle}} و {{verification_timeframe}}
+7.  **أخبار نشطة:** داخل نطاق ±30 دقيقة من خبر قوي
+
+🔍 **الخوارزمية:**
+1.  **التحقق من صحة الصورة:** تطبيق بروتوكول الفشل الذاتي أولاً
+2.  افحص الزخم والهدف: إذا كان زخم >85% والهدف رقم مستدير → تفعيل "استثناء اللمس الحتمي"
+3.  افحص المسافة بين السعر والهدف مع معامل الانزلاق: أقل من 5 نقاط وبدون استثناء → احتفاظ فوري
+4.  افحص السبريد: مسافة صافية < 3 نقاط وبدون استثناء → احتفاظ فوري
+5.  افحص الخبر: شمعة > 300% → احتفاظ فوري
+6.  افحص الشارت لجميع أسباب المنع السبعة (باستخدام ساعة المنصة كمرجع)
+7.  إذا وُجد سبب واحد وليس مستثنى → "احتفاظ 🟡"
+8.  إذا لم توجد أسباب منع أو تم تفعيل الاستثناء → تابع التحليل
+9.  سجل سبب المنع أو الاستثناء في القرار النهائي بوضوح
+
+🛑 **فلتر الإنهاك والذروة (Exhaustion & Climax Filter):**
+لمنع الدخول في نهاية الموجة والوقوع في فخ الانفجار السعري:
+
+1.  **كشف شمعة الإنهاك (Exhaustion Candle):**
+    • إذا كانت الشمعة الحالية أكبر بضعفين (200%) من متوسط حجم آخر 3 شموع
+    • وهي تقترب من مستوى سيولة (رقم مستدير، قمة، قاع)
+    • صنفها كـ "شمعة إنهاك" (Exhaustion Candle)
+
+2.  **الإجراء الإلزامي:**
+    • **ممنوع الدخول** مع اتجاه الشمعة الإنهاكية
+    • **ممنوع الدخول** عكس اتجاهها فوراً
+    • **المطلوب:** الانتظار لشمعة تأكيد (تالية) تغلق عكس اتجاه الإنهاك
+
+3.  **علامات الذروة (Climax Signs):**
+    • حجم متضخم مفاجئ (>300% من المتوسط)
+    • ذيول طويلة في نهاية موجة
+    • تسارع غير طبيعي في آخر 10 ثوانٍ
+    • اقتراب من رقم مستدير مع تسارع
+
+4.  **قاعدة الحماية:**
+    "الاندفاع المتأخر هو الأكثر خطورة. إذا رأيت الشمعة تكبر وهي تقترب من الهدف، انتظر اكتمالها أولاً ثم قرر."
+
+📊 **نظام التحليل متعدد المستويات**
+
+📊 **المستوى 1: التحليل الاستراتيجي (الخريطة الكبرى) - الاستخراج من الصورة:**
+• الهيكل العام: تحليل موجات إيليوت + BOS/CHoCh - استخراجها من حركة السعر المرئية
+• مراحل Wyckoff: التحديد الدقيق لمرحلة (Accumulation/Markup/Distribution/Decline) - من سلوك الشموع
+• الحكم الزمني: توافق {{verification_timeframe}} مع {{candle}} للإشارات - التحقق من التكرارات
+• السياق السوقي: {{session_name}} - {{session_vol}} سيولة - تقدير من نشاط السعر
+
+⚡ **المستوى 2: التحليل التكتيكي (الخطة التنفيذية) - الاستخراج من الصورة:**
+• أنماط الشموع: تحليل 5 شموع سابقة + الشمعة الحالية - استخراج كل شمعة بشكل منفصل
+• **【تعديل أولوية الابتلاع - Marubozu Supremacy (قانون سيادة الجسم)】**
+  - **هذا تعديل إلزامي: البوت يعامل الفتيلة كعدو، وهذا خطأ في الـ OTC الاندفاعي.**
+  - **القاعدة:** إذا كان جسم الشمعة يمثل >90% من حجمها الكلي (Marubozu)، **يتم تجاهل أي ذيل علوي/سفلي صغير يمثل أقل من 20% من طول الشمعة.**
+  - **لا يُسمح بوصف الذيل الصغير كـ "إشارة ضعف" أو "رفض".**
+  - **يُصنف هذا الذيل كـ "جس نبض" لاستمرار الاتجاه.**
+  - **القرار:** استمرار مع الاتجاه وليس انعكاس.
+• **【قاعدة معالجة الشموع الانعكاسية الصغيرة】**
+  - إذا ظهرت شمعة عكسية حجمها <25% من الشمعة السابقة → تُهمل تماماً
+• Order Blocks: تحديد آخر 3 مناطق طلب/عرض نشطة - من مناطق الارتداد المرئية
+• FVG Tracking: تتبع الفجوات غير المغطاة في نطاق 50 نقطة - قياس المسافات بين الشموع
+• Liquidity Map: رسم خرائط Equal Highs/Lows + Inducement - من القمم والقيعان المرئية
+
+🎯 **المستوى 3: التحليل التنفيذي (الدخول الفوري) - الاستخراج من الصورة:**
+• Entry Triggers: شروط الدخول المباشرة (شمعة إغلاق + حجم) - من الشمعة الحالية
+• **معامل الانزلاق السعري:** في فريمات S5, S10، خصم نقطة أمان من نقطة الدخول
+• Risk Matrix: حساب RR ديناميكي حسب {{news_risk_multiplier}} - بناءً على المسافات المرئية
+• Position Sizing: حجم صفقة ذكي حسب {{position_sizing}} - من نسبة المخاطرة
+• Timing Precision: توقيت الدخول/الخروج بالثواني - من ساعة المنصة
+
+🛡️ **نظام القواعد المتقدمة (Hard-Coded Logic)**
+
+🛡️ **تحديثات الأمان البصري (Vision Updates):**
+1.  **معايرة الإحداثيات:** قم برسم شبكة (X,Y) وهمية؛ المحور Y للسعر و X للزمن. طابق كل ذيل شمعة بالسعر المقابل له على المسطرة اليمنى بدقة بكسلية.
+2.  **فلتر المصيدة (Retail Trap):** حدد مستويات الدعم/المقاومة "الواضحة جداً". إذا كان السعر يتذبذب عندها، لا تدخل؛ انتظر سحب السيولة (Stop Hunt) أولاً.
+3.  **قاعدة الـ 50% (FVG Equilibrium):** عند رصد فجوة FVG، الهدف المغناطيسي ليس بدايتها فقط، بل خط المنتصف (0.50) منها.
+4.  **قانون الزخم المؤسسي:** إذا زاد حجم جسم الشمعة عن 200% من متوسط آخر 5 شموع، تُلغى جميع إشارات الانعكاس (Counter-trend) ويتم الدخول مع الاتجاه حصراً.
+5.  **التحقق من الكسر الكاذب (SFP):** لا تعتمد الكسر (BOS) إلا بإغلاق كامل للجسم. ملامسة السعر للقمة بالذيل ثم العودة تعني دخولاً عكسياً فورياً.
+6.  **دقة قراءة المحور Y:** إذا كان الرقم غير واضح، قارن موضع الشمعة بأقرب مستوى دعم/مقاومة مرئي لتقدير السعر بدقة +/- 1 نقطة.
+
+🛡️ **طبقات الحماية الذكية:**
+1.  **مصفاة الأخبار:** {{news_warning if news_warning else "✅ الوضع آمن"}}
+2.  **فلتر التوقيت:** {{kill_zone_status}} **(مرجع توثيقي)**
+3.  **【تعديل ثواني الغدر - خاص بفريمات S5/S10 (Last Minute Exception)】**
+    • **القاعدة الأساسية:** الحظر التام في آخر 10 ثوانٍ من الشمعة (دقيقة الغدر) - **محسوبة من ساعة المنصة.**
+    • **الاستثناء الإلزامي (Timing Exception):** في فريمات الثواني (S5, S10) فقط.
+    • **الشرط:** إذا كان الزخم صاعداً/هابطاً بقوة > 90% (3 شموع ممتلئة متتالية).
+    • **الإجراء:** يتم **تقليص فلتر حماية الدقيقة الأخيرة من 10 ثوانٍ إلى ثانيتين فقط**.
+    • **الهدف:** السماح باللحاق بالانفجار السعري في الثواني الأخيرة.
+    • **التطبيق:** اذكر في التحليل "استثناء ثواني الغدر - زخم >90% على فريم S5/S10"
+4.  **حاجز السيولة:** لا دخول مع FVG غير مغطاة في الاتجاه المعاكس
+5.  **【تعديل منطق الأرقام المستديرة - Round Numbers Priority】**
+    • **عند اقتراب السعر من رقم مستدير (.000) بمسافة أقل من 10 نقاط**
+    • **تتغير وظيفة الرقم من 'منطقة ارتداد' إلى 'هدف سيولة'**
+    • **يُمنع إصدار إشارة بيع حتى يتم لمس الرقم وتجاوزه بذيل**
+    • التطبيق: اذكر في التحليل "تحول الرقم المستدير إلى هدف سيولة - مسافة <10 نقاط"
+6.  **توقيت إغلاق الشمعة:** {{candle_closing_status}}
+7.  **فلتر السبريد:** مفعل - المسافة الصافية محسوبة (مع استثناء اللمس الحتمي)
+8.  **فلتر الأخبار:** مفعل - تم رصد التذبذب
+
+⚡ **نظام القرارات السريع:**
+• REJECTION ENTRY: ذيل طويل + إغلاق داخل النطاق = دخول عكسي فوري
+• MOMENTUM FOLLOW: 3 شموع قوية = استمرار مع الاتجاه حتى أقرب رقم مستدير
+• GAP FILLING: السعر يتحرك من فجوة إلى فجوة قبل الارتداد
+• **LAST MINUTE RULE (المعدلة - V2):** 
+  - في الفريمات العادية: تجاهل الانعكاسات في الدقيقة 59/29/14/44 **(محسوبة من ساعة المنصة)**
+  - **في فريمات S5/S10 مع زخم >90%: تقليص الحظر إلى ثانيتين فقط والسماح بالدخول.**
+• SPREAD FILTER: إذا كان الهدف < 5 نقاط والفريم {{candle}} في [S5,S10,S15] → احتفاظ **(إلا مع استثناء اللمس الحتمي)**
+• NEWS SPIKE: إذا كانت الشمعة > 300% من المتوسط → حظر لمدة 3 شموع
+• MICRO REJECTION: شمعة عكسية <25% من السابقة → تجاهل تماماً
+
+🛡️ **فلتر الاندفاع الانتحاري (Momentum Kill-Switch):**
+
+**قاعدة الحظر المطلق (The Momentum Kill-Switch):**
+1.  منع الانعكاس المطلق: يُحظر تماماً إصدار إشارة (بيع) إذا كانت آخر 3 شموع خضراء ممتلئة بنسبة > 80%، حتى لو لمس السعر منطقة عرض. الاندفاع يغلب الهيكل في الـ OTC.
+2.  **منطقة المغناطيس العددي (المعدلة):** 
+    • إذا كان السعر ضمن نطاق 10 نقاط من رقم مستدير (.000)
+    • تتحول وظيفة الرقم من 'منطقة ارتداد' إلى 'هدف سيولة'
+    • تُلغى جميع إشارات الانعكاس، وتُحول الإشارة إلى "متابعة الزخم" حتى لمس الرقم
+    • يُمنع البيع حتى يتم لمس الرقم وتجاوزه بذيل
+3.  شرط الـ Stop Hunt الإلزامي: لا تقبل دخولاً عكسياً إلا بعد حدوث "Liquidity Sweep" (ذيل طويل اخترق القمة وعاد للإغلاق تحتها) أو "شمعة رفض" واضحة. بدون هذا الدليل، استمر مع اتجاه الزخم الحالي.
+4.  أولوية الاتجاه على النماذج: في فريمات الدقائق (1-5 دقائق)، يتم إلغاء جميع نماذج وايكوف والمؤشرات التقليدية إذا كان الزخم الحالي قوياً (>8 نقاط في 3 شموع).
+
+🧠 **نظام الذكاء التحليلي المتكامل**
+
+🎲 **مصفاة القرار الذكية (وزن الزخم 50% من القرار):**
+🚀 [ ] قوة الزخم الحالي: اندفاع قوي (9-10) | اندفاع متوسط (6-8) | توازن (4-5) | ضعف متوسط (2-3) | ضعف قوي (0-1)
+**وزن هذا البند: 50% من القرار النهائي** - إذا كانت آخر 3 شموع خضراء، لا يمكن كتابة كلمة "بيع" في القرار الفني
+
+[ ] اتجاه الهيكل الأساسي: صاعد قوي (9-10) | صاعد ضعيف (6-8) | جانبي (4-5) | هابط ضعيف (2-3) | هابط قوي (0-1) **وزن: 15%**
+[ ] حجم التداول النسبي: كبير جداً (9-10) | كبير (6-8) | متوسط (4-5) | صغير (2-3) | معدوم (0-1) **وزن: 10%**
+[ ] توافق الإطارات الزمنية: توافق كامل (9-10) | توافق جزئي (6-8) | تعادل (4-5) | تضارب جزئي (2-3) | تضارب كلي (0-1) **وزن: 10%**
+[ ] جودة نمط الشموع: نموذج مثالي (9-10) | نموذج جيد (6-8) | غير واضح (4-5) | نموذج ضعيف (2-3) | لا نموذج (0-1) **وزن: 5%**
+[ ] قوة مستويات S/R: مستويات قوية (9-10) | مستويات جيدة (6-8) | مستويات ضعيفة (4-5) | لا مستويات (2-3) | اختراق كامل (0-1) **وزن: 5%**
+[ ] تأثير السياق الزمني: توقيت مثالي (9-10) | توقيت جيد (6-8) | توقيت عادي (4-5) | توقيت سيء (2-3) | توقيت خطير (0-1) **وزن: 3%**
+[ ] عوامل خارجية مؤثرة: ظروف مثالية (9-10) | ظروف جيدة (6-8) | ظروف محايدة (4-5) | ظروف سيئة (2-3) | ظروف خطيرة (0-1) **وزن: 2%**
+
+📈 **حساب النتيجة النهائية:** (مجموع النقاط الموزونة / 100 × 100)%
+
+🔰 **القواعد الأساسية**
+• المدرسة: SMC + ICT + دعم كلاسيكي + فلاتر الأرقام المستديرة + فلاتر السبريد + فلاتر الأخبار
+• الدرع الأساسي: {{news_warning if news_warning else "✅ الوضع آمن من الأخبار"}}
+• التصنيف الزمني: {{candle_category}}
+• استراتيجية التداول: {{trading_strategy}}
+• إدارة الحجم: {{position_sizing}}
+• أولوية الزخم: شموع ابتلاعية ≥80% + إغلاق فوق القمة السابقة = استمرار
+• **قاعدة Marubozu Supremacy (قانون سيادة الجسم):** الجسم الممتلئ >90% **يُلغي** أي ذيل <20% ويعتبره "جس نبض" للاستمرار - وليس ضعفاً أو انعكاساً.
+• **قاعدة Micro-Rejection:** شمعة عكسية حجمها <25% من السابقة → تُهمل تماماً
+• منطق OTC: 3 شموع قوية → الشمعة الرابعة بنفس الاتجاه
+• تصحيح الفريم الصغير: تجاهل MACD ووايكوف عند التعارض مع السلوك السعري في فريمات الدقائق
+• كشف وهم الزخم: تحقق من استدامة الحركة
+• **استخراج البيانات:** **أسعار دقيقة من المحور اليمني - من الصورة فقط (مع تقريب +/- 1 نقطة عند عدم الوضوح)**
+• **معامل الانزلاق السعري:** في فريمات S5, S10، خصم نقطة أمان من نقطة الدخول
+• **فلتر المسافة الحقيقية:** **إذا كانت المسافة بين السعر والهدف أقل من 5 نقاط (بعد الانزلاق)، القرار الإلزامي هو (احتفاظ 🟡) إلا في حالة استثناء اللمس الحتمي (زخم >85% نحو رقم مستدير)**
+• **فلتر السبريد:** **إذا كانت المسافة الصافية < 3 نقاط، القرار الإلزامي هو (احتفاظ 🟡) إلا مع استثناء اللمس الحتمي**
+• **فلتر الأخبار:** **إذا كانت شمعة الخبر > 300%، حظر لمدة 3 شموع**
+• **بروتوكول الفشل الذاتي:** إذا كانت الصورة غير واضحة (محور مقطوع، ضوضاء، ساعة غير واضحة) → توقف وأبلغ المستخدم
+• فلتر الجدوى: RR ≥ 1:2 بعد تعديل الأخبار
+• **المصداقية المطلقة:** **كن قاصياً في نقد الشارت؛ إذا لم تكن الإشارة واضحة بنسبة 90%، فالقرار الإلزامي هو (احتفاظ 🟡) ولا تخاطر بأموال المستخدم.**
+• **تقييد الوسطية:** قرار واضح فقط (شراء/بيع/احتفاظ) مع مستوى الثقة
+
+📌 **القواعد الجديدة المضافة (مع التعديلات):**
+
+⚡ **قاعدة الفتيلة القاتلة (المعدلة):**
+"إذا كان طول الذيل (Wick) يمثل أكثر من 60% من حجم الشمعة الكلي عند مستوى دعم أو مقاومة واضح، فهذا إشارة انعكاس قوية. تجاهل اتجاه الهيكل وادخل مع اتجاه الذيل."
+**【استثناء Marubozu Supremacy (إلغاء)】:** إذا كان الجسم الممتلئ >90% والذيل <20%، **يُلغى هذا القانون تماماً** ويعتبر الذيل "جس نبض" لاستمرار الاتجاه.
+**【استثناء Micro-Rejection (إلغاء)】:** إذا كانت الشمعة عكسية صغيرة <25% من السابقة → تُهمل
+
+💰 **قاعدة الأرقام المستديرة المحسنة (مع التعديل):**
+"السعر لا يرتد من الرقم المستدير (.000, .500) إلا بعد ملامسته بمسافة لا تقل عن 3 نقاط. قبل ذلك، يعتبر الرقم المستدير 'مغناطيس' يستهدف سحب السيولة."
+**【تعديل معامل الجذب】:** عند اقتراب السعر من رقم مستدير بمسافة أقل من 10 نقاط، تتغير وظيفة الرقم من 'منطقة ارتداد' إلى 'هدف سيولة'. يُمنع البيع حتى يتم لمس الرقم وتجاوزه بذيل.
+**【تعديل قاعدة اللمس الحتمي】:** إذا كان الزخم >85% باتجاه رقم مستدير، يتم إلغاء فلتر المسافة الدنيا (5 نقاط) والسماح بالدخول الفوري.
+
+🚀 **قانون الزخم الثلاثي:**
+"3 شموع متتالية بنفس اللون وبأجسام ممتلئة (>80%) = قطار سريع لا تقف أمامه. محظور تماماً التداول عكسه حتى مع وجود مقاومة قوية."
+
+🎯 **فلسفة الفجوات:**
+"السعر في الـ OTC يتحرك من فجوة إلى فجوة قبل الارتداد. لا تعطي إشارة انعكاس رئيسية إلا بعد ملاحظة FVG غير مغطاة في الاتجاه المعاكس."
+
+💵 **قاعدة السبريد الذهبية (مع الاستثناء):**
+"في الفريمات الصغيرة، السبريد يقتل الربح. إذا كان الهدف أقل من 5 نقاط على فريم S5/S10/S15، القرار الإلزامي هو (احتفاظ 🟡) بغض النظر عن قوة الإشارة."
+**【استثناء اللمس الحتمي (إلغاء)】:** إذا كان الزخم >85% والهدف رقم مستدير، **يُلغى هذا الحظر** ويُسمح بالدخول حتى مع هدف نقطتين.
+
+📰 **قاعدة ذيول الأخبار:**
+"أي ذيل يظهر أثناء شمعة حجمها > 300% من المتوسط لا يُحتسب في التحليل الفني. انتظر 3 شموع على الأقل بعد الخبر."
+
+🕐 **قاعدة ثواني الغدر (المعدلة - V2):**
+"في فريمات S5/S10 فقط، إذا كان الزخم صاعداً/هابطاً والقوة > 90%، **يتم تقليص فلتر حماية الدقيقة الأخيرة من 10 ثوانٍ إلى ثانيتين فقط**، للسماح باللحاق بالانفجار السعري. **(تحسب من ساعة المنصة)**."
+
+🔄 **قاعدة تكرار النمط (Pattern Fatigue):**
+"في الـ OTC، الخوارزمية تميل لتكرار النمط 3 مرات ثم تعكسه في الرابعة. إذا تكرر نفس السلوك السعري (مثلاً 3 كسر قمم متتالية بالذيل)، توقع أن الرابعة ستكون كسراً حقيقياً بالجسم أو انعكاساً عنيفاً."
+
+🛡️ **بروتوكول الفشل الذاتي (Self-Failure Protocol):**
+"إذا كانت الصورة تحتوي على ضوضاء بصرية عالية (مؤشرات كثيرة تغطي الشموع) أو إذا كان محور الأسعار مقطوعاً أو ساعة المنصة غير واضحة، يجب التوقف فوراً وإبلاغ المستخدم: 'الصورة غير صالحة للتحليل - يرجى إرسال صورة أوضح مع شموع ومحور أسعار واضحين'."
+
+📊 **المرحلة 1: الفحص الأولي والتحذيرات - الاستخراج من الصورة**
+1.1 **نظام الأمان المتكامل:**
+• **بروتوكول الفشل الذاتي:** التحقق من صحة الصورة أولاً
+• الدرع الأساسي (الأخبار)
+• درع السبريد (الفريمات الصغيرة) - مع استثناء اللمس الحتمي
+• كشف وهم الزخم: 3 شموع كبيرة، فحص الاستدامة - **من الشموع المرئية**
+• **التحقق الرقمي: استخراج الأسعار من المحور اليمني ومطابقتها مع الشارت - التركيز الكامل على الصورة (مع تقريب +/- 1 نقطة عند عدم الوضوح)**
+• توقيت إغلاق الشمعة: {{candle_closing_status}} - **مع استثناء ثواني الغدر للفريمات S5/S10 (تخفيض إلى ثانيتين) - محسوب من ساعة المنصة**
+
+1.2 **كشف مخاطر OTC:**
+• إشارات التلاعب: اختراق ثم عودة، انعكاس لحظي، حركة بدون حجم - **من سلوك الشموع**
+• **حماية محسنة:** تجنب آخر 10 ثوانٍ **(يُستثنى فريمات S5/S10 مع زخم >90%، يُسمح بالدخول حتى آخر ثانيتين) - محسوب من ساعة المنصة**
+• أوامر معلقة، SL +20%
+
+1.3 **تحليل الارتباط السعري:**
+• Forex: مؤشر الدولار، العملات المرتبطة، السندات
+• Stocks: المؤشر العام، القطاع، أرباح
+• Crypto: BTC، Altcoins، مؤشر الخوف والجشع
+
+💰 **المرحلة 2: التحليل الهيكلي - الاستخراج من الصورة**
+2.1 تحديد الهيكل: SMC + BOS/CHoCh بدقة - **من حركة السعر المرئية**
+2.2 استخراج الإحداثيات: High/Low، نسبة الحركة، دقة مطلقة - **من الصورة فقط**
+2.3 مصفاة التسعير: Discount للشراء، Premium للبيع، مناطق الطوارئ <20%/>80%
+
+💰 **المرحلة 3: السيولة والزخم - الاستخراج من الصورة**
+3.1 كشف وهم الزخم: فجوات، شموع خبر، ذيول طويلة، V-Reversal - **من الأنماط المرئية**
+3.2 خرائط السيولة: Equal Highs/Lows، Inducement، Liquidity Sweeps، FVG - **من القمم والقيعان**
+3.3 انعكاس الزخم المفاجئ: رفض بعد اندفاع، فشل اختراق، انخفاض حجم، دايفرجنس
+
+🎯 **المرحلة 4: القرار الذكي**
+• POI صالح + نموذج شموعي + سلوك سعري واضح + توافق الاتجاه
+• تعديل المخاطر حسب الأخبار: SL × {{news_risk_multiplier}}, الحجم ÷ {{news_risk_multiplier}}
+• **معامل الانزلاق السعري:** تطبيقه على نقاط الدخول في فريمات S5, S10
+• حظر كامل: أخبار قوية ±30 دقيقة، زخم وهمي، فشل الفلاتر، V-Reversal، تضارب المؤشرات
+• **حظر مشروط:** أهداف <5 نقاط على فريمات صغيرة **(يُستثنى مع استثناء اللمس الحتمي)**
+• **حل التعارض (هرم الأولويات V3):** الأولوية: **الزخم** ← **السيولة الخارجية (الهدف أولاً)** ← الفجوات ← الفتيلة ← الهيكل
+
+💡 **قاعدة كسر العرض بالاندفاع:**
+"إذا تعارضت منطقة العرض مع شمعة اندفاعية (Marubozu) تخترق مستويات السيولة، اعتبر المنطقة 'مكسورة' فوراً ولا تقترح البيع إلا بعد إعادة اختبار ناجحة أو فشل اختراق مؤكد (SFP) مع تأكيد من شمعتين."
+
+📊 **المرحلة 5: سلوك الشموع - الاستخراج من الصورة**
+• استجابة POI: رفض/امتصاص/جانبي، القوة: جسم/ذيول، الحجم - **من الشموع المرئية**
+• **قاعدة Marubozu Supremacy (قانون سيادة الجسم):** 
+  - **إذا كان الجسم الممتلئ >90% والذيل <20% من طول الشمعة**
+  - **لا يُعتبر الذيل إشارة ضعف أو انعكاس**
+  - **يُصنف كـ "جس نبض" لاستمرار الاتجاه**
+  - **يُلغي أي قاعدة تنادي بالانعكاس بناءً على هذا الذيل**
+• **قاعدة Micro-Rejection:**
+  - إذا ظهرت شمعة واحدة عكس الاتجاه (دوجي أو شمعة صغيرة)
+  - وحجمها أقل من 25% من حجم الشمعة الاندفاعية السابقة
+  - تُهمل هذه الشمعة تماماً ويستمر التحليل مع الاتجاه الأصلي
+• قانون 3 شموع: اختبار → تصحيح → اختراق
+• التتابع الزمني: شمعة 1 رد فعل، شمعة 2 تأكيد، شمعة 3 قرار
+• **قاعدة تكرار النمط:** إذا تكرر نفس السلوك 3 مرات، توقع انعكاساً في الرابعة
+
+📉 **المرحلة 6: MACD المحسن**
+• 1-5 دقائق: تجاهل التقاطعات البطيئة ودايفرجنس عند تعارضها مع زخم قوي
+• 15-60 دقائق: خط الصفر + دايفرجنس عند POI
+• حل التعارض: سلوك سعري واضح → تجاهل MACD
+
+⏰ **المرحلة 7: تعدد الإطارات**
+• HTF: الاتجاه العام، MTF1: العرض/الطلب، MTF2: OB نشطة، LTF: الدخول
+• توافق: 4/4=+40, 3/4=+30, 2/4=تقليل حجم 50%, 1/4=منع الدخول
+• استراتيجية: شراء = HTF صاعد → تصحيح → OB → إشارة، بيع = HTF هابط → ارتداد → OB → إشارة
+
+🎯 **المرحلة 8: درجات الثقة (معدلة)**
+• + نقاط: زخم قوي (9-10) ×2 = +40، POI +25، نموذج شموعي +20، سلوك واضح +25، توافق الإطارات +30، حجم أعلى +15، أخبار هادئة +20، BOS +30، تغطية فجوة +15، اختراق مع بداية ساعة جديدة +25
+• - خصومات: تعارض مؤشرات -20، أخبار قوية -25، زخم وهمي -15، V-Reversal قريب -30، سيولة OTC منخفضة -10، بيع فوق 50% من موجة صاعدة بدون دخول Premium -40
+• **خصومات مشروطة:** 
+  - هدف <5 نقاط على فريم صغير **بدون** استثناء اللمس الحتمي → -50
+  - شمعة خبر >300% → -60
+• مستويات: 95-100 💥💥, 85-94 💥, 70-84 🔥, 55-69 ⚡, 40-54 ❄️, <40 🚫
+
+📊 **المرحلة 9: الحجم المتقدم**
+• اختراق >150%, امتصاص: حجم عالي + حركة محدودة
+• تصحيح <70%, انعكاس: حجم مرتفع مفاجئ
+• نقاط التحكم: POC = دعم/مقاومة, VA 70% توازن, EVA خارج VA = قوة
+• شمعة الخبر: حجم > 300% من المتوسط = حظر تحليل
+
+🔄 **المرحلة 10: إدارة الصفقات**
+• Long: TP1 SL للتعادل +40%, TP2 أعلى شمعة +30%, TP3 30% بترايل
+• Short: نفس النمط
+• **معامل الانزلاق السعري:** خصم نقطة أمان من نقطة الدخول في فريمات S5, S10
+• OTC حماية: SL +20%, بعد 3 شموع، حجم 33/33/34
+• **حماية السبريد (المعدلة):** لا تداول على فريمات S5/S10/S15 بأهداف <5 نقاط **إلا مع استثناء اللمس الحتمي**
+
+🧠 **المرحلة 11: التحليل السلوكي والتلاعب**
+• الخوف، الجشع، التردد، الاستسلام
+• التلاعب: Liquidity Sweep, Stop Hunt, False Breakout, Bait Pattern
+• سلوك OTC: نمط 3 مرات، اختراقات محددة، شمعة تغير السياق، أوامر معلقة
+• التمييز: 
+  - ذيل + عودة = فخ
+  - جسم كامل + إغلاق = BOS
+  - **【قانون سيادة الجسم】 جسم ممتلئ >90% + ذيل <20% = جس نبض (استمرار - وليس انعكاس)**
+  - **【Micro-Rejection】 شمعة عكسية <25% = تُهمل (تجميع سيولة)**
+• ذيول الأخبار: لا تُحتسب في التحليل
+
+⚠️ **المرحلة 12: تثبيت القرار النهائي**
+1.  **قرار ثابت لكل صورة متطابقة**
+2.  **لا تغيير إلا عند تغير واضح في الشارت**
+3.  **تأكيد مزدوج:** القرار صحيح عند ظهور مرتين بنفس المعطيات
+4.  **تحقق من كل الأسعار والمستويات في الصورة بدقة (مع تقريب +/- 1 نقطة عند الضرورة)**
+5.  **تحقق من السبريد:** الهدف > 5 نقاط للفريمات الصغيرة **(أو تفعيل استثناء اللمس الحتمي)**
+6.  **تحقق من الأخبار:** لا يوجد شمعة حجم > 300% في آخر 3 شموع
+7.  **تحقق من استثناءات الزخم:** هل تم تفعيل استثناء اللمس الحتمي أو استثناء ثواني الغدر أو Marubozu Supremacy أو Micro-Rejection؟
+
+🎯 **النظام الزمني الذكي - حساب وقت الوصول:**
+
+**🔧 إعدادات النظام الحالية:**
+• إطار الشموع: {{candle}} (تم ضبطه من قبل المستخدم)
+• استراتيجية التداول: {{trading_strategy}}
+• جلسة السوق: {{session_name}} ({{session_time}})
+• وقت التحليل الفعلي: {{gaza_time.strftime('%H:%M:%S بتوقيت غزة')}} **(مرجع توثيقي)**
+• **الوقت على المنصة (من الصورة): [يتم استخراجه من الصورة] - هذا هو المرجع الوحيد لدقائق الغدر والتوقيت**
+
+**📊 المرحلة 1 - استخراج البيانات من الصورة:**
+1.  **ابحث عن ساعة المنصة في الشارت (عادة في الزاوية اليسرى/اليمنى السفلى) - هذا هو المرجع الوحيد**
+2.  **سجل الوقت الحالي الذي تراه على الشارت: [ساعة:دقيقة:ثانية] - من الصورة فقط**
+3.  **قدّر المسافة البصرية بين السعر الحالي والهدف (بعدد النقاط) - من الصورة فقط**
+4.  **انظر إلى آخر 3 شموع واحسب متوسط حركتها (نقاط/شمعة) - من الصورة فقط**
+5.  **عدد الشموع المطلوبة = المسافة ÷ متوسط حركة الشمعة**
+
+**📋 البيانات المطلوبة من الصورة:**
+• **الوقت على المنصة:** [مثال: 14:25:30] **← استخرج من الصورة (المرجع الوحيد)**
+• **المسافة للهدف:** [عدد النقاط] نقطة **← قس من الصورة**
+• **متوسط حركة الشموع:** [نقاط/شمعة] **← احسب من الشموع المرئية**
+• **الشموع المتوقعة:** [النتيجة] شمعة **← استنتج من البيانات**
+
+**🧮 المرحلة 2 - الحساب الرياضي الدقيق مع معامل الانزلاق (بدون تخمين بصري):**
+1.  **البيانات المطلوبة كتابة في التحليل:**
+    • **السعر الحالي الملاحظ:** [يقرأ من المحور Y] 
+    • **سعر الهدف الملاحظ:** [يقرأ من المستوى المستهدف]
+    • **الفرق الرياضي:** |السعر الحالي - سعر الهدف| = [X] نقطة
+
+2.  **تطبيق معامل الانزلاق السعري (للفريمات S5, S10 فقط):**
+    • إذا كان {{candle}} في [S5, S10]:
+    • **نقطة الدخول المعدلة = السعر الحالي + (نقطة أمان واحدة في اتجاه الصفقة)**
+    • **المسافة الفعلية = المسافة - 1 نقطة**
+
+3.  **حساب السرعة من الصورة:**
+    • **الشمعة الأخيرة:** تحركت [Y] نقطة
+    • **متوسط آخر 3 شموع:** [Z] نقطة/شمعة
+    • **المعادلة:** عدد الشموع = [X] ÷ [Z] = [N] شمعة
+
+4.  **التحويل الزمني:**
+    • فريم الشموع: {{candle}} = {{
+        'S5': '5 ثواني', 'S10': '10 ثواني', 'S15': '15 ثواني',
+        'S30': '30 ثانية', 'M1': '60 ثانية', 'M5': '300 ثانية'
+    }}.get('{{candle}}', 'غير معروف')
+    
+    • **الوقت الإجمالي:** [N] × [مدة الشمعة] = [الوقت بالثواني]
+
+5.  **التأكيد المزدوج:**
+    • جميع الحسابات يجب أن تكون مكتوبة
+    • يجب أن تتطابق النتائج مع التقدير البصري
+    • في حالة التناقض، الأفضلية للحساب الرياضي
+
+⏰ **مطلوب منك إضافة قسم "التوقيت الذكي" في تحليلك:**
+
+**🕐 التحليل الزمني المتقدم:**
+• **الوقت على المنصة (المرجع الوحيد):** [أدخل الوقت من الصورة] ← **ركز على استخراج هذا من الصورة**
+• الفريم المستخدم: {{candle}}
+• **المسافة المقدرة:** [X] نقطة ← **اقرأ من المحور اليميني**
+• **سرعة الشموع:** [Y] نقطة/شمعة ← **احسب من الشموع المرئية**
+• **الشموع المتوقعة:** [Z] شمعة من نوع {{candle}} ← **استنتج من البيانات**
+
+**🎯 نتائج التوقيت:**
+• وقت البداية (من الشارت): [الوقت] ← **من ساعة المنصة**
+• مدة الشمعة الواحدة: [تحويل {{candle}} إلى زمن]
+• وقت الوصول المتوقع: **[ساعة:دقيقة:ثانية بضبط]**
+• المدة الإجمالية: [تحويل إلى دقائق/ثواني]
+
+**🚀 التوصية الزمنية العملية:**
+"بناءً على سرعة الشموع في فريم **{{candle}}** واستراتيجية **{{trading_strategy}}**، السعر يحتاج **[عدد الشموع]** شمعة (≈[الزمن]) للوصول للهدف. التوقيت الأمثل للوصول: **[وقت الوصول]** - إبدأ العد التنازلي الآن! **(محسوب من ساعة المنصة)**"
+
+✅ **بروتوكول التأكيد النهائي (Final Confirmation Protocol):**
+قبل إصدار أي قرار، قم بالفحص النهائي المتكامل:
+
+1.  **بروتوكول الفشل الذاتي:** هل الصورة صالحة للتحليل؟ ✓
+2.  **التحقق من تمرير المتغيرات البرمجية:** ✓ (جميع المتغيرات مستلمة)
+3.  **التحقق من المسافة الحقيقية (<5 نقاط → احتفاظ) مع معامل الانزلاق وفحص استثناء اللمس الحتمي:** ✓
+4.  **التحقق من فلتر السبريد (المسافة الصافية > 3 نقاط) مع فحص استثناء اللمس الحتمي:** ✓
+5.  **التحقق من حالة الخبر (لا تذبذب عنيف >300%):** ✓
+6.  **التحقق من هرم الأولويات V3 (3 شموع >85% → إلغاء الفتيلة، أولوية السيولة الخارجية):** ✓
+7.  **التحقق من أسباب المنع (7 أسباب) مع فحص الاستثناءات (اللمس الحتمي، Marubozu Supremacy، Micro-Rejection، ثواني الغدر):** ✓
+8.  **التحقق من الحسابات الرياضية (تطابق بصري/رياضي مع تقريب +/- 1 نقطة):** ✓
+9.  **التحقق من شروط التأكيد (الابتلاع 50% / Marubozu Supremacy / Micro-Rejection):** ✓
+10. **التحقق من فلتر الإنهاك (لا ذروة):** ✓
+11. **التحقق من استثناءات الزخم (ثواني الغدر للفريمات S5/S10 مع زخم >90%):** ✓
+12. **التحقق من قاعدة تكرار النمط (Pattern Fatigue):** ✓
 
 🎯 **القاعدة الذهبية:**
-إذا شككت (<90% ثقة) أو فشل أي فلتر → احتفاظ 🟡
+"إذا كان هناك شك ولو بسيط (أقل من 90% ثقة)، أو إذا فشل أي من الفلاتر ولم يتوفر استثناء واضح، أو إذا كانت الصورة غير صالحة، القرار الإلزامي هو (احتفاظ 🟡) مع ذكر سبب الرفض بوضوح. السلامة أولاً قبل الربحية."
 
-📊 **تنسيق الإجابة النهائي (الالتزام بهذا الترتيب) بشكل مختصرآ:**
+**🔍 توجيه نهائي: التركيز على استخراج البيانات من الصورة فقط**
+تأكد من أن كل البيانات التي تستخدمها في التحليل مستخرجة من الصورة المرفقة فقط. لا تفترض أي أرقام أو أوقات. كل ما تحتاجه موجود في الصورة:
+
+1.  **ركز على الأسعار:** اقرأها من المحور اليميني بدقة (مع تقريب +/- 1 نقطة عند عدم الوضوح)
+2.  **ركز على الزمن:** ابحث عن ساعة المنصة واقرأ الوقت - **هذا هو المرجع الوحيد**
+3.  **ركز على الشموع:** حلل كل شمعة بشكل منفصل
+4.  **ركز على المستويات:** حدد الدعم/المقاومة من حركة السعر
+5.  **تطبيق هرم الأولويات V3:** **الزخم (>85% ماروبوزو)** ← **السيولة الخارجية (الهدف أولاً)** ← الفجوات ← الفتيلة ← الهيكل
+6.  **تطبيق فلتر المسافة:** إذا كانت المسافة <5 نقاط → احتفاظ فوري **(إلا مع استثناء اللمس الحتمي) - مع مراعاة معامل الانزلاق**
+7.  **تطبيق فلتر السبريد:** إذا كان الهدف <5 نقاط على فريم صغير → احتفاظ **(إلا مع استثناء اللمس الحتمي)**
+8.  **تطبيق فلتر الأخبار:** إذا كانت شمعة >300% من المتوسط → حظر 3 شموع
+9.  **تطبيق شرط التأكيد:** لا دخول عكسي بدون ابتلاع 50% **(مع استثناء Marubozu Supremacy و Micro-Rejection)**
+10. **تطبيق استثناءات الزخم:** 
+    • **اللمس الحتمي:** زخم >85% + رقم مستدير = إلغاء فلتر 5 نقاط وفلتر السبريد
+    • **ثواني الغدر:** فريم S5/S10 + زخم >90% = تقليص الحظر إلى ثانيتين فقط والسماح بالدخول **(محسوب من ساعة المنصة)**
+    • **سيادة الجسم:** جسم >90% + ذيل <20% = إلغاء إشارات الانعكاس (جس نبض)
+    • **Micro-Rejection:** شمعة عكسية <25% = تجاهل (تجميع سيولة)
+11. **تطبيق بروتوكول الفشل الذاتي:** إذا كانت الصورة غير واضحة → توقف وأبلغ المستخدم
+12. **تطبيق قاعدة تكرار النمط:** إذا تكرر النمط 3 مرات، توقع انعكاساً في الرابعة
+13. **فحص أسباب المنع:** ابحث عن سبب واحد يمنع الصفقة قبل إعطاء أي إشارة
+14. **الوصف البصري أولاً:** ابدأ بوصف الشموع الثلاث الأخيرة قبل أي تحليل
+15. **الحسابات الرياضية:** اكتب المعادلات بدلاً من الاعتماد على التخمين البصري
+16. **كشف الإنهاك:** احذر الشموع الضخمة بالقرب من الأهداف
+
+**📊 المعطيات الفنية:**
+• إطار الزمن الحالي: {{candle}} ({{candle_category}})
+• فريم التحقق: {{verification_timeframe}} (مخصص للتحقق من كسر الهيكل)
+• استراتيجية التداول: {{trading_strategy}}
+• جلسة السوق: {{session_name}} ({{session_time}})
+• حالة السيولة: {{session_vol}}
+• تأثير الأخبار: {{news_impact}} (معامل ×{{news_risk_multiplier}})
+• **حالة دقيقة الغدر (محسوبة من ساعة المنصة):** {{last_minute_status}} **(مع استثناءات فريمات S5/S10: تخفيض الحظر إلى ثانيتين إذا زخم >90%)**
+• {{candle_closing_status}}
+• الوقت المتبقي للإغلاق: {{seconds_remaining}} ثانية **(محسوب من ساعة المنصة)**
+• توقيت التحليل: {{gaza_time.strftime('%Y-%m-%d %H:%M:%S بتوقيت غزة')}} **(مرجع توثيقي)**
+• المستوى: Professional باك تيست 15000 صفقة
+
+🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصر:
 
 📊 التحليل الفني المتقدم:
-• البصمة الزمنية: {{kill_zone_status}}
-• تطبيق قانون الفتيلة: [نعم/لا] - نسبة الذيل: [٪] (يُلغى في حالة سيادة الجسم)
+• **بروتوكول الفشل الذاتي:** [الصورة صالحة / الصورة غير صالحة - يرجى إرسال صورة أوضح]
+• البصمة الزمنية: {{kill_zone_status}} **(مرجع توثيقي)**
+• **الوقت على المنصة (المرجع):** [الوقت المستخرج من الصورة]
+• تطبيق قانون الفتيلة: [نعم/لا] - نسبة الذيل: [٪] (يُلغى في حالة سيادة الجسم أو Micro-Rejection)
 • حالة الهيكل: (صاعد/هابط) + (توافق 4/4 إطارات: نعم / لا )
 • خريطة السيولة: (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
 • الفجوات السعرية: (المناطق التي سيعود السعر لتغطيتها)
 
-🎯 * الإشارة التنفيذية:*
+🎯 الإشارة التنفيذية:
+• **معامل الانزلاق السعري المطبق:** [نعم / لا] (للفريمات S5, S10)
+• **استثناءات الزخم المطبقة:** [اللمس الحتمي / ثواني الغدر / سيادة الجسم / Micro-Rejection / لا شيء]
+• **قاعدة تكرار النمط:** [تم رصد 3 تكرارات / لا يوجد]
 • السعر الحالي: [ السعر الدقيق من الشارت ]
-• حالة الشمعة: [مفتوحة / مغلقة] [ حمراء 🔴  / خضراء 🟢 ] - الوقت المتبقي: [ وقت دقيق من شارت ]
+• **نقطة الدخول المعدلة (بعد معامل الانزلاق إن وجد):** [السعر]
+• حالة الشمعة: [مفتوحة / مغلقة] [ حمراء 🔴  / خضراء 🟢 ] - الوقت المتبقي: [ وقت دقيق من ساعة المنصة ]
 • القرار الفني: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡)
 • قوة الإشارة: (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
 • نقطة الدخول: [السعر الدقيق بناءً على OB + شرط الإغلاق]
@@ -3751,14 +3675,13 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 🎯 TP3: [سيولة خارجية أو سد فجوة سعرية]
 • وقف الخسارة: [السعر مع 3 طبقات حماية]
 • المدة المتوقعة: [عدد الدقائق] (بناءً على معادلة الزخم السعري)
-• وقت الذروة المتوقع: [مثلاً: خلال الـ 3 شموع القادمة]
+• وقت الذروة المتوقع: [مثلاً: خلال الـ 3 شموع القادمة] **(محسوب من ساعة المنصة)**
 • الحالة النفسية: [خوف 🥺 / جشع 🤑 / تردد 🤌 / استسلام 👎]
 • علامات التلاعب: [موجودة ✔️ / غير موجودة ❎]
 
 ⚠️ إدارة المخاطر:
 • مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
 • نقطة الإلغاء: [السعر الذي يفسد التحليل]
-• فريم التحقق: {{verification_timeframe}}
 
 **🎯 التعليمات النهائية للتركيز:**
 1.  **استخرج كل البيانات من الصورة فقط**
@@ -3889,15 +3812,16 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN_MENU
     
     keyboard = [
-        ["👥 عرض المستخدمين", "🔑 عرض الأكواد"],
-        ["➕ توليد كود", "⏱️ تمديد اشتراك"],
-        ["🗑️ حذف مستخدم", "📊 إحصائيات"],
+        ["👥 عرض المستخدمين", "➕ إضافة اشتراك"],
+        ["🗑️ إلغاء اشتراك", "⏱️ تمديد اشتراك"],
+        ["🚫 حظر مستخدم", "✅ إلغاء حظر"],
+        ["📢 إذاعة للمشتركين", "📊 إحصائيات"],
         ["🔙 العودة للقائمة الرئيسية"]
     ]
     
     await update.message.reply_text(
         "👑 **لوحة تحكم المشرف** 👑\n\n"
-        "🔑 **نظام أكواد الاشتراك نشط**\n"
+        "🔑 **نظام إدارة الاشتراكات المتطور V2**\n"
         "اختر الإجراء المطلوب:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -3922,220 +3846,120 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN_MENU
     
     elif user_message == "👥 عرض المستخدمين":
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT u.user_id, u.username, u.subscription_start, u.subscription_end, u.is_admin,
-                   COALESCE(c.code, '') as activation_code
-            FROM users u
-            LEFT JOIN user_subscriptions c ON u.user_id = c.user_id
-            ORDER BY u.subscription_end DESC
-        """)
-        users = cursor.fetchall()
-        conn.close()
+        users = SubscriptionSystem.get_all_users()
         
         if not users:
             await update.message.reply_text("📭 لا يوجد مستخدمين بعد.")
         else:
             msg = "👥 **قائمة المستخدمين:**\n\n"
             for u in users:
-                uid, uname, sstart, send, is_admin, code = u
-                status = "👑 مشرف" if is_admin == 1 else "👤 مستخدم"
-                sub_info = f"📅 الاشتراك: {send[:16] if send else 'غير محدد'}"
-                code_info = f"🔑 الكود: `{code}`" if code else ""
-                msg += f"• {uname or uid} - {status}\n  {sub_info}\n  {code_info}\n\n"
+                uid, username, first_name, created, last_active, is_blocked, sub_type, sub_name, start_date, end_date, is_active = u
+                
+                # تحديد الحالة
+                if is_blocked == 1:
+                    status = "🚫 محظور"
+                elif is_active == 1 and (not end_date or datetime.fromisoformat(end_date) > datetime.now()):
+                    status = "✅ نشط"
+                else:
+                    status = "❌ غير نشط"
+                
+                # معلومات الاشتراك
+                sub_info = f"{sub_name or 'لا يوجد اشتراك'}"
+                end_info = f" حتى {end_date[:16]}" if end_date else " (غير محدد)"
+                
+                # اسم العرض
+                display_name = first_name or username or str(uid)
+                
+                msg += f"• **{display_name}**\n"
+                msg += f"  🆔 `{uid}`\n"
+                msg += f"  📅 الاشتراك: {sub_info}{end_info}\n"
+                msg += f"  ⚡ الحالة: {status}\n"
+                msg += f"  📆 آخر نشاط: {last_active[:16] if last_active else 'غير معروف'}\n\n"
             
             for part in split_message(msg, 4000):
                 await update.message.reply_text(part, parse_mode="Markdown")
         
         return ADMIN_MENU
     
-    elif user_message == "🔑 عرض الأكواد":
-        codes = CodeGenerator.list_all_codes()
-        
-        if not codes:
-            await update.message.reply_text("📭 لا توجد أكواد بعد.")
-        else:
-            msg = "🔑 **قائمة أكواد الاشتراك:**\n\n"
-            for code in codes:
-                c_code, duration, created_at, used_by, used_at, status, is_active = code
-                
-                # تنسيق المدة
-                if duration == 0:
-                    duration_text = "غير محدد"
-                elif duration < 86400:
-                    duration_text = f"{duration//3600} ساعة"
-                else:
-                    duration_text = f"{duration//86400} يوم"
-                
-                # الحالة
-                if used_by:
-                    status_text = f"✅ مستخدم بواسطة {used_by}"
-                    if used_at:
-                        status_text += f" في {used_at[:16]}"
-                elif status == 'cancelled':
-                    status_text = "🔴 ملغي"
-                elif status == 'revoked':
-                    status_text = "⛔ ملغي بعد الاستخدام"
-                elif is_active:
-                    status_text = "🟢 متاح"
-                else:
-                    status_text = "🔴 غير نشط"
-                
-                msg += f"• `{c_code}`\n  📅 المدة: {duration_text}\n  📆 أنشئ: {created_at[:16]}\n  {status_text}\n\n"
-            
-            for part in split_message(msg, 4000):
-                await update.message.reply_text(part, parse_mode="Markdown")
-        
-        return ADMIN_MENU
-    
-    elif user_message == "➕ توليد كود":
+    elif user_message == "➕ إضافة اشتراك":
         await update.message.reply_text(
-            "➕ **توليد كود اشتراك جديد**\n\n"
-            "أرسل المدة بالثواني:\n"
-            "• `3600` - ساعة\n"
-            "• `86400` - يوم\n"
-            "• `604800` - أسبوع\n"
-            "• `2592000` - شهر\n"
-            "• `0` - غير محدد\n\n"
-            "مثال: `86400`",
+            "➕ **إضافة اشتراك لمستخدم**\n\n"
+            "أرسل معرف المستخدم (User ID):\n"
+            "مثال: `123456789`",
             parse_mode="Markdown"
         )
-        return GENERATE_CODE
+        return ADD_SUBSCRIPTION
     
-    elif user_message == "⏱️ تمديد اشتراك":
+    elif user_message == "🗑️ إلغاء اشتراك":
         await update.message.reply_text(
-            "⏱️ **تمديد اشتراك مستخدم**\n\n"
-            "أرسل معرف المستخدم والمدة الجديدة:\n"
-            "مثال: `123456789 86400`",
-            parse_mode="Markdown"
-        )
-        return SET_USER_DURATION
-    
-    elif user_message == "🗑️ حذف مستخدم":
-        await update.message.reply_text(
-            "🗑️ **حذف مستخدم**\n\n"
-            "أرسل معرف المستخدم للحذف:\n"
+            "🗑️ **إلغاء اشتراك مستخدم**\n\n"
+            "أرسل معرف المستخدم للإلغاء:\n"
             "مثال: `123456789`",
             parse_mode="Markdown"
         )
         return REMOVE_USER
     
+    elif user_message == "⏱️ تمديد اشتراك":
+        await update.message.reply_text(
+            "⏱️ **تمديد اشتراك مستخدم**\n\n"
+            "أرسل معرف المستخدم والمدة الإضافية بالثواني:\n"
+            "مثال: `123456789 86400` لتمديد يوم",
+            parse_mode="Markdown"
+        )
+        return SET_USER_DURATION
+    
+    elif user_message == "🚫 حظر مستخدم":
+        await update.message.reply_text(
+            "🚫 **حظر مستخدم**\n\n"
+            "أرسل معرف المستخدم للحظر:\n"
+            "مثال: `123456789`\n\n"
+            "يمكنك إضافة سبب بعد المعرف (اختياري)",
+            parse_mode="Markdown"
+        )
+        return REMOVE_USER
+    
+    elif user_message == "✅ إلغاء حظر":
+        await update.message.reply_text(
+            "✅ **إلغاء حظر مستخدم**\n\n"
+            "أرسل معرف المستخدم لإلغاء الحظر:\n"
+            "مثال: `123456789`",
+            parse_mode="Markdown"
+        )
+        return REMOVE_USER
+    
+    elif user_message == "📢 إذاعة للمشتركين":
+        await update.message.reply_text(
+            "📢 **إذاعة للمشتركين**\n\n"
+            "أرسل الرسالة التي تريد إذاعتها لجميع المشتركين النشطين:",
+            parse_mode="Markdown"
+        )
+        return BROADCAST_MESSAGE
+    
     elif user_message == "📊 إحصائيات":
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        stats = SubscriptionSystem.get_stats()
         
-        cursor.execute("SELECT COUNT(*) FROM users")
-        total_users = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM users WHERE subscription_end > datetime('now') OR subscription_end IS NULL")
-        active_users = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM users WHERE subscription_end < datetime('now') AND subscription_end IS NOT NULL")
-        expired_users = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM users WHERE is_admin = 1")
-        admins = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM chat_history WHERE date(timestamp) = date('now')")
-        today_analyses = cursor.fetchone()[0]
-        
-        conn.close()
-        
-        # إحصائيات الأكواد
-        codes = CodeGenerator.list_all_codes()
-        total_codes = len(codes)
-        used_codes = sum(1 for c in codes if c[3] is not None)  # used_by not null
-        available_codes = sum(1 for c in codes if c[5] == 'active' and c[3] is None)  # status active and not used
-        
-        stats = (
-            "📊 **إحصائيات النظام:**\n\n"
-            f"👥 إجمالي المستخدمين: {total_users}\n"
-            f"✅ المستخدمين النشطين: {active_users}\n"
-            f"❌ المنتهية اشتراكاتهم: {expired_users}\n"
-            f"👑 عدد المشرفين: {admins}\n"
-            f"📊 تحليلات اليوم: {today_analyses}\n\n"
-            f"🔑 **إحصائيات الأكواد:**\n"
-            f"📦 إجمالي الأكواد: {total_codes}\n"
-            f"✅ الأكواد المستخدمة: {used_codes}\n"
-            f"🟢 الأكواد المتاحة: {available_codes}"
+        stats_text = (
+            "📊 **إحصائيات النظام المتقدم:**\n\n"
+            f"👥 إجمالي المستخدمين: {stats.get('total_users', 0)}\n"
+            f"🚫 المحظورين: {stats.get('blocked_users', 0)}\n"
+            f"✅ المشتركين النشطين: {stats.get('active_users', 0)}\n\n"
+            f"📈 **الاشتراكات حسب النوع:**\n"
         )
         
-        await update.message.reply_text(stats, parse_mode="Markdown")
+        for sub_type, count in stats.get('subscriptions_by_type', {}).items():
+            stats_text += f"  • {sub_type}: {count}\n"
+        
+        stats_text += f"\n📊 **أكثر الميزات استخداماً:**\n"
+        for feature, count in list(stats.get('feature_usage', {}).items())[:5]:
+            stats_text += f"  • {feature}: {count} مرة\n"
+        
+        await update.message.reply_text(stats_text, parse_mode="Markdown")
         return ADMIN_MENU
     
     return ADMIN_MENU
 
-async def handle_generate_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة توليد كود جديد - نسخة محسنة"""
-    user_id = update.effective_user.id
-    
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ ليس لديك صلاحية.")
-        return MAIN_MENU
-    
-    try:
-        duration = int(update.message.text.strip())
-        
-        # توليد الكود
-        code = CodeGenerator.create_code(duration)
-        
-        if not code:
-            await update.message.reply_text(
-                "❌ **فشل في توليد الكود**\n\n"
-                "يرجى التحقق من:\n"
-                "• صلاحية قاعدة البيانات\n"
-                "• المساحة التخزينية\n"
-                "• ثم حاول مرة أخرى",
-                parse_mode="Markdown"
-            )
-            return ADMIN_MENU
-        
-        # التحقق المباشر من وجود الكود
-        conn = sqlite3.connect(CODES_DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT code FROM subscription_codes WHERE code = ?", (code,))
-        saved = cursor.fetchone()
-        conn.close()
-        
-        if not saved:
-            await update.message.reply_text(
-                "❌ **تم توليد الكود ولكن فشل في الحفظ**\n\n"
-                "يرجى إبلاغ المشرف الفني",
-                parse_mode="Markdown"
-            )
-            return ADMIN_MENU
-        
-        # نسخ احتياطي
-        DataProtection.backup_codes_db()
-        
-        # تنسيق المدة
-        if duration == 0:
-            duration_text = "غير محدد"
-        elif duration < 86400:
-            duration_text = f"{duration//3600} ساعة"
-        else:
-            duration_text = f"{duration//86400} يوم"
-        
-        await update.message.reply_text(
-            f"✅ **تم توليد كود جديد بنجاح!**\n\n"
-            f"🔑 **الكود:** `{code}`\n"
-            f"📅 **المدة:** {duration_text}\n\n"
-            f"📋 يمكنك نسخ الكود وإرساله للمستخدم.\n"
-            f"⚠️ الكود صالح للاستخدام مرة واحدة فقط.\n\n"
-            f"✅ تم حفظ الكود في قاعدة البيانات بنجاح.",
-            parse_mode="Markdown"
-        )
-        
-    except ValueError:
-        await update.message.reply_text("❌ الرجاء إرسال رقم صحيح للمدة.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {str(e)}")
-    
-    return ADMIN_MENU
-
-async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة حذف مستخدم"""
+async def handle_add_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إضافة اشتراك لمستخدم"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
@@ -4145,29 +3969,222 @@ async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         target_user_id = int(update.message.text.strip())
         
-        if target_user_id == ADMIN_ID:
-            await update.message.reply_text("❌ لا يمكن حذف المشرف الرئيسي.")
-            return ADMIN_MENU
+        # حفظ معرف المستخدم في السياق
+        context.user_data['target_user_id'] = target_user_id
         
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        # عرض خيارات المدة
+        keyboard = [
+            ["🕐 ساعة", "📅 يوم"],
+            ["📆 أسبوع", "📅 شهر"],
+            ["📅 سنة", "♾️ مدى الحياة"],
+            ["إلغاء"]
+        ]
         
-        cursor.execute("DELETE FROM chat_history WHERE user_id = ?", (target_user_id,))
-        cursor.execute("DELETE FROM users WHERE user_id = ?", (target_user_id,))
-        
-        conn.commit()
-        conn.close()
-        
-        # تسجيل التغيير وإنشاء نسخة احتياطية
-        log_data_change("delete_user", target_user_id, "user deleted")
-        DataProtection.backup_database()
-        
-        await update.message.reply_text(f"✅ تم حذف المستخدم {target_user_id} بنجاح.")
+        await update.message.reply_text(
+            f"➕ **إضافة اشتراك للمستخدم:** `{target_user_id}`\n\n"
+            f"اختر مدة الاشتراك:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True),
+            parse_mode="Markdown"
+        )
+        return SELECT_DURATION
         
     except ValueError:
         await update.message.reply_text("❌ الرجاء إرسال معرف المستخدم (أرقام فقط).")
-    except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {str(e)}")
+        return ADD_SUBSCRIPTION
+
+async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار مدة الاشتراك"""
+    user_id = update.effective_user.id
+    duration_choice = update.message.text.strip()
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية.")
+        return MAIN_MENU
+    
+    if duration_choice == "إلغاء":
+        return await start_admin_panel(update, context)
+    
+    # تحديد نوع الاشتراك حسب الاختيار
+    subscription_type = None
+    if duration_choice == "🕐 ساعة":
+        subscription_type = "hourly"
+    elif duration_choice == "📅 يوم":
+        subscription_type = "daily"
+    elif duration_choice == "📆 أسبوع":
+        subscription_type = "weekly"
+    elif duration_choice == "📅 شهر":
+        subscription_type = "monthly"
+    elif duration_choice == "📅 سنة":
+        subscription_type = "yearly"
+    elif duration_choice == "♾️ مدى الحياة":
+        subscription_type = "lifetime"
+    else:
+        await update.message.reply_text("❌ اختيار غير صالح.")
+        return SELECT_DURATION
+    
+    target_user_id = context.user_data.get('target_user_id')
+    if not target_user_id:
+        await update.message.reply_text("❌ خطأ: لم يتم تحديد المستخدم.")
+        return ADMIN_MENU
+    
+    # إضافة الاشتراك
+    success, result = SubscriptionSystem.add_subscription(
+        user_id=target_user_id,
+        subscription_type=subscription_type,
+        added_by=user_id,
+        reason=f"Added by admin via panel"
+    )
+    
+    if success:
+        sub_info = result
+        end_info = ""
+        if sub_info['end_date']:
+            end_datetime = datetime.fromisoformat(sub_info['end_date'])
+            end_info = f"ينتهي في: {end_datetime.strftime('%Y-%m-%d %H:%M')}"
+        else:
+            end_info = "غير محدد المدة (مدى الحياة)"
+        
+        await update.message.reply_text(
+            f"✅ **تم إضافة الاشتراك بنجاح!**\n\n"
+            f"👤 المستخدم: `{target_user_id}`\n"
+            f"📅 النوع: {sub_info['subscription_name']}\n"
+            f"📆 تاريخ البداية: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+            f"{end_info}",
+            parse_mode="Markdown"
+        )
+        
+        # محاولة إرسال إشعار للمستخدم
+        try:
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=f"✅ **تم تفعيل اشتراكك في Obeida Trading!**\n\n"
+                     f"📅 نوع الاشتراك: {sub_info['subscription_name']}\n"
+                     f"{end_info}\n\n"
+                     f"أرسل /start لبدء استخدام البوت",
+                parse_mode="Markdown"
+            )
+        except:
+            await update.message.reply_text("⚠️ لم أتمكن من إرسال إشعار للمستخدم (ربما قام بحظر البوت).")
+        
+    else:
+        await update.message.reply_text(f"❌ فشل في إضافة الاشتراك: {result}")
+    
+    # تنظيف السياق
+    if 'target_user_id' in context.user_data:
+        del context.user_data['target_user_id']
+    
+    return ADMIN_MENU
+
+async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة إلغاء اشتراك أو حظر مستخدم"""
+    user_id = update.effective_user.id
+    previous_message = update.message.text.strip()
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية.")
+        return MAIN_MENU
+    
+    try:
+        # التحقق مما إذا كان الإجراء السابق هو حظر أو إلغاء حظر
+        if context.user_data.get('last_action') == 'block':
+            target_user_id = int(previous_message.split()[0])
+            reason = ' '.join(previous_message.split()[1:]) if len(previous_message.split()) > 1 else "Blocked by admin"
+            
+            success, message = SubscriptionSystem.block_user(target_user_id, reason, performed_by=user_id)
+            
+            if success:
+                await update.message.reply_text(f"✅ {message}")
+            else:
+                await update.message.reply_text(f"❌ {message}")
+            
+            context.user_data['last_action'] = None
+            return ADMIN_MENU
+        
+        elif context.user_data.get('last_action') == 'unblock':
+            target_user_id = int(previous_message)
+            
+            success, message = SubscriptionSystem.unblock_user(target_user_id, performed_by=user_id)
+            
+            if success:
+                await update.message.reply_text(f"✅ {message}")
+            else:
+                await update.message.reply_text(f"❌ {message}")
+            
+            context.user_data['last_action'] = None
+            return ADMIN_MENU
+        
+        else:
+            # إلغاء اشتراك عادي
+            target_user_id = int(previous_message)
+            
+            if target_user_id == ADMIN_ID:
+                await update.message.reply_text("❌ لا يمكن إلغاء اشتراك المشرف الرئيسي.")
+                return ADMIN_MENU
+            
+            success, message = SubscriptionSystem.revoke_subscription(target_user_id, performed_by=user_id)
+            
+            if success:
+                await update.message.reply_text(f"✅ {message}")
+                
+                # محاولة إرسال إشعار للمستخدم
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_user_id,
+                        text=f"⚠️ **تم إلغاء اشتراكك في Obeida Trading**\n\n"
+                             f"للتواصل مع المشرف: @Sz2zv",
+                        parse_mode="Markdown"
+                    )
+                except:
+                    pass
+            else:
+                await update.message.reply_text(f"❌ {message}")
+            
+            return ADMIN_MENU
+        
+    except ValueError:
+        await update.message.reply_text("❌ الرجاء إرسال معرف المستخدم (أرقام فقط).")
+        return REMOVE_USER
+
+async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الإذاعة للمشتركين"""
+    user_id = update.effective_user.id
+    broadcast_message = update.message.text.strip()
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية.")
+        return MAIN_MENU
+    
+    # الحصول على جميع المشتركين النشطين
+    subscribers = SubscriptionSystem.get_all_subscribers()
+    
+    if not subscribers:
+        await update.message.reply_text("📭 لا يوجد مشتركين نشطين للإذاعة.")
+        return ADMIN_MENU
+    
+    wait_msg = await update.message.reply_text(f"📢 جاري الإذاعة لـ {len(subscribers)} مشترك...")
+    
+    success_count = 0
+    fail_count = 0
+    
+    for sub in subscribers:
+        target_id = sub[0]
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=f"📢 **رسالة إدارية**\n\n{broadcast_message}\n\n━━━━━━━━━━━━\nObeida Trading",
+                parse_mode="Markdown"
+            )
+            success_count += 1
+            await asyncio.sleep(0.05)  # تجنب تجاوز حدود التليجرام
+        except Exception as e:
+            print(f"⚠️ فشل إرسال للمستخدم {target_id}: {e}")
+            fail_count += 1
+    
+    await wait_msg.edit_text(
+        f"📊 **نتيجة الإذاعة**\n\n"
+        f"✅ تم الإرسال بنجاح لـ: {success_count} مشترك\n"
+        f"❌ فشل الإرسال لـ: {fail_count} مشترك"
+    )
     
     return ADMIN_MENU
 
@@ -4190,47 +4207,32 @@ async def handle_set_duration(update: Update, context: ContextTypes.DEFAULT_TYPE
             return SET_USER_DURATION
         
         target_user_id = int(parts[0])
-        duration = int(parts[1])
+        additional_seconds = int(parts[1])
         
-        if duration > 0:
-            end_date = datetime.now() + timedelta(seconds=duration)
+        if target_user_id == ADMIN_ID:
+            await update.message.reply_text("✅ المشرف الرئيسي لديه صلاحيات غير محدودة.")
+            return ADMIN_MENU
+        
+        success, message = SubscriptionSystem.extend_subscription(
+            target_user_id, 
+            additional_seconds, 
+            performed_by=user_id
+        )
+        
+        if success:
+            await update.message.reply_text(f"✅ {message}")
             
-            conn = sqlite3.connect(DB_NAME)
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE users 
-                SET subscription_end = ?
-                WHERE user_id = ?
-            """, (end_date.isoformat(), target_user_id))
-            conn.commit()
-            conn.close()
-            
-            # تسجيل التغيير وإنشاء نسخة احتياطية
-            log_data_change("update_duration", target_user_id, f"duration={duration}")
-            DataProtection.backup_database()
-            
-            duration_text = f"{duration//3600} ساعة" if duration < 86400 else f"{duration//86400} يوم"
-            await update.message.reply_text(
-                f"✅ تم تحديث اشتراك المستخدم {target_user_id}\n"
-                f"📅 المدة الجديدة: {duration_text}\n"
-                f"📆 ينتهي في: {end_date.strftime('%Y-%m-%d %H:%M')}"
-            )
+            # محاولة إرسال إشعار للمستخدم
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text=f"✅ **تم تمديد اشتراكك في Obeida Trading**\n\n{message}",
+                    parse_mode="Markdown"
+                )
+            except:
+                pass
         else:
-            conn = sqlite3.connect(DB_NAME)
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE users 
-                SET subscription_end = NULL
-                WHERE user_id = ?
-            """, (target_user_id,))
-            conn.commit()
-            conn.close()
-            
-            # تسجيل التغيير وإنشاء نسخة احتياطية
-            log_data_change("update_duration", target_user_id, "unlimited")
-            DataProtection.backup_database()
-            
-            await update.message.reply_text(f"✅ تم تحويل المستخدم {target_user_id} إلى اشتراك غير محدد.")
+            await update.message.reply_text(f"❌ {message}")
         
     except ValueError:
         await update.message.reply_text("❌ الرجاء إرسال معرف المستخدم والمدة بشكل صحيح.")
@@ -4298,331 +4300,37 @@ async def backup_scheduler():
         except Exception as e:
             print(f"⚠️ خطأ في النسخ الاحتياطي المجدول: {e}")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء البوت - مع إخفاء الأزرار لغير المشتركين"""
-    user = update.effective_user
-    user_id = user.id
-    username = user.username or str(user_id)
+# دالة DataProtection للنسخ الاحتياطي (مبسطة)
+class DataProtection:
+    @staticmethod
+    def backup_database():
+        """نسخ احتياطي لقاعدة البيانات الرئيسية"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = os.path.join(BACKUP_DIR, f"main_backup_{timestamp}.db")
+            if os.path.exists(DB_NAME):
+                shutil.copy2(DB_NAME, backup_file)
+                print(f"💾 تم نسخ قاعدة البيانات الرئيسية: {backup_file}")
+        except Exception as e:
+            print(f"⚠️ خطأ في نسخ قاعدة البيانات: {e}")
     
-    # تسجيل المستخدم في قاعدة البيانات إذا لم يكن موجوداً
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+    @staticmethod
+    def backup_codes_db():
+        """نسخ احتياطي لقاعدة بيانات الاشتراك"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = os.path.join(BACKUP_DIR, f"subscription_backup_{timestamp}.db")
+            if os.path.exists(SUBSCRIPTION_DB_NAME):
+                shutil.copy2(SUBSCRIPTION_DB_NAME, backup_file)
+                print(f"💾 تم نسخ قاعدة بيانات الاشتراك: {backup_file}")
+        except Exception as e:
+            print(f"⚠️ خطأ في نسخ قاعدة بيانات الاشتراك: {e}")
     
-    # التحقق من وجود المستخدم
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-    if not cursor.fetchone():
-        # إضافة المستخدم مع اشتراك غير محدد (يحتاج تفعيل من المشرف)
-        cursor.execute("""
-            INSERT INTO users (user_id, username, candle, trade_time, subscription_start)
-            VALUES (?, ?, ?, ?, datetime('now'))
-        """, (user_id, username, "M1", "قصير (1m-15m)"))
-        conn.commit()
-    
-    conn.close()
-    
-    # تنظيف الذاكرة المؤقتة
-    cleanup_user_data(context, user_id)
-    
-    # التحقق من صلاحية المشرف والاشتراك
-    is_admin = (user_id == ADMIN_ID)
-    status, message = check_subscription(user_id)
-    
-    if is_admin:
-        # المشرف - يرى جميع الأزرار
-        keyboard = [
-            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"],
-            ["👑 لوحة التحكم"]
-        ]
-        
-        welcome_msg = (
-            "🚀 *أهلاً بك في Obeida Trading*\n\n"
-            "👑 أنت مسؤول النظام - لديك صلاحيات كاملة.\n\n"
-            "🔑 *نظام أكواد الاشتراك نشط*\n"
-            "🤖 *الخدمات المتاحة:*\n"
-            "• 📊 تحليل الشارتات\n"
-            "• 📈 توصيات فورية\n"
-            "• 💬 دردشة ذكية\n"
-            "• ⚙️ إعدادات متقدمة\n\n"
-            "اختر أحد الخيارات:"
-        )
-        
-    elif status:
-        # مستخدم مشترك - يرى جميع الأزرار
-        keyboard = [
-            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"]
-        ]
-        
-        welcome_msg = (
-            f"🚀 *أهلاً بك في Obeida Trading*\n\n"
-            f"✅ حالة اشتراكك: {message}\n\n"
-            f"🤖 *الخدمات المتاحة:*\n"
-            f"• 📊 تحليل الشارتات\n"
-            f"• 📈 توصيات فورية\n"
-            f"• 💬 دردشة ذكية\n"
-            f"• ⚙️ إعدادات متقدمة\n\n"
-            f"اختر أحد الخيارات:"
-        )
-        
-    else:
-        # مستخدم غير مشترك - لا يرى أي أزرار، فقط زر تفعيل الكود
-        inline_keyboard = [[InlineKeyboardButton("🔑 لدي كود تفعيل", callback_data="activate_code")]]
-        reply_markup = InlineKeyboardMarkup(inline_keyboard)
-        
-        await update.message.reply_text(
-            f"⚠️ **عذراً، ليس لديك صلاحية استخدام البوت**\n\n"
-            f"❌ الحالة: {message}\n\n"
-            f"🔑 إذا كان لديك كود اشتراك، اضغط على الزر أدناه:\n"
-            f"📞 للاستفسار والتواصل مع المشرف: @Sz2zv\n\n"
-            f"بعد إدخال الكود، أرسل /start مرة أخرى",
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    
-    # إظهار القائمة للمستخدمين المشتركين فقط
-    await update.message.reply_text(
-        welcome_msg,
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    return MAIN_MENU
-
-async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات القائمة الرئيسية"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    # التحقق من الاشتراك (لغير المشرف)
-    if user_id != ADMIN_ID:
-        status, _ = check_subscription(user_id)
-        if not status:
-            # إخفاء الأزرار فوراً
-            inline_keyboard = [[InlineKeyboardButton("🔑 لدي كود تفعيل", callback_data="activate_code")]]
-            reply_markup = InlineKeyboardMarkup(inline_keyboard)
-            await update.message.reply_text(
-                "⚠️ انتهت صلاحية اشتراكك. إذا كان لديك كود جديد، اضغط على الزر أدناه.",
-                reply_markup=reply_markup
-            )
-            return MAIN_MENU
-    
-    if user_message == "👑 لوحة التحكم" and user_id == ADMIN_ID:
-        return await start_admin_panel(update, context)
-    
-    if user_message == "⚙️ إعدادات التحليل":
-        keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
-        keyboard.append(["الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            "⚙️ *إعدادات التحليل الفني*\n\n"
-            "حدد سرعة الشموع للبدء:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return SETTINGS_CANDLE
-    
-    elif user_message == "📊 تحليل صورة":
-        candle, trade_time, _, _ = get_user_setting(user_id)
-        
-        if not candle or not trade_time:
-            keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"]]
-            if user_id == ADMIN_ID:
-                keyboard.append(["👑 لوحة التحكم"])
-            await update.message.reply_text(
-                "❌ *يجب ضبط الإعدادات أولاً*\n\n"
-                "الرجاء ضبط سرعة الشموع ومدة الصفقة قبل التحليل.",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return MAIN_MENU
-        else:
-            keyboard = [["الرجوع للقائمة الرئيسية"]]
-            
-            time_display = format_trade_time_for_prompt(trade_time)
-            
-            await update.message.reply_text(
-                f"📊* نظام جاهز لتحليل *:\n\n"
-                f"⚙️ الإعدادات الذي تستخدمها ⚙️:\n"
-                f"•🏃 سرعة الشموع: {candle}\n"
-                f"•🕧 استراتيجية : {time_display}\n\n"
-                f"📡 *نظام التحليل الشارات :* \n"
-                f"1. 🔧 مرحلة تفكيك هيكل الشارت \n"
-                f"2. 🔬 مرحلة تحليل صورة الشارت \n\n"
-                f"📤 قم برفع صورة  (الشارت) الآن: 📤",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return ANALYZE_MODE
-    
-    elif user_message == "💬 دردشة":
-        return await start_chat_mode(update, context)
-    
-    elif user_message == "📈 توصية":
-        return await start_recommendation_mode(update, context)
-    
-    # إعادة عرض القائمة الرئيسية
-    keyboard = [
-        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["💬 دردشة", "📈 توصية"]
-    ]
-    if user_id == ADMIN_ID:
-        keyboard.append(["👑 لوحة التحكم"])
-    
-    await update.message.reply_text(
-        "اختر أحد الخيارات من القائمة:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-    )
-    return MAIN_MENU
-
-async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار سرعة الشموع"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    # التحقق من الاشتراك
-    if user_id != ADMIN_ID:
-        status, _ = check_subscription(user_id)
-        if not status:
-            inline_keyboard = [[InlineKeyboardButton("🔑 لدي كود تفعيل", callback_data="activate_code")]]
-            reply_markup = InlineKeyboardMarkup(inline_keyboard)
-            await update.message.reply_text(
-                "⚠️ انتهت صلاحية اشتراكك. إذا كان لديك كود جديد، اضغط على الزر أدناه.",
-                reply_markup=reply_markup
-            )
-            return SETTINGS_CANDLE
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [
-            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"]
-        ]
-        if user_id == ADMIN_ID:
-            keyboard.append(["👑 لوحة التحكم"])
-        
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    if user_message in CANDLE_SPEEDS:
-        save_user_setting(user_id, "candle", user_message)
-        
-        keyboard = [TRADE_TIMES[i:i+2] for i in range(0, len(TRADE_TIMES), 2)]
-        keyboard.append(["الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n"
-            f" ⬇️ الآن حدد ** مدة الصفقة** المتوقعة ⬇️:\n\n"
-            f"📊 **🕧 خيارات مدة الصفقة: 🕧**\n"
-            f"•1- **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة\n"
-            f"•2- **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة\n"
-            f"•3- **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة\n\n"
-            f" 🖊️ اختر الإطار الزمني المناسب لاستراتيجيتك:🖊️",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SETTINGS_TIME
-    
-    await update.message.reply_text("❌ الرجاء اختيار سرعة شموع صحيحة.")
-    return SETTINGS_CANDLE
-
-async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار مدة الصفقة"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    # التحقق من الاشتراك
-    if user_id != ADMIN_ID:
-        status, _ = check_subscription(user_id)
-        if not status:
-            inline_keyboard = [[InlineKeyboardButton("🔑 لدي كود تفعيل", callback_data="activate_code")]]
-            reply_markup = InlineKeyboardMarkup(inline_keyboard)
-            await update.message.reply_text(
-                "⚠️ انتهت صلاحية اشتراكك. إذا كان لديك كود جديد، اضغط على الزر أدناه.",
-                reply_markup=reply_markup
-            )
-            return SETTINGS_TIME
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [
-            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"]
-        ]
-        if user_id == ADMIN_ID:
-            keyboard.append(["👑 لوحة التحكم"])
-        
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    if user_message in TRADE_TIMES:
-        save_user_setting(user_id, "trade_time", user_message)
-        
-        keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["الرجوع للقائمة الرئيسية"]]
-        if user_id == ADMIN_ID:
-            keyboard.append(["👑 لوحة التحكم"])
-        
-        candle, _, _, _ = get_user_setting(user_id)
-        
-        await update.message.reply_text(
-            f"🚀 **تم حفظ الإعدادات بنجاح!**\n\n"
-            f"✅ سرعة الشموع: {candle}\n"
-            f"✅ مدة الصفقة: {user_message}\n\n"
-            f"📡 ** نظام تحليل مستهدفة :** \n"
-            f"• 1- تفكيك هيكل شارت  =مفعلة ✔️\n"
-            f"• تحليل صورة شارت = مفعلة ✔️\n"
-            f" 📤 قم الأن برفع صورة شارت : 📤",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-    
-    await update.message.reply_text("❌ الرجاء اختيار مدة صفقة صحيحة.")
-    return SETTINGS_TIME
-
-async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة وضع التحليل"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    # التحقق من الاشتراك
-    if user_id != ADMIN_ID:
-        status, _ = check_subscription(user_id)
-        if not status:
-            inline_keyboard = [[InlineKeyboardButton("🔑 لدي كود تفعيل", callback_data="activate_code")]]
-            reply_markup = InlineKeyboardMarkup(inline_keyboard)
-            await update.message.reply_text(
-                "⚠️ انتهت صلاحية اشتراكك. إذا كان لديك كود جديد، اضغط على الزر أدناه.",
-                reply_markup=reply_markup
-            )
-            return ANALYZE_MODE
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [
-            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"]
-        ]
-        if user_id == ADMIN_ID:
-            keyboard.append(["👑 لوحة التحكم"])
-        
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    await update.message.reply_text(
-        "📤 **الرجاء إرسال صورة الشارت فقط**\nأو اضغط 'الرجوع للقائمة الرئيسية'",
-        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True, one_time_keyboard=False)
-    )
-    return ANALYZE_MODE
-
-async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور في وضع التحليل"""
-    return await handle_photo_analysis(update, context)
+    @staticmethod
+    def auto_backup():
+        """نسخ احتياطي تلقائي للجميع"""
+        DataProtection.backup_database()
+        DataProtection.backup_codes_db()
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر المساعدة"""
@@ -4638,10 +4346,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     3. اختر "دردشة" للاستفسارات النصية
     4. اختر "توصية" لتحليل العملات مع سحب الصور التلقائي
     
-    🔑 **نظام أكواد الاشتراك:**
-    • تحصل على كود من المشرف مثل: `Obeida-X7K9P2`
-    • أدخل الكود لتفعيل اشتراكك
-    • الكود صالح للاستخدام مرة واحدة فقط
+    🔑 **نظام الاشتراك المتطور V2:**
+    • إدارة الاشتراكات عبر لوحة المشرف
+    • إضافة اشتراك مباشر باستخدام User ID
+    • خيارات مدة: ساعة، يوم، أسبوع، شهر، سنة، مدى الحياة
+    • إمكانية حظر المستخدمين وإلغاء حظرهم
+    • نظام إذاعة للمشتركين
     
     📈 **نظام التوصيات الجديد:**
     • تحليل فني للعملات والمؤشرات
@@ -4655,24 +4365,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
     
     👑 **للمشرفين فقط:**
-    • لوحة تحكم كاملة عبر الرابط /admin
-    • توليد أكواد اشتراك جديدة
-    • إدارة المستخدمين والاشتراكات
-    • نظام نسخ احتياطي آلي للبيانات
+    • لوحة تحكم متكاملة
+    • إضافة اشتراكات باختيار المدة
+    • عرض جميع المستخدمين
+    • إلغاء الاشتراكات
+    • حظر وإلغاء حظر المستخدمين
+    • إذاعة للمشتركين
+    • إحصائيات متقدمة
     
     💾 **نظام حماية البيانات:**
-    • نسخ احتياطي تلقائي كل ساعة
-    • حفظ آخر 50 نسخة احتياطية
-    • استعادة تلقائية عند تلف البيانات
-    • جميع بيانات المشتركين محفوظة بشكل دائم
-    
-    📡 **مميزات البوت المتقدمة:**
-    • 📊 تحليل فني للرسوم البيانية بتقنيات متطورة
-    • 💬 دردشة ذكية متعددة التخصصات
-    • 📈 نظام توصيات الجاهزة 
-    • ⚙️ حفظ إعداداتك الشخصية
-    • 🔹 واجهة سهلة بالأزرار
-    • 🗑️ نظام تنظيف تلقائي للذاكرة
+    • تخزين آمن ومشفر
+    • نسخ احتياطي تلقائي
+    • تتبع التغييرات
+    • منع التلاعب
     """
     
     formatted_help = format_as_copyable_code(help_text, "markdown")
@@ -4694,35 +4399,657 @@ def run_flask_server():
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
+# --- Flask Server مع واجهة تحكم (محدثة) ---
+app = Flask(__name__)
+
+# HTML template for admin panel (محدث)
+ADMIN_PANEL_HTML = """
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة تحكم Obeida Trading - نظام الاشتراك المتطور</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .header {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .header h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .header p {
+            color: #666;
+            font-size: 1.1em;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.05);
+            transition: transform 0.3s;
+        }
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        .stat-card h3 {
+            color: #666;
+            font-size: 1em;
+            margin-bottom: 10px;
+        }
+        .stat-card .number {
+            color: #667eea;
+            font-size: 2.5em;
+            font-weight: bold;
+        }
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .tab {
+            background: white;
+            padding: 15px 30px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+        .tab.active {
+            background: #667eea;
+            color: white;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .section {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.05);
+        }
+        .section-title {
+            color: #333;
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        .table-container {
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th {
+            background: #667eea;
+            color: white;
+            padding: 12px;
+            font-weight: 600;
+            text-align: center;
+        }
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #f0f0f0;
+            text-align: center;
+        }
+        tr:hover {
+            background: #f8f9ff;
+        }
+        .status-badge {
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+            display: inline-block;
+        }
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status-expired {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .status-blocked {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .code-box {
+            background: #f8f9ff;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 1.1em;
+            border: 1px dashed #667eea;
+        }
+        .actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 0.9em;
+        }
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #5a67d8;
+        }
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        .btn-success:hover {
+            background: #218838;
+        }
+        .btn-warning {
+            background: #ffc107;
+            color: #333;
+        }
+        .btn-warning:hover {
+            background: #e0a800;
+        }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        .btn-danger:hover {
+            background: #c82333;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 600px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+            font-weight: 600;
+        }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #f0f0f0;
+            border-radius: 10px;
+            font-size: 1em;
+        }
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+        .search-box {
+            margin-bottom: 20px;
+        }
+        .search-box input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #f0f0f0;
+            border-radius: 10px;
+            font-size: 1em;
+        }
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 لوحة تحكم Obeida Trading - V2</h1>
+            <p>نظام إدارة الاشتراكات المتطور - المشرف: @Sz2zv</p>
+            <p style="color: #28a745; font-size: 0.9em;">✅ نظام إدارة الاشتراكات المباشر نشط - إضافة اشتراك باستخدام User ID</p>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>إجمالي المستخدمين</h3>
+                <div class="number">{{ stats.total_users }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>المشتركين النشطين</h3>
+                <div class="number">{{ stats.active_users }}</div>
+            </div>
+            <div class="stat-card">
+                <h3>المحظورين</h3>
+                <div class="number">{{ stats.blocked_users }}</div>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" onclick="showTab('users')">👥 المستخدمين</div>
+            <div class="tab" onclick="showTab('subscriptions')">📊 الاشتراكات</div>
+            <div class="tab" onclick="showTab('stats')">📈 إحصائيات</div>
+        </div>
+
+        <div id="users-tab" class="tab-content active">
+            <div class="section">
+                <h2 class="section-title">👥 قائمة المستخدمين</h2>
+                
+                <div class="search-box">
+                    <input type="text" id="searchUsers" placeholder="🔍 بحث عن مستخدم..." onkeyup="searchUsers()">
+                </div>
+
+                <div class="table-container">
+                    <table id="usersTable">
+                        <thead>
+                            <tr>
+                                <th>المعرف</th>
+                                <th>الاسم</th>
+                                <th>نوع الاشتراك</th>
+                                <th>تاريخ الانتهاء</th>
+                                <th>الحالة</th>
+                                <th>آخر نشاط</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for user in users %}
+                            <tr>
+                                <td>{{ user.id }}</td>
+                                <td>{{ user.name }}</td>
+                                <td>{{ user.subscription_type }}</td>
+                                <td>{{ user.end_date }}</td>
+                                <td>
+                                    <span class="status-badge {% if user.status == 'نشط' %}status-active{% elif user.status == 'محظور' %}status-blocked{% else %}status-expired{% endif %}">
+                                        {{ user.status }}
+                                    </span>
+                                </td>
+                                <td>{{ user.last_active }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="subscriptions-tab" class="tab-content">
+            <div class="section">
+                <h2 class="section-title">📊 توزيع الاشتراكات</h2>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>نوع الاشتراك</th>
+                                <th>العدد</th>
+                                <th>النسبة المئوية</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for type, count in stats.subscriptions_by_type.items() %}
+                            <tr>
+                                <td>{{ type }}</td>
+                                <td>{{ count }}</td>
+                                <td>{{ (count / stats.active_users * 100)|round(1) if stats.active_users > 0 else 0 }}%</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="stats-tab" class="tab-content">
+            <div class="section">
+                <h2 class="section-title">📈 إحصائيات استخدام الميزات</h2>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>الميزة</th>
+                                <th>عدد مرات الاستخدام</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for feature, count in stats.feature_usage.items() %}
+                            <tr>
+                                <td>{{ feature }}</td>
+                                <td>{{ count }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>Obeida Trading - نظام إدارة الاشتراكات المتطور V2</p>
+        <p style="font-size: 0.8em;">نسخة البيانات: {{ data_version }} - آخر نسخة احتياطية: {{ last_backup }}</p>
+    </div>
+
+    <script>
+        function showTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            document.querySelector(`.tab:nth-child(${tabName === 'users' ? 1 : tabName === 'subscriptions' ? 2 : 3})`).classList.add('active');
+            document.getElementById(tabName + '-tab').classList.add('active');
+        }
+
+        function searchUsers() {
+            let input = document.getElementById('searchUsers');
+            let filter = input.value.toLowerCase();
+            let table = document.getElementById('usersTable');
+            let tr = table.getElementsByTagName('tr');
+
+            for (let i = 1; i < tr.length; i++) {
+                let tdId = tr[i].getElementsByTagName('td')[0];
+                let tdName = tr[i].getElementsByTagName('td')[1];
+                if (tdId || tdName) {
+                    let txtId = tdId.textContent || tdId.innerText;
+                    let txtName = tdName.textContent || tdName.innerText;
+                    if (txtId.toLowerCase().indexOf(filter) > -1 || txtName.toLowerCase().indexOf(filter) > -1) {
+                        tr[i].style.display = '';
+                    } else {
+                        tr[i].style.display = 'none';
+                    }
+                }
+            }
+        }
+
+        // Close modals when clicking outside
+        window.onclick = function(event) {
+            let generateModal = document.getElementById('generateCodeModal');
+            let showModal = document.getElementById('showCodeModal');
+            if (event.target == generateModal) {
+                generateModal.style.display = 'none';
+            }
+            if (event.target == showModal) {
+                showModal.style.display = 'none';
+                location.reload();
+            }
+        }
+    </script>
+</body>
+</html>
+"""
+
+@app.route('/')
+def home():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Obeida Trading V2</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+            h1 { font-size: 3em; margin-bottom: 20px; }
+            .status { background: rgba(255,255,255,0.2); padding: 20px 40px; border-radius: 10px; display: inline-block; margin: 20px; }
+            .admin-link { background: #28a745; color: white; padding: 15px 30px; border-radius: 5px; text-decoration: none; display: inline-block; margin: 20px; }
+        </style>
+    </head>
+    <body>
+        <h1> 📊 Obeida Trading V2 - Subscription System 📊</h1>
+        <p>Chat & Technical Analysis Bot with Advanced Subscription System</p>
+        <div class="status">✅ نظام إدارة الاشتراكات المتطور V2 نشط - إضافة اشتراك باستخدام User ID</div>
+        <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
+        <a href="/admin" class="admin-link">🔐 لوحة تحكم المشرف</a>
+    </body>
+    </html>
+    """
+
+@app.route('/health')
+def health():
+    stats = SubscriptionSystem.get_stats()
+    return {
+        "status": "active", 
+        "ai_provider": "Mistral AI", 
+        "subscription_system": "advanced_v2",
+        "data_version": DATA_VERSION,
+        "total_users": stats.get('total_users', 0),
+        "active_users": stats.get('active_users', 0),
+        "blocked_users": stats.get('blocked_users', 0),
+        "timestamp": time.time()
+    }
+
+@app.route('/admin')
+def admin_panel():
+    """لوحة تحكم المشرف المحدثة"""
+    try:
+        stats = SubscriptionSystem.get_stats()
+        users = SubscriptionSystem.get_all_users()
+        
+        # تنسيق بيانات المستخدمين
+        formatted_users = []
+        for u in users:
+            uid, username, first_name, created, last_active, is_blocked, sub_type, sub_name, start_date, end_date, is_active = u
+            
+            # تحديد الحالة
+            if is_blocked == 1:
+                status = "محظور"
+            elif is_active == 1 and (not end_date or datetime.fromisoformat(end_date) > datetime.now()):
+                status = "نشط"
+            else:
+                status = "منتهي"
+            
+            # اسم العرض
+            display_name = first_name or username or str(uid)
+            
+            # تنسيق تاريخ الانتهاء
+            end_display = end_date[:16] if end_date else "غير محدد"
+            if end_date and datetime.fromisoformat(end_date) < datetime.now():
+                end_display += " (منتهي)"
+            
+            formatted_users.append({
+                'id': uid,
+                'name': display_name,
+                'subscription_type': sub_name or 'غير مشترك',
+                'end_date': end_display,
+                'status': status,
+                'last_active': last_active[:16] if last_active else '-'
+            })
+        
+        # معلومات النسخ الاحتياطي
+        last_backup = "لا توجد نسخ"
+        if os.path.exists(BACKUP_DIR):
+            backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')])
+            if backups:
+                last_backup = backups[-1].replace('backup_', '').replace('.db', '')
+        
+        return render_template_string(
+            ADMIN_PANEL_HTML,
+            stats=stats,
+            users=formatted_users,
+            data_version=DATA_VERSION,
+            last_backup=last_backup
+        )
+    except Exception as e:
+        return f"خطأ في تحميل لوحة التحكم: {str(e)}"
+
+@app.route('/admin/add_subscription_v2', methods=['POST'])
+def add_subscription_v2():
+    """إضافة اشتراك لمستخدم"""
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        subscription_type = data.get('subscription_type', 'monthly')
+        
+        success, result = SubscriptionSystem.add_subscription(
+            user_id=user_id,
+            subscription_type=subscription_type,
+            added_by=ADMIN_ID,
+            reason="Added via web panel"
+        )
+        
+        if success:
+            DataProtection.backup_database()
+            return jsonify({'success': True, 'subscription': result})
+        else:
+            return jsonify({'success': False, 'error': result})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/revoke_subscription_v2', methods=['POST'])
+def revoke_subscription_v2():
+    """إلغاء اشتراك مستخدم"""
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        
+        success, message = SubscriptionSystem.revoke_subscription(user_id, performed_by=ADMIN_ID)
+        
+        if success:
+            DataProtection.backup_database()
+            return jsonify({'success': True, 'message': message})
+        else:
+            return jsonify({'success': False, 'error': message})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/extend_subscription_v2', methods=['POST'])
+def extend_subscription_v2():
+    """تمديد اشتراك مستخدم"""
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        additional_seconds = data.get('additional_seconds', 86400)
+        
+        success, message = SubscriptionSystem.extend_subscription(
+            user_id, 
+            additional_seconds, 
+            performed_by=ADMIN_ID
+        )
+        
+        if success:
+            DataProtection.backup_database()
+            return jsonify({'success': True, 'message': message})
+        else:
+            return jsonify({'success': False, 'error': message})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/block_user_v2', methods=['POST'])
+def block_user_v2():
+    """حظر مستخدم"""
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        reason = data.get('reason', 'Blocked by admin')
+        
+        success, message = SubscriptionSystem.block_user(user_id, reason, performed_by=ADMIN_ID)
+        
+        if success:
+            return jsonify({'success': True, 'message': message})
+        else:
+            return jsonify({'success': False, 'error': message})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/unblock_user_v2', methods=['POST'])
+def unblock_user_v2():
+    """إلغاء حظر مستخدم"""
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        
+        success, message = SubscriptionSystem.unblock_user(user_id, performed_by=ADMIN_ID)
+        
+        if success:
+            return jsonify({'success': True, 'message': message})
+        else:
+            return jsonify({'success': False, 'error': message})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/get_stats_v2')
+def get_stats_v2():
+    """الحصول على الإحصائيات"""
+    stats = SubscriptionSystem.get_stats()
+    return jsonify({'success': True, 'stats': stats})
+
+@app.route('/ping')
+def ping():
+    return "PONG"
+
 def main():
-    """الدالة الرئيسية - النسخة النهائية مع نظام أكواد الاشتراك"""
-    print("🤖 Starting Obeida Trading with Code Subscription System ...")
+    """الدالة الرئيسية - النسخة النهائية مع نظام إدارة الاشتراكات المتطور V2"""
+    print("🤖 Starting Obeida Trading with Advanced Subscription System V2 ...")
     print("📋 تم تفعيل نظام النسخ السريع - جميع التحليلات قابلة للنسخ بنقرة واحدة")
     print("👑 المشرف الرئيسي: 6207431030 (@Sz2zv)")
-    print("🔑 نظام أكواد الاشتراك - مفعل (أكواد تبدأ بـ Obeida- و 6 أحرف/أرقام)")
+    print("🔑 نظام إدارة الاشتراكات المتطور V2 - إضافة اشتراك باستخدام User ID")
     print("🔒 نظام إخفاء الأزرار لغير المشتركين - مفعل")
     print("💾 نظام حماية البيانات والنسخ الاحتياطي - مفعل")
     print(f"📊 نسخة البيانات: {DATA_VERSION}")
     
-    # التحقق من وجود قاعدة بيانات الأكواد
-    if os.path.exists(CODES_DB_NAME):
-        print(f"📁 ملف قاعدة البيانات {CODES_DB_NAME} موجود")
-        # عرض الأكواد الموجودة
-        debug_check_codes()
-    else:
-        print(f"📁 ملف قاعدة البيانات {CODES_DB_NAME} غير موجود - سيتم إنشاؤه")
+    # تهيئة قاعدة البيانات الرئيسية
+    init_db_with_subscription()
     
-    # التحقق من سلامة قاعدة البيانات
-    is_valid, message = DataProtection.verify_database_integrity()
-    if not is_valid:
-        print(f"⚠️ تحذير: {message}")
-        print("🔄 محاولة استعادة آخر نسخة احتياطية...")
-        success, msg = DataProtection.restore_latest_backup()
-        if success:
-            print(f"✅ {msg}")
-        else:
-            print(f"❌ {msg}")
-            print("📦 سيتم إنشاء قاعدة بيانات جديدة")
+    # إنشاء نسخة احتياطية أولية
+    DataProtection.backup_database()
+    DataProtection.backup_codes_db()
     
     # تشغيل Flask
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
@@ -4732,21 +5059,8 @@ def main():
     print(f"📊 لوحة تحكم المشرف: http://localhost:{os.environ.get('PORT', 8080)}/admin")
     print(f"💾 مجلد النسخ الاحتياطي: {os.path.abspath(BACKUP_DIR)}")
     
-    # تهيئة قاعدة البيانات مع نظام الأكواد
-    init_db_with_subscription()
-    
-    # إنشاء نسخة احتياطية أولية
-    DataProtection.backup_database()
-    DataProtection.backup_codes_db()
-    
     # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
-    
-    # إضافة معالج للاستعلامات (CallbackQuery)
-    application.add_handler(CallbackQueryHandler(activate_code_prompt, pattern="^activate_code$"))
-    
-    # أضف معالج لأمر التحقق من الكود
-    application.add_handler(CommandHandler("checkcode", debug_check_code_command))
     
     # معالج المحادثة
     conv_handler = ConversationHandler(
@@ -4778,8 +5092,11 @@ def main():
             ADMIN_MENU: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_menu)
             ],
-            GENERATE_CODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_generate_code)
+            ADD_SUBSCRIPTION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_subscription)
+            ],
+            SELECT_DURATION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_duration)
             ],
             REMOVE_USER: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)
@@ -4787,9 +5104,9 @@ def main():
             SET_USER_DURATION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_set_duration)
             ],
-            ACTIVATE_CODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_code_activation)
-            ],
+            BROADCAST_MESSAGE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast)
+            ]
         },
         fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
         allow_reentry=True
@@ -4802,8 +5119,16 @@ def main():
     # إضافة معالج للأخطاء
     application.add_error_handler(error_handler)
     
-    print("✅ Telegram Bot with Code Subscription System ready ...")
-    print("📡 Bot Obeida Trading online with admin panel and code system...")
+    # تشغيل المهام الدورية
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.create_task(periodic_cleanup())
+    loop.create_task(backup_scheduler())
+    
+    print("✅ Telegram Bot with Advanced Subscription System V2 ready ...")
+    print("📡 Bot Obeida Trading V2 online with admin panel and subscription system...")
+    print("📢 نظام الإذاعة للمشتركين مفعل")
+    print("👥 إدارة المستخدمين: إضافة، حظر، تمديد، إلغاء")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
