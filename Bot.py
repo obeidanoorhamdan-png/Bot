@@ -1217,19 +1217,24 @@ def log_data_change(action, user_id, details=""):
         print(f"⚠️ خطأ في تسجيل التغيير: {e}")
 
 def cleanup_old_images():
-    """تنظيف الصور القديمة"""
+    """تنظيف الصور القديمة - حذف الملفات الأقدم من 5 دقائق"""
     try:
         current_time = time.time()
+        deleted_count = 0
         for filename in os.listdir(IMAGE_CACHE_DIR):
             filepath = os.path.join(IMAGE_CACHE_DIR, filename)
             if os.path.isfile(filepath):
                 file_age = current_time - os.path.getmtime(filepath)
-                if file_age > 1800:  # 30 دقيقة
+                if file_age > 300:  # 5 دقائق (300 ثانية)
                     try:
                         os.remove(filepath)
-                        print(f"🧹 تم حذف الملف القديم: {filename}")
+                        deleted_count += 1
+                        print(f"🧹 تم حذف الملف القديم: {filename} (عمره {int(file_age/60)} دقيقة)")
                     except Exception as e:
                         print(f"⚠️ خطأ في حذف الملف {filename}: {e}")
+        
+        if deleted_count > 0:
+            print(f"✅ تم حذف {deleted_count} ملف مؤقت قديم (أقدم من 5 دقائق)")
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الصور القديمة: {e}")
 
@@ -1536,31 +1541,50 @@ def split_message(text, max_length=4000):
     
     return parts
 
-def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None):
-    """تنظيف البيانات المؤقتة للمستخدم"""
+def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None, immediate_delete: bool = True):
+    """تنظيف البيانات المؤقتة للمستخدم مع حذف فوري للملفات
+    
+    Args:
+        context: سياق البوت
+        user_id: معرف المستخدم
+        immediate_delete: حذف فوري للملفات (True) أو الانتظار للتنظيف الدوري (False)
+    """
     try:
+        deleted_files = 0
         if user_id and os.path.exists(IMAGE_CACHE_DIR):
             try:
                 for filename in os.listdir(IMAGE_CACHE_DIR):
-                    if f"_{user_id}_" in filename:
+                    # حذف جميع ملفات المستخدم (الملفات التي تحتوي على user_id في اسمها)
+                    if f"_{user_id}_" in filename or filename.startswith(f"img_{user_id}_") or filename.startswith(f"chart_{user_id}_"):
                         filepath = os.path.join(IMAGE_CACHE_DIR, filename)
                         if os.path.exists(filepath):
-                            os.remove(filepath)
-                            print(f"🧹 تم حذف ملف المستخدم: {filename}")
+                            try:
+                                os.remove(filepath)
+                                deleted_files += 1
+                                if immediate_delete:
+                                    print(f"🗑️ تم الحذف الفوري لملف المستخدم: {filename}")
+                            except Exception as e:
+                                print(f"⚠️ خطأ في حذف الملف {filename}: {e}")
             except Exception as e:
                 print(f"⚠️ خطأ في تنظيف ملفات المستخدم {user_id}: {e}")
         
+        # حذف المفاتيح من سياق المستخدم
         keys_to_remove = [
             'dual_images', 'dual_image_paths', 'dual_analysis_mode',
             'last_analysis', 'dual_analysis_start', 'original_paths',
-            'last_recommendation_symbol'
+            'last_recommendation_symbol', 'target_user_id', 'last_action',
+            'temp_image_path', 'compressed_image_path'
         ]
         
+        removed_keys = 0
         for key in keys_to_remove:
             if key in context.user_data:
                 del context.user_data[key]
+                removed_keys += 1
+        
+        if deleted_files > 0 or removed_keys > 0:
+            print(f"✅ تنظيف المستخدم {user_id}: {deleted_files} ملف, {removed_keys} مفتاح ذاكرة")
                 
-        print(f"✅ تم تنظيف الذاكرة والملفات للمستخدم {user_id}")
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الذاكرة: {e}")
 
@@ -2475,7 +2499,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     # إذا وجدت العملة، ابدأ التحليل مع سحب الصورة
     if symbol_to_analyze:
         save_last_recommendation_symbol(context, symbol_to_analyze)
-        wait_msg = await update.message.reply_text(f"⏳ استنى شويه بسحب صورة `{symbol_to_analyze}`🤌...")
+        wait_msg = await update.message.reply_text(f"📸 تم سحب صورة وجاري تحليل 🤌...")
         
         # تسجيل استخدام الميزة
         SubscriptionSystem.increment_usage(user_id, 'recommendation')
@@ -2812,7 +2836,59 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 - إذا رأيت شمعة ممتلئة قوية (Marubozu) تخترق مستوى، أعطِ إشارة دخول فورية 
 - ولا تنتظر إغلاق الشمعة، فالسعر في حالة انفجار (Price Discovery).
 
-
+⚠️ نظام حساب الثقة المتقدم (Confidence Score Calculation)
+  
+  📊 **معادلة حساب الثقة النهائية:**
+  
+  الثقة = (زخم_الاتجاه × 30%) + (توافق_الإطارات × 25%) + (وضوح_المستويات × 20%) + (حجم_السيولة × 15%) + (تطابق_الأنماط × 10%)
+  
+  **معايير التقييم:**
+  
+  1. **زخم الاتجاه (30 نقطة كحد أقصى):**
+     - 25-30: زخم متفجر (آخر 3 شموع >85% بنفس الاتجاه)
+     - 20-24: زخم قوي (آخر 3 شموع 70-85%)
+     - 15-19: زخم متوسط (آخر 3 شموع 50-69%)
+     - 10-14: زخم ضعيف (آخر 3 شموع 30-49%)
+     - 0-9: بدون زخم واضح
+  
+  2. **توافق الإطارات (25 نقطة كحد أقصى):**
+     - 25: توافق كامل (H4, H1, M15, M5 بنفس الاتجاه)
+     - 20: توافق جيد (3 من 4 إطارات)
+     - 15: توافق متوسط (2 من 4 إطارات)
+     - 10: توافق ضعيف (إطار واحد فقط)
+     - 0: تضارب كامل
+  
+  3. **وضوح المستويات (20 نقطة كحد أقصى):**
+     - 18-20: مستويات دعم/مقاومة واضحة جداً
+     - 14-17: مستويات واضحة
+     - 10-13: مستويات متوسطة الوضوح
+     - 5-9: مستويات غير واضحة
+     - 0: بدون مستويات
+  
+  4. **حجم السيولة (15 نقطة كحد أقصى):**
+     - 13-15: سيولة عالية (مناطق عرض/طلب واضحة)
+     - 10-12: سيولة متوسطة
+     - 7-9: سيولة منخفضة
+     - 0-6: بدون سيولة
+  
+  5. **تطابق الأنماط (10 نقطة كحد أقصى):**
+     - 9-10: نمط واضح (وتد، علم، مثلث)
+     - 7-8: نمط متوسط الوضوح
+     - 5-6: نمط غير مكتمل
+     - 0-4: بدون نمط
+  
+  📈 **مستويات الثقة ومعناها:**
+  
+  - **💥 90-100%: ثقة عالية جداً** - دخول بقوة مع مخاطرة عالية
+  - **🔥 75-89%: ثقة عالية** - دخول بحجم جيد مع وقف ضيق
+  - **⚡ 60-74%: ثقة متوسطة** - دخول بحجم متوسط
+  - **❄️ 40-59%: ثقة منخفضة** - دخول بحجم صغير أو انتظار تأكيد
+  - **🚫 أقل من 40%: لا توجد ثقة** - احتفاظ وانتظار
+  
+  ⚠️ **هام:** في نهاية التحليل، يجب كتابة:
+  "🎯 **نسبة نجاح الصفقة المتوقعة:** [XX]% - [التقييم]"
+  
+  مثال: "🎯 **نسبة نجاح الصفقة المتوقعة:** 85% - ثقة عالية 🔥"
 
 [1] تنبيه الربط البرمجي الإلزامي - المعطيات المستلمة من المستخدم
 
@@ -3074,7 +3150,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         # --- الخطوة 1: التحليل الأولي الأساسي ---
-        await wait_msg.edit_text("🤔 استنى شويه قاعد بحلل...")
+        await wait_msg.edit_text(" انتظار قليلآ جاري تحليل 🤌...")
         
         payload_1 = {
             "model": MISTRAL_MODEL,
@@ -3270,7 +3346,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return MAIN_MENU
 
-    wait_msg = await update.message.reply_text(" ثواني وساقوم بتحليل 🤌...")
+    wait_msg = await update.message.reply_text(" 📸 تم استلام الصورة 📸")
     photo = await update.message.photo[-1].get_file()
     
     timestamp = int(time.time())
@@ -3795,13 +3871,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         print(f"❌ خطأ في معالج الأخطاء نفسه: {e}")
 
 async def periodic_cleanup():
-    """تنظيف دوري للملفات المؤقتة"""
+    """تنظيف دوري للملفات المؤقتة - كل 5 دقائق"""
     while True:
         try:
-            await asyncio.sleep(1800)  # كل 30 دقيقة
+            await asyncio.sleep(300)  # كل 5 دقائق (بدلاً من 30 دقيقة)
             cleanup_old_images()
             cleanup_old_database_records()
-            print("🧹 تم التنظيف الدوري للملفات المؤقتة")
+            print("🧹 تم التنظيف الدوري للملفات المؤقتة (كل 5 دقائق)")
             
         except Exception as e:
             print(f"⚠️ خطأ في التنظيف الدوري: {e}")
@@ -4578,6 +4654,27 @@ def main():
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
+        # تنظيف جميع الملفات المؤقتة عند بدء التشغيل
+    print("🧹 جاري تنظيف الملفات المؤقتة عند بدء التشغيل...")
+    try:
+        if os.path.exists(IMAGE_CACHE_DIR):
+            files = os.listdir(IMAGE_CACHE_DIR)
+            deleted_count = 0
+            for filename in files:
+                filepath = os.path.join(IMAGE_CACHE_DIR, filename)
+                if os.path.isfile(filepath):
+                    try:
+                        os.remove(filepath)
+                        deleted_count += 1
+                    except Exception as e:
+                        print(f"⚠️ فشل حذف {filename}: {e}")
+            print(f"✅ تم حذف {deleted_count} ملف مؤقت عند بدء التشغيل")
+        else:
+            os.makedirs(IMAGE_CACHE_DIR)
+            print(f"📁 تم إنشاء مجلد الصور المؤقتة: {IMAGE_CACHE_DIR}")
+    except Exception as e:
+        print(f"⚠️ خطأ في تنظيف الملفات عند بدء التشغيل: {e}")
+    
     print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
     print(f"📊 لوحة تحكم المشرف: http://localhost:{os.environ.get('PORT', 8080)}/admin")
     print(f"💾 مجلد النسخ الاحتياطي: {os.path.abspath(BACKUP_DIR)}")
@@ -4662,4 +4759,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
