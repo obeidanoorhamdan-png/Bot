@@ -1708,6 +1708,11 @@ async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(
             f"⚠️ **عذراً، ليس لديك صلاحية استخدام البوت**\n\n"
             f"❌ الحالة: {message}\n\n"
+            f"🔑 **أسعار الاشتراكات:**\n"
+            f"• ساعة: 1$\n"
+            f"• يوم: 5$\n"
+            f"• أسبوعي: 15$\n"
+            f"• شهري: 40$\n\n"
             f"📞 للاشتراك والتواصل مع المشرف: @Sz2zv",
             parse_mode="Markdown"
         )
@@ -1944,6 +1949,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"⚠️ عذراً، ليس لديك صلاحية استخدام البوت\n\n"
             f"❌ الحالة: {message}\n\n"
+            f"🔑 **أسعار الاشتراكات:**\n"
+            f"• ساعة: 1$\n"
+            f"• يوم: 5$\n"
+            f"• أسبوعي: 15$\n"
+            f"• شهري: 40$\n\n"
             f"📞 للاشتراك والتواصل مع المشرف: @Sz2zv\n\n"
             f"بعد الاشتراك، أرسل /start مرة أخرى"
         )
