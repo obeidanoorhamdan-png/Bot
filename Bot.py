@@ -1708,7 +1708,6 @@ async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(
             f"⚠️ **عذراً، ليس لديك صلاحية استخدام البوت**\n\n"
             f"❌ الحالة: {message}\n\n"
-            f"🔑 **أسعار الاشتراكات:**\n• ساعة : 1$\n • يوم : 5$ \n • سبوعي : 15$ \n • شهري : 40$ \n\n
             f"📞 للاشتراك والتواصل مع المشرف: @Sz2zv",
             parse_mode="Markdown"
         )
@@ -1945,7 +1944,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"⚠️ عذراً، ليس لديك صلاحية استخدام البوت\n\n"
             f"❌ الحالة: {message}\n\n"
-            f"🔑 **أسعار الاشتراكات:**\n• ساعة : 1$\n • يوم : 5$ \n • سبوعي : 15$ \n • شهري : 40$ \n\n
             f"📞 للاشتراك والتواصل مع المشرف: @Sz2zv\n\n"
             f"بعد الاشتراك، أرسل /start مرة أخرى"
         )
@@ -3718,7 +3716,7 @@ async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_T
         try:
             await context.bot.send_message(
                 chat_id=target_user_id,
-                text=f"✅ **تم تفعيل اشتراكك في Obeida Trading Bot !**\n\n"
+                text=f"✅ **تم تفعيل اشتراكك في Obeida Trading!**\n\n"
                      f"📅 نوع الاشتراك: {sub_info['subscription_name']}\n"
                      f"{end_info}\n\n"
                      f"أرسل /start لبدء استخدام البوت",
@@ -3791,9 +3789,8 @@ async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 try:
                     await context.bot.send_message(
                         chat_id=target_user_id,
-                        text=f"⚠️ **تم إلغاء اشتراكك في Obeida Trading Bot**\n\n"
-                        text=f"⚠️ **     🔑 **أسعار الاشتراكات:** \n  • ساعة : 1$ • يوم : 5$\n • سبوعي : 15$ \n • شهري : 40$ \n\n"
-                             f"الاشتراكات تواصل : @Sz2zv",
+                        text=f"⚠️ **تم إلغاء اشتراكك في Obeida Trading**\n\n"
+                             f"للتواصل مع المشرف: @Sz2zv",
                         parse_mode="Markdown"
                     )
                 except:
