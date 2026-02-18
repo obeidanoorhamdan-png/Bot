@@ -2806,6 +2806,13 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 {previous_context_info}
 
+⚠️ قاعدة الجوكر (تجاوز الزخم):
+- عندما تكون المعطيات المرسلة لك هي market_mode: AGGRESSIVE، ولديك momentum_boost: True، 
+- يُسمح لك بتجاهل تحذير "الوقت المتبقي" (seconds_remaining). 
+- إذا رأيت شمعة ممتلئة قوية (Marubozu) تخترق مستوى، أعطِ إشارة دخول فورية 
+- ولا تنتظر إغلاق الشمعة، فالسعر في حالة انفجار (Price Discovery).
+
+
 
 [1] تنبيه الربط البرمجي الإلزامي - المعطيات المستلمة من المستخدم
 
