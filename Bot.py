@@ -3706,7 +3706,7 @@ async def handle_add_subscription(update: Update, context: ContextTypes.DEFAULT_
             ["🕐 ساعة", "📅 يوم"],
             ["📆 أسبوع", "📅 شهر"],
             ["📅 سنة", "♾️ مدى الحياة"],
-            ["إلغاء"]
+            ["إلغاء", "🔙 العودة للقائمة الرئيسية"]
         ]
         
         await update.message.reply_text(
