@@ -2633,6 +2633,9 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         user_id = update.effective_user.id
         prev_context, prev_time = get_analysis_context(user_id)
         
+        # إنشاء رسالة انتظار
+        wait_msg = await update.message.reply_text("🤔 جاري تحليل الصورة...")
+        
         # ضغط الصورة
         compressed_path = compress_image(image_path)
         
@@ -2640,7 +2643,8 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         base64_img = encode_image(compressed_path)
         
         if not base64_img:
-            return "❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة."
+            await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
+            return "❌ **خطأ في قراءة الصورة.**"
         
         # الحصول على معلومات السيولة والتوقيت باستخدام المنطقة الزمنية للمستخدم
         session_name, session_time, session_vol, user_tz = get_market_session(user_id)
@@ -3053,7 +3057,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         # --- الخطوة 1: التحليل الأولي الأساسي ---
-        await wait_msg.edit_text("استنى شويه قاعد بحلل 🤌...")
+        await wait_msg.edit_text("🤔 استنى شويه قاعد بحلل...")
         
         payload_1 = {
             "model": MISTRAL_MODEL,
@@ -3073,6 +3077,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         if response_1.status_code != 200:
             print(f"Obeida Vision Error (Model 1): {response_1.status_code} - {response_1.text}")
+            await wait_msg.edit_text(f"❌ خطأ في التحليل: {response_1.status_code}")
             raise Exception(f"خطأ في التحليل الأول: {response_1.status_code}")
         
         initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
@@ -3135,15 +3140,25 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
         )
         
+        return full_result
+        
     except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
+        if 'wait_msg' in locals():
+            await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
+        else:
+            await update.message.reply_text("⏱️ تجاوز الوقت المحدد إرسال الصورة. حاول مرة أخرى.")
+        return "⏱️ تجاوز الوقت المحدد"
     except Exception as e:
         print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
-        keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
+        error_msg = f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى."
+        if 'wait_msg' in locals():
+            await wait_msg.edit_text(error_msg)
+        else:
+            await update.message.reply_text(error_msg)
+        return error_msg
     finally:
         # تنظيف الملفات المؤقتة
-        for filepath in [image_path, compressed_path]:
+        for filepath in [image_path, compressed_path] if 'compressed_path' in locals() else [image_path]:
             if os.path.exists(filepath):
                 try:
                     os.remove(filepath)
@@ -4630,3 +4645,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+    
