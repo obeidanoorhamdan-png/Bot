@@ -2653,7 +2653,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         current_minute = local_time.minute
         current_second = local_time.second
         
-        # حساب الثواني المتبقية لإغلاق الشمعة - منطق ديناميكي جديد
+        # حساب الثواني المتبقية (منطقك الحالي)
         seconds_remaining = 60 - current_second
         if candle.startswith('M'):
             candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
@@ -2662,6 +2662,14 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
             minutes_passed = local_time.hour % candle_hours * 60 + current_minute
             seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
+
+        is_fast_frame = candle.startswith('S')
+
+        if seconds_remaining < (3 if is_fast_frame else 10):
+            time_status = "⚡ حالة زخم متفجر (Ignition Phase)"
+        else:
+            time_status = "✅ توقيت مستقر للتحليل"
+
         
         # منطق ديناميكي: في الزخم القوي، الثواني الأخيرة هي "فرصة" وليست "خطراً"
         momentum_boost = True if seconds_remaining <= 10 and candle.startswith('S') else False
@@ -2811,6 +2819,8 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • تصنيف الفريم: {candle_category}
 • حجم الصفقة: {position_sizing}
 • نمط السوق: {market_mode}
+• وصف التوقيت: {time_status}
+• الوضع الديناميكي: {"تجاهل القيود الزمنية وادخل مع الزخم" if momentum_boost else "التزم بالقواعد القياسية"}
 
 📌 **تأثير الأخبار والتوقيت:**
 • تأثير الأخبار: {news_impact} (معامل ×{news_risk_multiplier})
@@ -4645,5 +4655,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
     
