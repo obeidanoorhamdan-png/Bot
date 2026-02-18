@@ -1708,6 +1708,7 @@ async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(
             f"⚠️ **عذراً، ليس لديك صلاحية استخدام البوت**\n\n"
             f"❌ الحالة: {message}\n\n"
+            f"🔑 **أسعار الاشتراكات:**\n• ساعة : 1$\n • يوم : 5$ \n • سبوعي : 15$ \n • شهري : 40$ \n\n
             f"📞 للاشتراك والتواصل مع المشرف: @Sz2zv",
             parse_mode="Markdown"
         )
@@ -1944,6 +1945,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"⚠️ عذراً، ليس لديك صلاحية استخدام البوت\n\n"
             f"❌ الحالة: {message}\n\n"
+            f"🔑 **أسعار الاشتراكات:**\n• ساعة : 1$\n • يوم : 5$ \n • سبوعي : 15$ \n • شهري : 40$ \n\n
             f"📞 للاشتراك والتواصل مع المشرف: @Sz2zv\n\n"
             f"بعد الاشتراك، أرسل /start مرة أخرى"
         )
@@ -3716,7 +3718,7 @@ async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_T
         try:
             await context.bot.send_message(
                 chat_id=target_user_id,
-                text=f"✅ **تم تفعيل اشتراكك في Obeida Trading!**\n\n"
+                text=f"✅ **تم تفعيل اشتراكك في Obeida Trading Bot !**\n\n"
                      f"📅 نوع الاشتراك: {sub_info['subscription_name']}\n"
                      f"{end_info}\n\n"
                      f"أرسل /start لبدء استخدام البوت",
@@ -3789,8 +3791,9 @@ async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 try:
                     await context.bot.send_message(
                         chat_id=target_user_id,
-                        text=f"⚠️ **تم إلغاء اشتراكك في Obeida Trading**\n\n"
-                             f"للتواصل مع المشرف: @Sz2zv",
+                        text=f"⚠️ **تم إلغاء اشتراكك في Obeida Trading Bot**\n\n"
+                        text=f"⚠️ **     🔑 **أسعار الاشتراكات:** \n  • ساعة : 1$ • يوم : 5$\n • سبوعي : 15$ \n • شهري : 40$ \n\n"
+                             f"الاشتراكات تواصل : @Sz2zv",
                         parse_mode="Markdown"
                     )
                 except:
@@ -4013,35 +4016,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     🔑 **نظام الاشتراك المتطور V2:**
     • إدارة الاشتراكات عبر لوحة المشرف
     • إضافة اشتراك مباشر باستخدام User ID
-    • خيارات مدة: ساعة، يوم، أسبوع، شهر، سنة، مدى الحياة
+    • مدة الاشتراكات: ساعة، يوم، أسبوع، شهر، سنة،
     • إمكانية حظر المستخدمين وإلغاء حظرهم
-    • نظام إذاعة للمشتركين
     
-    📈 **نظام التوصيات الجديد:**
-    • تحليل فني للعملات والمؤشرات
-    • سحب تلقائي للصور من TradingView
-    • تطبيق القوانين الجديدة (V5 - Omni Priority)
-    • تحليل مزدوج (نصي + بصري)
+    🔑 **أسعار الاشتراكات:**
+    • ساعة : 1$
+    • يوم : 5$
+    • سبوعي : 15$
+    • شهري : 40$
+    • نسخة خاص بيك : 300$
     
     ⏱️ **خيارات مدة الصفقة:**
     • **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة
     • **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة
     • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
-    
-    👑 **للمشرفين فقط:**
-    • لوحة تحكم متكاملة
-    • إضافة اشتراكات باختيار المدة
-    • عرض جميع المستخدمين
-    • إلغاء الاشتراكات
-    • حظر وإلغاء حظر المستخدمين
-    • إذاعة للمشتركين
-    • إحصائيات متقدمة
-    
-    💾 **نظام حماية البيانات:**
-    • تخزين آمن ومشفر
-    • نسخ احتياطي تلقائي
-    • تتبع التغييرات
-    • منع التلاعب
     """
     
     formatted_help = format_as_copyable_code(help_text, "markdown")
@@ -4702,12 +4690,6 @@ def ping():
 def main():
     """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية"""
     print("🤖 Starting Obeida Trading with Timezone Support ...")
-    print("📋 تم تفعيل نظام النسخ السريع - جميع التحليلات قابلة للنسخ بنقرة واحدة")
-    print("👑 المشرف الرئيسي: 6207431030 (@Sz2zv)")
-    print("🌍 نظام المناطق الزمنية للمستخدمين - مفعل (أكثر من 70 دولة)")
-    print("🔑 نظام إدارة الاشتراكات المتطور V2 - إضافة اشتراك باستخدام User ID")
-    print("🔒 نظام إخفاء الأزرار لغير المشتركين - مفعل")
-    print("💾 نظام حماية البيانات والنسخ الاحتياطي - مفعل")
     print(f"📊 نسخة البيانات: {DATA_VERSION}")
     
     # تهيئة قاعدة البيانات الرئيسية
@@ -4817,9 +4799,6 @@ def main():
     
     print("✅ Telegram Bot with Timezone Support ready ...")
     print("📡 Bot Obeida Trading V2 online with timezone system and subscription system...")
-    print("📢 نظام الإذاعة للمشتركين مفعل")
-    print("👥 إدارة المستخدمين: إضافة، حظر، تمديد، إلغاء")
-    print("🌍 نظام المناطق الزمنية: اختر دولتك للحصول على توقيت دقيق")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
