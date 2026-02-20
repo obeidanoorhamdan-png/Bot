@@ -47,444 +47,6 @@ CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15"
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
 
 # ============================================
-# نظام الحماية والنسخ الاحتياطي المتقدم (NEW)
-# ============================================
-
-class DataProtectionAdvanced:
-    """
-    نظام حماية البيانات والنسخ الاحتياطي المتقدم
-    - نسخ احتياطي تلقائي متعدد المواقع
-    - تشفير البيانات الحساسة
-    - استعادة البيانات تلقائياً عند إعادة التشغيل
-    - حماية ضد الحذف العرضي
-    """
-    
-    BACKUP_INTERVAL = 1800  # 30 دقيقة
-    MAX_BACKUPS = 50  # الاحتفاظ بآخر 50 نسخة
-    ENCRYPTION_KEY = hashlib.sha256(str(ADMIN_ID).encode()).hexdigest()[:32]
-    
-    @staticmethod
-    def encrypt_data(data):
-        """تشفير البيانات الحساسة (تشفير بسيط)"""
-        try:
-            if isinstance(data, str):
-                data = data.encode()
-            elif not isinstance(data, bytes):
-                data = str(data).encode()
-            
-            # تشفير بسيط (للحماية الأساسية)
-            key = DataProtectionAdvanced.ENCRYPTION_KEY.encode()
-            encrypted = bytearray()
-            for i, byte in enumerate(data):
-                encrypted.append(byte ^ key[i % len(key)])
-            return base64.b64encode(bytes(encrypted)).decode()
-        except Exception as e:
-            print(f"⚠️ خطأ في التشفير: {e}")
-            return data
-    
-    @staticmethod
-    def decrypt_data(encrypted_data):
-        """فك تشفير البيانات"""
-        try:
-            if isinstance(encrypted_data, str):
-                encrypted_bytes = base64.b64decode(encrypted_data.encode())
-            else:
-                encrypted_bytes = base64.b64decode(encrypted_data)
-            
-            key = DataProtectionAdvanced.ENCRYPTION_KEY.encode()
-            decrypted = bytearray()
-            for i, byte in enumerate(encrypted_bytes):
-                decrypted.append(byte ^ key[i % len(key)])
-            return bytes(decrypted).decode()
-        except Exception:
-            return encrypted_data
-    
-    @staticmethod
-    def backup_databases_secure():
-        """نسخ احتياطي آمن متعدد المواقع"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_id = str(uuid.uuid4())[:8]
-        
-        databases = [
-            (DB_NAME, "main"),
-            (SUBSCRIPTION_DB_NAME, "subscription")
-        ]
-        
-        backup_info = {
-            'timestamp': timestamp,
-            'backup_id': backup_id,
-            'version': DATA_VERSION,
-            'files': []
-        }
-        
-        for db_path, db_type in databases:
-            if os.path.exists(db_path):
-                try:
-                    # 1. نسخة احتياطية محلية
-                    local_backup = os.path.join(BACKUP_DIR, f"{db_type}_backup_{timestamp}_{backup_id}.db")
-                    shutil.copy2(db_path, local_backup)
-                    
-                    # 2. نسخة احتياطية JSON للبيانات المهمة
-                    conn = sqlite3.connect(db_path)
-                    cursor = conn.cursor()
-                    
-                    # تصدير جميع الجداول إلى JSON
-                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                    tables = cursor.fetchall()
-                    
-                    json_backup = {
-                        'timestamp': timestamp,
-                        'backup_id': backup_id,
-                        'db_type': db_type,
-                        'tables': {}
-                    }
-                    
-                    for table in tables:
-                        table_name = table[0]
-                        cursor.execute(f"SELECT * FROM {table_name}")
-                        columns = [description[0] for description in cursor.description]
-                        rows = cursor.fetchall()
-                        
-                        # تحويل الصفوف إلى قواميس
-                        table_data = []
-                        for row in rows:
-                            row_dict = {}
-                            for i, col in enumerate(columns):
-                                value = row[i]
-                                if isinstance(value, (int, float, str, type(None))):
-                                    row_dict[col] = value
-                                else:
-                                    row_dict[col] = str(value)
-                            table_data.append(row_dict)
-                        
-                        json_backup['tables'][table_name] = table_data
-                    
-                    conn.close()
-                    
-                    # حفظ نسخة JSON
-                    json_backup_path = os.path.join(BACKUP_DIR, f"{db_type}_json_{timestamp}_{backup_id}.json")
-                    with open(json_backup_path, 'w', encoding='utf-8') as f:
-                        json.dump(json_backup, f, ensure_ascii=False, indent=2)
-                    
-                    # 3. نسخة احتياطية مشفرة للبيانات الحساسة
-                    if db_type == 'subscription':
-                        encrypted_backup_path = os.path.join(BACKUP_DIR, f"{db_type}_encrypted_{timestamp}_{backup_id}.enc")
-                        with open(db_path, 'rb') as src:
-                            with open(encrypted_backup_path, 'wb') as dst:
-                                dst.write(base64.b64encode(src.read()))
-                    
-                    backup_info['files'].append({
-                        'type': db_type,
-                        'local': local_backup,
-                        'json': json_backup_path,
-                        'encrypted': encrypted_backup_path if db_type == 'subscription' else None
-                    })
-                    
-                    print(f"✅ تم إنشاء نسخة احتياطية آمنة لـ {db_type}: {local_backup}")
-                    
-                except Exception as e:
-                    print(f"⚠️ خطأ في نسخ {db_path}: {e}")
-        
-        # حفظ معلومات النسخة الاحتياطية
-        info_path = os.path.join(BACKUP_DIR, f"backup_info_{timestamp}_{backup_id}.json")
-        with open(info_path, 'w', encoding='utf-8') as f:
-            json.dump(backup_info, f, ensure_ascii=False, indent=2)
-        
-        # تنظيف النسخ القديمة
-        DataProtectionAdvanced.cleanup_old_backups()
-        
-        return backup_info
-    
-    @staticmethod
-    def cleanup_old_backups():
-        """تنظيف النسخ الاحتياطية القديمة - الاحتفاظ بآخر MAX_BACKUPS نسخة"""
-        try:
-            all_backups = []
-            for filename in os.listdir(BACKUP_DIR):
-                if filename.endswith('.db') or filename.endswith('.json') or filename.endswith('.enc'):
-                    filepath = os.path.join(BACKUP_DIR, filename)
-                    all_backups.append((filepath, os.path.getmtime(filepath)))
-            
-            # ترتيب حسب التاريخ (الأحدث أولاً)
-            all_backups.sort(key=lambda x: x[1], reverse=True)
-            
-            # الاحتفاظ بآخر MAX_BACKUPS * 3 (لأن كل نسخة لها 3 ملفات)
-            keep_count = DataProtectionAdvanced.MAX_BACKUPS * 3
-            if len(all_backups) > keep_count:
-                for filepath, _ in all_backups[keep_count:]:
-                    try:
-                        os.remove(filepath)
-                        print(f"🗑️ تم حذف نسخة احتياطية قديمة: {os.path.basename(filepath)}")
-                    except Exception as e:
-                        print(f"⚠️ خطأ في حذف {filepath}: {e}")
-        except Exception as e:
-            print(f"⚠️ خطأ في تنظيف النسخ القديمة: {e}")
-    
-    @staticmethod
-    def restore_latest_backup():
-        """استعادة أحدث نسخة احتياطية عند بدء التشغيل"""
-        try:
-            # البحث عن أحدث نسخة احتياطية
-            backups = []
-            for filename in os.listdir(BACKUP_DIR):
-                if filename.startswith('main_backup_') and filename.endswith('.db'):
-                    filepath = os.path.join(BACKUP_DIR, filename)
-                    backups.append((filepath, os.path.getmtime(filepath)))
-            
-            if not backups:
-                print("📭 لا توجد نسخ احتياطية سابقة")
-                return False
-            
-            # اختيار أحدث نسخة
-            backups.sort(key=lambda x: x[1], reverse=True)
-            latest_backup = backups[0][0]
-            
-            # استعادة قاعدة البيانات الرئيسية
-            if os.path.exists(DB_NAME):
-                # إنشاء نسخة احتياطية قبل الاستعادة (للحماية)
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                pre_restore = os.path.join(BACKUP_DIR, f"pre_restore_main_{timestamp}.db")
-                shutil.copy2(DB_NAME, pre_restore)
-                print(f"💾 تم حفظ نسخة قبل الاستعادة: {pre_restore}")
-            
-            shutil.copy2(latest_backup, DB_NAME)
-            print(f"✅ تم استعادة قاعدة البيانات الرئيسية من: {latest_backup}")
-            
-            # البحث عن أحدث نسخة للاشتراكات
-            sub_backups = []
-            for filename in os.listdir(BACKUP_DIR):
-                if filename.startswith('subscription_backup_') and filename.endswith('.db'):
-                    filepath = os.path.join(BACKUP_DIR, filename)
-                    sub_backups.append((filepath, os.path.getmtime(filepath)))
-            
-            if sub_backups:
-                sub_backups.sort(key=lambda x: x[1], reverse=True)
-                latest_sub_backup = sub_backups[0][0]
-                
-                if os.path.exists(SUBSCRIPTION_DB_NAME):
-                    pre_restore_sub = os.path.join(BACKUP_DIR, f"pre_restore_sub_{timestamp}.db")
-                    shutil.copy2(SUBSCRIPTION_DB_NAME, pre_restore_sub)
-                
-                shutil.copy2(latest_sub_backup, SUBSCRIPTION_DB_NAME)
-                print(f"✅ تم استعادة قاعدة بيانات الاشتراكات من: {latest_sub_backup}")
-            
-            return True
-            
-        except Exception as e:
-            print(f"⚠️ خطأ في استعادة النسخة الاحتياطية: {e}")
-            return False
-    
-    @staticmethod
-    def export_users_to_json():
-        """تصدير بيانات المستخدمين إلى JSON للحفظ الدائم"""
-        try:
-            users_data = {
-                'export_date': datetime.now().isoformat(),
-                'version': DATA_VERSION,
-                'users': []
-            }
-            
-            conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT u.user_id, u.username, u.first_name, u.created_at, u.is_blocked,
-                       a.subscription_type, a.subscription_name, a.start_date, a.end_date, a.is_active
-                FROM users u
-                LEFT JOIN active_subscriptions a ON u.user_id = a.user_id
-                ORDER BY u.created_at DESC
-            """)
-            
-            for row in cursor.fetchall():
-                user = {
-                    'user_id': row[0],
-                    'username': row[1],
-                    'first_name': row[2],
-                    'created_at': row[3],
-                    'is_blocked': row[4],
-                    'subscription': {
-                        'type': row[5],
-                        'name': row[6],
-                        'start_date': row[7],
-                        'end_date': row[8],
-                        'is_active': row[9]
-                    }
-                }
-                users_data['users'].append(user)
-            
-            conn.close()
-            
-            # حفظ في ملف JSON دائم
-            json_path = os.path.join(BACKUP_DIR, f"users_export_{datetime.now().strftime('%Y%m%d')}.json")
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(users_data, f, ensure_ascii=False, indent=2)
-            
-            print(f"✅ تم تصدير بيانات المستخدمين إلى: {json_path}")
-            
-            # إنشاء نسخة في مكان آمن (يمكن تعديل المسار)
-            try:
-                # محاولة حفظ نسخة في مسار مطلق آمن
-                secure_path = os.path.join(os.path.expanduser('~'), 'obeida_backups')
-                if not os.path.exists(secure_path):
-                    os.makedirs(secure_path)
-                
-                secure_json = os.path.join(secure_path, f"users_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-                shutil.copy2(json_path, secure_json)
-                print(f"✅ تم حفظ نسخة آمنة في: {secure_json}")
-            except Exception as e:
-                print(f"⚠️ لا يمكن حفظ النسخة الآمنة: {e}")
-            
-            return json_path
-            
-        except Exception as e:
-            print(f"⚠️ خطأ في تصدير المستخدمين: {e}")
-            return None
-    
-    @staticmethod
-    def import_users_from_json(json_path=None):
-        """استيراد بيانات المستخدمين من JSON (للبوت الجديد)"""
-        try:
-            if json_path is None:
-                # البحث عن أحدث ملف تصدير
-                json_files = []
-                for filename in os.listdir(BACKUP_DIR):
-                    if filename.startswith('users_export_') and filename.endswith('.json'):
-                        json_files.append(os.path.join(BACKUP_DIR, filename))
-                
-                if not json_files:
-                    print("📭 لا توجد ملفات تصدير")
-                    return False
-                
-                json_files.sort(key=os.path.getmtime, reverse=True)
-                json_path = json_files[0]
-            
-            with open(json_path, 'r', encoding='utf-8') as f:
-                users_data = json.load(f)
-            
-            print(f"📦 جاري استيراد {len(users_data['users'])} مستخدم...")
-            
-            conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-            cursor = conn.cursor()
-            
-            imported = 0
-            for user in users_data['users']:
-                try:
-                    # إضافة المستخدم
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO users 
-                        (user_id, username, first_name, created_at, is_blocked)
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (
-                        user['user_id'],
-                        user['username'],
-                        user['first_name'],
-                        user['created_at'],
-                        user['is_blocked']
-                    ))
-                    
-                    # إضافة الاشتراك إذا وجد
-                    if user['subscription'] and user['subscription']['type']:
-                        cursor.execute("""
-                            INSERT INTO active_subscriptions 
-                            (user_id, subscription_type, subscription_name, start_date, end_date, is_active)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        """, (
-                            user['user_id'],
-                            user['subscription']['type'],
-                            user['subscription']['name'],
-                            user['subscription']['start_date'],
-                            user['subscription']['end_date'],
-                            user['subscription']['is_active']
-                        ))
-                    
-                    imported += 1
-                except Exception as e:
-                    print(f"⚠️ خطأ في استيراد المستخدم {user['user_id']}: {e}")
-            
-            conn.commit()
-            conn.close()
-            
-            print(f"✅ تم استيراد {imported} مستخدم بنجاح")
-            return True
-            
-        except Exception as e:
-            print(f"⚠️ خطأ في استيراد المستخدمين: {e}")
-            return False
-    
-    @staticmethod
-    def create_restore_point():
-        """إنشاء نقطة استعادة كاملة للنظام"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            restore_point = os.path.join(BACKUP_DIR, f"restore_point_{timestamp}")
-            os.makedirs(restore_point, exist_ok=True)
-            
-            # نسخ جميع قواعد البيانات
-            for db in [DB_NAME, SUBSCRIPTION_DB_NAME]:
-                if os.path.exists(db):
-                    shutil.copy2(db, os.path.join(restore_point, db))
-            
-            # نسخ مجلد الصور المؤقتة
-            if os.path.exists(IMAGE_CACHE_DIR):
-                shutil.copytree(IMAGE_CACHE_DIR, os.path.join(restore_point, IMAGE_CACHE_DIR))
-            
-            # حفظ معلومات نقطة الاستعادة
-            info = {
-                'timestamp': timestamp,
-                'version': DATA_VERSION,
-                'files': os.listdir(restore_point)
-            }
-            
-            with open(os.path.join(restore_point, 'info.json'), 'w') as f:
-                json.dump(info, f, indent=2)
-            
-            print(f"✅ تم إنشاء نقطة استعادة: {restore_point}")
-            return restore_point
-            
-        except Exception as e:
-            print(f"⚠️ خطأ في إنشاء نقطة استعادة: {e}")
-            return None
-    
-    @staticmethod
-    def verify_database_integrity():
-        """التحقق من سلامة قواعد البيانات وإصلاحها إن أمكن"""
-        try:
-            for db_path in [DB_NAME, SUBSCRIPTION_DB_NAME]:
-                if not os.path.exists(db_path):
-                    print(f"⚠️ قاعدة البيانات غير موجودة: {db_path}")
-                    continue
-                
-                try:
-                    conn = sqlite3.connect(db_path)
-                    cursor = conn.cursor()
-                    
-                    # فحص سلامة قاعدة البيانات
-                    cursor.execute("PRAGMA integrity_check")
-                    result = cursor.fetchone()
-                    
-                    if result and result[0] == 'ok':
-                        print(f"✅ قاعدة البيانات سليمة: {db_path}")
-                    else:
-                        print(f"⚠️ قاعدة البيانات تالفة: {db_path}")
-                        
-                        # محاولة الإصلاح
-                        cursor.execute("VACUUM")
-                        cursor.execute("REINDEX")
-                        print(f"🔧 تم محاولة إصلاح: {db_path}")
-                    
-                    conn.close()
-                    
-                except Exception as e:
-                    print(f"⚠️ خطأ في فحص {db_path}: {e}")
-                    
-                    # محاولة استعادة من النسخ الاحتياطي
-                    print(f"🔄 جاري استعادة {db_path} من النسخ الاحتياطي...")
-                    DataProtectionAdvanced.restore_latest_backup()
-                    
-        except Exception as e:
-            print(f"⚠️ خطأ في التحقق من سلامة البيانات: {e}")
-
-# ============================================
 # نظام المناطق الزمنية حسب الدولة (NEW)
 # ============================================
 
@@ -503,7 +65,7 @@ COUNTRIES_TIMEZONES = {
     "الأردن 🇯🇴": "Asia/Amman",
     "لبنان 🇱🇧": "Asia/Beirut",
     "سوريا 🇸🇾": "Asia/Damascus",
-    "ليبيا 🇾🇱": "Africa/Tripoli",
+    "ليبيا 🇱🇾": "Africa/Tripoli",
     "تونس 🇹🇳": "Africa/Tunis",
     "الجزائر 🇩🇿": "Africa/Algiers",
     "المغرب 🇲🇦": "Africa/Casablanca",
@@ -1029,10 +591,6 @@ class SubscriptionSystem:
             # تحديث قاعدة البيانات الرئيسية
             SubscriptionSystem.sync_with_main_db(user_id, end_date.isoformat() if end_date else None)
             
-            # إنشاء نسخة احتياطية فورية بعد إضافة اشتراك مهم
-            DataProtectionAdvanced.backup_databases_secure()
-            DataProtectionAdvanced.export_users_to_json()
-            
             return True, {
                 'subscription_type': subscription_type,
                 'subscription_name': sub_name,
@@ -1388,9 +946,6 @@ class SubscriptionSystem:
             # تحديث قاعدة البيانات الرئيسية
             SubscriptionSystem.sync_with_main_db(user_id, None)
             
-            # إنشاء نسخة احتياطية
-            DataProtectionAdvanced.backup_databases_secure()
-            
             return True, "تم إلغاء الاشتراك بنجاح"
             
         except Exception as e:
@@ -1527,9 +1082,6 @@ class SubscriptionSystem:
             # تحديث قاعدة البيانات الرئيسية
             SubscriptionSystem.sync_with_main_db(user_id, new_end_date.isoformat())
             
-            # إنشاء نسخة احتياطية
-            DataProtectionAdvanced.backup_databases_secure()
-            
             return True, f"تم تمديد الاشتراك حتى {new_end_date.strftime('%Y-%m-%d %H:%M')}"
             
         except Exception as e:
@@ -1552,14 +1104,7 @@ def check_user_subscription(user_id):
 # ============================================
 
 def init_db_with_subscription():
-    """تهيئة قاعدة البيانات الرئيسية مع استعادة النسخ الاحتياطي إن وجد"""
-    # محاولة استعادة أحدث نسخة احتياطية
-    try:
-        if os.path.exists(BACKUP_DIR):
-            DataProtectionAdvanced.restore_latest_backup()
-    except Exception as e:
-        print(f"⚠️ خطأ في استعادة النسخ الاحتياطية: {e}")
-    
+    """تهيئة قاعدة البيانات الرئيسية"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
@@ -1652,14 +1197,6 @@ def init_db_with_subscription():
     
     # تهيئة نظام الاشتراك الجديد
     SubscriptionSystem.init_db()
-    
-    # إنشاء نسخة احتياطية أولية وتصدير JSON
-    try:
-        DataProtectionAdvanced.backup_databases_secure()
-        DataProtectionAdvanced.export_users_to_json()
-        DataProtectionAdvanced.create_restore_point()
-    except Exception as e:
-        print(f"⚠️ خطأ في إنشاء النسخ الاحتياطية الأولية: {e}")
 
 def check_subscription(user_id):
     """التحقق من صلاحية اشتراك المستخدم (متوافقة مع الكود القديم)"""
@@ -3125,7 +2662,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     return RECOMMENDATION_MODE
 
 async def analyze_chart_image(update, context, image_path, candle, trade_time, symbol):
-    """تحليل صورة الشارت مع القوانين الجديدة والتعديلات الأربعة الجوهرية V9.1"""
+    """تحليل صورة الشارت مع القوانين الجديدة والتعديلات الثلاثة"""
     try:
         user_id = update.effective_user.id
         prev_context, prev_time = get_analysis_context(user_id)
@@ -3146,26 +2683,9 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         # الحصول على معلومات السيولة والتوقيت باستخدام المنطقة الزمنية للمستخدم
         session_name, session_time, session_vol, user_tz = get_market_session(user_id)
         local_time = get_localized_time(user_id)
-        platform_time = datetime.now(pytz.timezone('Asia/Riyadh'))  # توقيت المنصة (GMT+3)
-        
         current_hour = local_time.hour
         current_minute = local_time.minute
         current_second = local_time.second
-        
-        # تحديد جلسة التداول الحالية بتوقيت المنصة
-        platform_hour = platform_time.hour
-        platform_minute = platform_time.minute
-        
-        if 3 <= platform_hour < 11:
-            trading_session = "آسيوية"
-        elif 11 <= platform_hour < 15:
-            trading_session = "لندن (افتتاح)"
-        elif 15 <= platform_hour < 19:
-            trading_session = "لندن + نيويورك (تداخل)"
-        elif 19 <= platform_hour < 23:
-            trading_session = "نيويورك (متأخر)"
-        else:
-            trading_session = "المحيط الهادئ"
         
         # حساب الثواني المتبقية
         seconds_remaining = 60 - current_second
@@ -3193,153 +2713,48 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         elif seconds_remaining < 15:
             candle_closing_status += " ⚠️ (مرحلة تأكيد الاتجاه)"
         
-        # نظام الدرع الأساسي (Fundamental Shield) - بتوقيت المنصة GMT+3
+        # نظام الدرع الأساسي (Fundamental Shield)
         news_impact = "🟢 منخفض"
         news_warning = ""
         news_risk_multiplier = 1.0
         
-        # التحقق من أن السوق OTC لتعطيل فلاتر الأخبار
-        is_otc_market = "OTC" in symbol.upper() if symbol else False
+        high_impact_hours = [
+            (14, 30), (16, 0), (20, 0),
+            (8, 0), (9, 0), (10, 0),
+            (2, 30), (4, 0),
+            (17, 30),
+        ]
         
-        # إذا كان السوق OTC، قم بتعطيل فلاتر الأخبار فوراً
-        if is_otc_market:
-            news_impact = "⚡ OTC - غير متأثر بالأخبار"
-            news_warning = "✅ سوق OTC - تم تعطيل فلاتر الأخبار"
-            news_risk_multiplier = 1.0  # لا يوجد تأثير للأخبار في OTC
-        else:
-            # أوقات الأخبار الاقتصادية الهامة بتوقيت المنصة (GMT+3) - للسوق الحقيقي فقط
-            high_impact_hours = [
-                # الفوركس والسلع
-                (10, 30),  # GDP بريطانيا 10:30 بتوقيت المنصة
-                (11, 0),   # مؤشر PMI الخدمات بريطانيا 11:00
-                (11, 30),  # مؤشر PMI التصنيع بريطانيا 11:30
-                (12, 0),   # مؤشر PMI التصنيع أوروبا 12:00
-                (12, 30),  # مؤشر PMI الخدمات أوروبا 12:30
-                (15, 0),   # ADP الوظائف الأمريكية 15:00
-                (15, 30),  # الناتج المحلي الأمريكي 15:30
-                (15, 30),  # مطالبات البطالة الأمريكية 15:30
-                (16, 0),   # مؤشر PMI التصنيع الأمريكي 16:00
-                (16, 45),  # مؤشر PMI الخدمات الأمريكي 16:45
-                (17, 0),   # مبيعات المنازل الأمريكية 17:00
-                (17, 30),  # مخزونات النفط 17:30
-                
-                # اجتماعات الفائدة
-                (20, 0),   # الفائدة الأمريكية (أيام الأربعاء) 20:00
-                (14, 45),  # الفائدة الأوروبية 14:45
-                (14, 0),   # الفائدة البريطانية 14:00
-                
-                # الوظائف الأمريكية (الجمعة الأولى من الشهر)
-                (15, 30),  # الوظائف غير الزراعية 15:30
-                
-                # السلع
-                (9, 0),    # بيانات النفط الآسيوية 9:00
-                (16, 30),  # بيانات الذهب 16:30
-            ]
-            
-            for news_hour, news_minute in high_impact_hours:
-                time_diff = abs((platform_hour * 60 + platform_minute) - (news_hour * 60 + news_minute))
-                if time_diff <= 60:
-                    news_impact = "🔴 عالي جداً"
-                    news_risk_multiplier = 2.5
-                    news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة (بتوقيت المنصة)"
-                    break
-                elif time_diff <= 120:
-                    news_impact = "🟡 متوسط"
-                    news_risk_multiplier = 1.5
-                    news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة (بتوقيت المنصة)"
-                    break
+        for news_hour, news_minute in high_impact_hours:
+            time_diff = abs((current_hour * 60 + current_minute) - (news_hour * 60 + news_minute))
+            if time_diff <= 60:
+                news_impact = "🔴 عالي جداً"
+                news_risk_multiplier = 2.5
+                news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة"
+                break
+            elif time_diff <= 120:
+                news_impact = "🟡 متوسط"
+                news_risk_multiplier = 1.5
+                news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
+                break
         
-        # الفلتر الزمني (Kill Zones) - بتوقيت المنصة GMT+3
+        # الفلتر الزمني (Kill Zones)
         kill_zone_status = ""
-        
-        # مناطق القتل السعري الصحيحة بتوقيت GMT+3
-        # افتتاح لندن: 11:00 - 14:00
-        if 11 <= platform_hour < 14:
-            kill_zone_status = "⚡ منطقة القتل السعري - افتتاح لندن (11:00-14:00 بتوقيت المنصة)"
-        # تداخل لندن + نيويورك: 15:00 - 19:00 (أقوى منطقة)
-        elif 15 <= platform_hour < 19:
-            kill_zone_status = "💥 منطقة القتل السعري القصوى - تداخل لندن + نيويورك (15:00-19:00 بتوقيت المنصة)"
-        # افتتاح نيويورك: 15:00 - 18:00
-        elif 15 <= platform_hour < 18:
-            kill_zone_status = "⚡ منطقة القتل السعري - افتتاح نيويورك (15:00-18:00 بتوقيت المنصة)"
-        # إغلاق لندن + نيويورك: 19:00 - 20:00
-        elif 19 <= platform_hour < 20:
-            kill_zone_status = "⚠️ منطقة إغلاق الجلسات - تقلبات عالية (19:00-20:00 بتوقيت المنصة)"
-        # الجلسة الآسيوية: 03:00 - 11:00
-        elif 3 <= platform_hour < 11:
-            kill_zone_status = "🌏 جلسة آسيوية - سيولة منخفضة (03:00-11:00 بتوقيت المنصة)"
-        # جلسة المحيط الهادئ: 23:00 - 03:00
-        elif 23 <= platform_hour < 24 or 0 <= platform_hour < 3:
-            kill_zone_status = "🌊 جلسة المحيط الهادئ - سيولة منخفضة جداً (23:00-03:00 بتوقيت المنصة)"
+        if 10 <= current_hour < 13:
+            kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بالتوقيت المحلي)"
+        elif 15 <= current_hour < 18:
+            kill_zone_status = "داخل منطقة القتل السعري (نيويورك 15-18 بالتوقيت المحلي)"
+        elif 0 <= current_hour < 9 or current_hour >= 22:
+            kill_zone_status = "خارج منطقة القتل (جلسة آسيوية)"
         else:
-            kill_zone_status = "⏰ خارج مناطق القتل الرئيسية - سيولة متوسطة"
+            kill_zone_status = "خارج مناطق القتل الرئيسية"
         
-        # دقائق التحول (Pivot Minutes) - الأوقات الحرجة في التداول بتوقيت المنصة
-        # الدقائق التي يحدث فيها انعكاسات قوية: 00, 15, 30, 45 (افتتاح شموع جديدة)
-        # الدقائق الأخيرة من كل شمعة: 14, 29, 44, 59
-        is_critical_minute = platform_minute in [0, 15, 30, 45]  # دقائق افتتاح الشموع
-        is_trap_minute = platform_minute in [14, 29, 44, 59]      # دقائق الغدر (آخر دقيقة)
-        
-        if is_trap_minute:
-            last_minute_status = "⚠️ دقيقة الغدر - حظر الدخول إلا مع اختراق حقيقي"
-        elif is_critical_minute:
-            last_minute_status = "🔄 افتتاح شمعة جديدة - ترقب الانعكاسات"
-        else:
-            last_minute_status = "✅ وقت مستقر للتحليل"
-        
-        # تقدير القمم التاريخية (سيتم استخراجها من الصورة بواسطة الذكاء الاصطناعي)
-        estimated_historical_peak = None
-        is_near_historical_peak = False
-        peak_proximity_points = 999
-        wick_ratio = 50  # نسبة افتراضية، سيتم تحديثها من تحليل الصورة
-        velocity = 0  # سرعة الحركة الافتراضية
-        momentum = 50  # الزخم الافتراضي
+        # تحويل دقائق الغدر من "حظر" إلى "فلتر سيولة"
+        is_trap_minute = current_minute in [29, 59, 14, 44]
+        last_minute_status = "VOLATILITY_EXPANSION" if is_trap_minute else "STABLE_FLOW"
         
         # إضافة متغير "مفتاح القوة" لإلغاء القيود
         market_mode = "AGGRESSIVE" if candle.startswith('S') or is_trap_minute else "CONSERVATIVE"
-        
-        # ============================================
-        # إضافة دالة "الحساب الرقمي" (أجهزة الاستشعار) V9.1
-        # ============================================
-        def calculate_precise_metrics(candle_data):
-            """حساب الزخم والسرعة من بيانات الشمعة"""
-            try:
-                # حساب الزخم: نسبة جسم الشمعة إلى كامل طولها
-                full_length = abs(candle_data.get('high', 0) - candle_data.get('low', 0))
-                body_length = abs(candle_data.get('close', 0) - candle_data.get('open', 0))
-                momentum = (body_length / full_length * 100) if full_length > 0 else 0
-                
-                # حساب السرعة: مقدار الحركة في آخر وحدة زمنية
-                # نفترض شمعة واحدة كمرجع سرعة
-                velocity = body_length / 1.0 if body_length > 0 else 0
-                
-                return momentum, velocity
-            except Exception as e:
-                print(f"⚠️ خطأ في حساب المقاييس: {e}")
-                return 50, 0  # قيم افتراضية في حالة الخطأ
-        
-        # بيانات افتراضية للشمعة (سيتم استبدالها من تحليل الصورة)
-        extracted_candle_info = {
-            'high': 0,
-            'low': 0,
-            'open': 0,
-            'close': 0
-        }
-        
-        # ============================================
-        # تعديل منطق "المسافة المرنة" (قلب تحديث V9.1)
-        # ============================================
-        momentum, velocity = calculate_precise_metrics(extracted_candle_info)
-
-        if momentum > 85 and velocity > 1.3:
-            required_distance = 0.3  # تقليص المسافة للدخول الفوري في الانفجار
-            force_trade = True       # إلغاء حالة "الاحتفاظ"
-            time_lock_disabled = True # السماح بالدخول حتى في "دقائق الغدر"
-            market_mode = "V9.1_MOMENTUM_SNIPER"  # وضع القناص في الزخم العالي
-        else:
-            required_distance = 1.5  # المسافة الآمنة في الحالات العادية
-            force_trade = False
-            time_lock_disabled = False
         
         # ربط معطيات الإعدادات
         candle_category = ""
@@ -3389,7 +2804,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         # إعدادات ثابتة
         GENERATION_CONFIG = {
-            "max_tokens": 1200,
+            "max_tokens": 1100,
             "temperature": 0.0,
             "top_p": 1.0,
             "random_seed": 42
@@ -3409,408 +2824,68 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 previous_context_info = ""
         
         # ============================================
-        # التعديلات الأربعة الجوهرية - نسخة V8.0
+        # التعديلات الثلاثة الجديدة - سأضيفها كمتغيرات للبرومبت
         # ============================================
         
-        # [التعديل 1 - قاعدة الـ 2 نقطة الفورية] (The 2-Point Flash Rule)
-        two_point_flash_rule = """
-        【التعديل 1 - قاعدة الـ 2 نقطة الفورية V8.0 (The 2-Point Flash Rule)】
-        - الانتظار حتى إغلاق الشمعة فوق المستوى قد يفوتك الانفجار
-        - إذا تجاوز السعر المستوى بـ 1.5-2 نقطة أثناء تكون الشمعة وبسرعة عالية (Volatility > 1.3)
-        - يعتبر الاختراق ناجحاً ويتم إصدار أمر دخول 'فوري' دون انتظار إغلاق الشمعة
-        - الشرط: سرعة الحركة (Velocity) > 1.3 نقطة في آخر 10 ثوانٍ
-        - **لصفقات الشراء (CALL):** تجاوز المقاومة بـ 2 نقطة بسرعة = دخول فوري
-        - **لصفقات البيع (PUT):** كسر الدعم بـ 2 نقطة بسرعة = دخول فوري
+        # [التعديل 1] قاعدة الـ 3 نقاط (تأكيد الكسر الحقيقي)
+        three_points_rule = """
+        【التعديل 1 - قاعدة الـ 3 نقاط (تأكيد الكسر الحقيقي)】
+        - لا تدخل صفقة شراء بمجرد لمس المقاومة
+        - انتظر حتى يتجاوز السعر مستوى المقاومة بـ 3 نقاط كاملة على الأقل
+        - تأكد من أن الشمعة المخترقة مغلقة فوق المستوى + 3 نقاط
+        - هذا يضمن عدم الدخول في "فتيلة" (ذيل) ثم انعكاس
         """
         
-        # [التعديل 2 - فلتر الابتلاع الديناميكي] (Dynamic Kill Switch)
-        dynamic_kill_switch = """
-        【التعديل 2 - فلتر الابتلاع الديناميكي (Dynamic Kill Switch)】
-        - لا تنتظر الشمعة التالية لترى الابتلاع
-        - راقب الشمعة الحالية: إذا تراجعت الشمعة الحالية وابتلعت 50% من جسمها بعد أن كانت ممتلئة >70%
-        - يتم إلغاء إشارة الدخول فوراً حتى قبل إغلاق الشمعة
-        - هذا يحمي من "فتائل الغدر" قبل وقوعها
-        - **لصفقات البيع (PUT):** إذا رأيت شمعة حمراء تبتلع أي شمعة خضراء سابقة ولو كانت صغيرة، ادخل بيع فوراً
-        - **لصفقات الشراء (CALL):** إذا رأيت شمعة خضراء تبتلع أي شمعة حمراء سابقة، ادخل شراء فوراً
+        # [التعديل 2] قاعدة الـ 50% (فلتر الابتلاع)
+        fifty_percent_rule = """
+        【التعديل 2 - قاعدة الـ 50% (فلتر الابتلاع)】
+        - إذا كان السعر في اتجاه صاعد (شموع خضراء)
+        - ثم ظهرت شمعة حمراء عكسية تبتلع (تغطي) 50% أو أكثر من الشمعة الخضراء السابقة
+        - يجب إلغاء فكرة الشراء فوراً
+        - هذا يعني دخول بائعين بقوة وإفساد الزخم الصاعد
         """
         
-        # [التعديل 3 - هرم السيادة الجديد] (Logic Hierarchy - Marubozu Supremacy)
-        marubozu_supremacy = """
-        【التعديل 3 - هرم السيادة الجديد (Marubozu Supremacy)】
-        ⚠️ **قانون التجاوز الطارئ (Emergency Override):**
-        
-        في حال رصد اندفاع مؤسسي (جميع الشروط التالية):
-        - شمعة ممتلئة بنسبة >80% (Marubozu) - تم تخفيضها من 90% لزيادة الفرص
-        - عدم وجود ذيول علوية (في الشراء) أو سفلية (في البيع) بنسبة <15%
-        - اختراق مستوى مقاومة/دعم رئيسي (مستوى مغلق)
-        - سرعة حركة عالية (Volatility > 1.5x المتوسط)
-        
-        ✅ **يتم تفعيل التجاوز الفوري:**
-        1. يتم تعطيل فلتر القمم التاريخية - الانفجار سيخلق قمة جديدة
-        2. يتم تعطيل بروتوكول دقائق التحول (دقائق 14,29,44,59)
-        3. يتم تعطيل فلتر المسافة - حتى لو كان الهدف على بعد نقطتين فقط
-        4. يتم الدخول بمجرد تجاوز المستوى بـ 1.5 نقطة (Flash Entry) دون انتظار الإغلاق
-        5. حجم الصفقة: مضاعف (2x) بسبب قوة الإشارة
-        
-        ⚠️ **هام:** إذا لم تكن الشمعة انفجارية (<80%)، تعود جميع القيود الصارمة للعمل فوراً.
+        # [التعديل 3] فلتر القمم التاريخية (السيولة)
+        historical_peak_rule = """
+        【التعديل 3 - فلتر القمم التاريخية (السيولة)】
+        - إذا كان السعر عند أعلى نقطة وصل لها اليوم (قمة تاريخية)
+        - يمنع الشراء تماماً
+        - الاستثناء الوحيد: وجود انفجار سعري حقيقي (شمعة ممتلئة >90%، اختراق قوي)
+        - هذا يمنع الشراء في فخاخ السيولة حيث تبيع المؤسسات على المشترين
         """
         
-        # [التعديل 4 - تحرير دقائق التحول] (Time-Lock Release)
-        time_lock_release = """
-        【التعديل 4 - تحرير دقائق التحول (Time-Lock Release)】
-        - القاعدة القديمة: حظر الدخول في آخر 20 ثانية من الدقائق (14, 29, 44, 59)
-        - القاعدة الجديدة: يُسمح بالدخول في 'دقائق الغدر' فقط إذا كان السعر يخترق 'مستوى مغلقاً' بشمعة انفجارية
-        - الزخم الحقيقي يمتص تقلبات افتتاح الشموع الجديدة
-        - إذا لم يكن هناك اختراق حقيقي، استمر في الحظر
-        
-        **شروط الدخول في دقائق الغدر:**
-        - اختراق مستوى مغلق واضح
-        - زخم ≥ 70% (أجسام الشموع)
-        - تجاوز المستوى بـ 1.5 نقطة على الأقل
-        - سرعة حركة > 1.3x المتوسط
-        """
-        
-        # ============================================
-        # بروتوكول V8.0 الهجومي - إضافة فلاتر ذكية
-        # ============================================
-        v8_protocol = """
-        ⚡ **بروتوكول الهجومي - قناص الزخم (Momentum Sniper):**
+        # دمج التعديلات الثلاثة في البرومبت الرئيسي
+        three_updates_section = f"""
+⚡ **التعديلات الثلاثة الجديدة - قوانين صارمة للدخول:**
 
-        【فلتر 1 - كشف السوق العرضي (ADX Filter)】
-        - إذا كانت الشموع تتحرك في نطاق ضيق (أقل من 30% من متوسط الحركة)
-        - وعدم وجود شموع انفجارية >70%
-        - ابقَ في وضع "الانتظار" حتى يخرج السعر من هذا النطاق بقوة
-        - الشرط: حجم الشمعة الحالية < 1.3x متوسط آخر 5 شموع = سوق عرضي
+{three_points_rule}
 
-        【فلتر 2 - قانون "اللحظة الصفرية" (Zero-Wait Rule)】
-        - إذا كانت الشمعة الحالية أكبر من متوسط آخر 3 شموع بـ 1.5x
-        - وتتجه لكسر مستوى دعم/مقاومة رئيسي
-        - ادخل فوراً (دون انتظار الإغلاق)
+{fifty_percent_rule}
 
-        【فلتر 3 - قانون "تجاوز القيعان والقمم" (Floor/Ceiling Bypass)】
-        - عند وجود زخم (>75%)، لا تعتبر القمة التاريخية "مقاومة"
-        - اعتبرها "هدفاً سيتم كسره" وادخل مع الكسر
-        - السعر لن يحترم القمم التاريخية في الزخم القوي
+{historical_peak_rule}
 
-        【فلتر 4 - نسبة الذيل المسموح بها (Wick Ratio V8.0)】
-        - نسبة الذيل المسموح بها = 15% (بدلاً من 5%)
-        - أي ذيل أقل من 15% = شمعة ممتلئة صالحة للدخول
-        - أي ذيل أكثر من 60% = رفض سعري (احتفاظ)
-        
-        【فلتر 5 - سرعة الحركة (Velocity Filter)】
-        - احسب سرعة الحركة: (السعر الحالي - سعر قبل 10 ثوانٍ) / 10
-        - إذا كانت السرعة > 1.3 نقطة/ثانية = زخم انفجاري
-        - إذا كانت السرعة < 0.5 نقطة/ثانية = سوق هادئ (انتظار)
-        """
-        
-        # ============================================
-        # الحلول الجذرية الثلاثة - إضافات V8.1
-        # ============================================
-        
-        historical_peak_protection = """
-        ⚠️ **【الحل الجذري 1 - فلتر القمة التاريخية (Historical Peak Filter) V8.1】**
+🔍 **كيفية تطبيق التعديلات الثلاثة في التحليل:**
 
-        **القاعدة البرمجية الصارمة:**
-        - إذا كان السعر الحالي >= أعلى قمة في آخر 20 شمعة (القمة التاريخية)
-        - ومعامل الزخم (Momentum) > 50%
-        - القرار الإلزامي: **احتفاظ 🟡 (HOLD)**
-        - يمنع تماماً البيع أو الشراء عند القمة التاريخية إلا بشرطين معاً:
-          1. ابتلاع 60% من الشمعة السابقة (Engulfing ≥ 60%)
-          2. تأكيد بكسر مستوى الدعم/المقاومة المجاور
-        
-        **منطق التطبيق:**
-        if current_price >= historical_peak AND momentum > 50%:
-            decision = "HOLD 🟡"
-            confidence_score = MIN(confidence_score, 20)  # خفض الثقة فوراً
-            market_mode = "SUPER_CONSERVATIVE"
-        """
-        
-        safe_distance_rule = """
-        ⚠️ **【الحل الجذري 2 - شرط المسافة الآمنة (1.5 Point Rule) V8.1】**
+1. **عند فكرة الشراء:** تأكد من:
+   - السعر تجاوز المقاومة بـ ≥ 3 نقاط (التعديل 1)
+   - لا توجد شمعة حمراء ابتلعت 50% من آخر شمعة خضراء (التعديل 2)
+   - السعر ليس عند قمة تاريخية إلا مع انفجار حقيقي (التعديل 3)
 
-        **لا تسمح بالدخول بمجرد لمس المستوى:**
-        - يجب أن يبتعد السعر عن المستوى المخترق بـ 1.5 نقطة على الأقل
-        - هذا يضمن أن الاختراق حقيقي وليس مجرد ذيل لسحب السيولة
-        
-        **المعادلة الإجبارية:**
-        - لصفقات الشراء (CALL): current_price > (resistance_level + 1.5)
-        - لصفقات البيع (PUT): current_price < (support_level - 1.5)
-        
-        **الاستثناء الوحيد (التجاوز الطارئ):**
-        - شمعة Marubozu >80% + سرعة حركة > 1.5x المتوسط
-        - عندها يُسمح بـ 1 نقطة فقط (وليس 1.5)
-        """
-        
-        confidence_formula_modifier = """
-        ⚠️ **【الحل الجذري 3 - تعديل معادلة الثقة (Confidence Formula Modifier) V8.1】**
+2. **عند فكرة البيع:** تأكد من:
+   - السعر كسر الدعم بـ ≥ 3 نقاط للأسفل (التعديل 1)
+   - لا توجد شمعة خضراء ابتلعت 50% من آخر شمعة حمراء (التعديل 2)
+   - السعر ليس عند قاع تاريخي إلا مع انفجار حقيقي (التعديل 3)
 
-        **معامل خصم الثقة (Trust Deduction):**
-        - إذا كان هناك "فجوة سعرية" (FVG) قريبة عكس الاتجاه ← خصم 40% من نسبة الثقة فوراً
-        - إذا كان هناك "قمة سيولة" قريبة عكس الاتجاه ← خصم 40% من نسبة الثقة فوراً
-        - إذا كان السعر في "منطقة صراع" (نطاق القمة التاريخية ±3 نقاط) ← خصم 50% من نسبة الثقة
-        
-        **المعادلة الجديدة:**
-        final_confidence = base_confidence × (1 - Σ penalties)
-        where penalties = 0.4 for FVG, 0.4 for Liquidity Peak, 0.5 for Conflict Zone
-        """
-        
-        peak_zone_filter = """
-        ⚠️ **【إضافة - فلتر المنطقة المحظورة (Historical Peak Zone) V8.1】**
-
-        **كشف منطقة الخطر:**
-        - إذا كان السعر يقترب من أعلى قمة تاريخية (بفارق أقل من 3 نقاط)
-        - يتم تحويل market_mode تلقائياً من AGGRESSIVE إلى SUPER_CONSERVATIVE
-        - يتم إجبار الكود على طلب تأكيد مزدوج:
-          1. تأكيد من فريم أعلى (Higher Timeframe Confirmation)
-          2. انتظار شمعتين تأكيد بعد الاختراق
-        
-        **المنطق:**
-        if abs(current_price - historical_peak) < 3:
-            market_mode = "SUPER_CONSERVATIVE"
-            require_double_confirmation = True
-        """
-        
-        institutional_drive_sensor = """
-        ⚠️ **【إضافة - مستشعر الاندفاع المؤسسي (Institutional Drive Sensor) V8.1】**
-
-        **القاعدة الذهبية:**
-        - إذا كانت الشموع المتجهة للقمة "ممتلئة" (نسبة الذيول < 15%)
-        - والسعر يقترب من القمة التاريخية
-        - يمنع البيع نهائياً لأن هذا "اندفاع مؤسسي" وليس مجرد تذبذب
-        
-        **المنطق:**
-        if wick_ratio < 15% AND approaching_historical_peak:
-            SELL_SIGNAL = FORBIDDEN  # يمنع البيع تماماً
-            confidence_score = 0  # ثقة معدومة في البيع
-        """
-        
-        # ============================================
-        # التعديلات النهائية V8.5 - Elite Logic
-        # ============================================
-        
-        peak_blind_spot = """
-        ⚠️ **【قاعدة المنطقة العمياء (The Peak Blind Spot) V8.5】**
-
-        **قاعدة إلزامية لا تُنتهك:**
-        يُمنع منعاً باتاً إصدار إشارة (بيع/شراء) إذا كان السعر عند قمة أو قاع تاريخي إلا بعد تحقق تأكيد الاندفاع (1.5 نقطة).
-        
-        **التطبيق الإجباري:**
-        - إذا كان السعر يلمس المستوى فقط دون الابتعاد عنه بـ 1.5 نقطة
-        - يجب أن يكون القرار **احتفاظ 🟡 (HOLD)** حصراً
-        - السبب: السوق هنا غير واضح ويُحتمل أن يكون فخاً للسيولة
-        
-        **استثناء وحيد:**
-        - شمعة Marubozu >85% تكسر المستوى بـ 0.5 نقطة مع سرعة > 2.0x المتوسط
-        - عندها يتم تفعيل "التجاوز الطارئ" فوراً
-        """
-        
-        rejection_logic = """
-        ⚠️ **【منطق المنع (The Rejection Logic) V8.5】**
-
-        **قاعدة الحظر الذكي:**
-        - إذا كان الزخم متوسطاً (<80%) والسعر يقترب من مستوى سيولة
-        - يُعتبر السوق **غير واضح (UNCLEAR)**
-        - يجب على النظام **منع الدخول فوراً** وإصدار قرار احتفاظ
-        
-        **التبرير الإلزامي في التحليل:**
-        - يجب توضيح السبب: "عدم وضوح كسر السيولة"
-        - يتم خفض الثقة إلى أقل من 30% تلقائياً
-        """
-        
-        signal_strength_clarity = """
-        ⚠️ **【ربط قوة الإشارة بالوضوح (Signal Strength & Clarity) V8.5】**
-
-        **قانون منع الإشارات الوهمية:**
-        - لا تُعطِ إشارة **عالية جداً 💥** أبداً إذا كان السعر في منطقة تذبذب أو قمة تاريخية
-        - أي إشارة عند هذه المناطق يجب أن تكون **ضعيفة ❄️** فقط
-        
-        **التصنيف الإلزامي:**
-        - السعر في منطقة تذبذب (Sideways) → أقصى قوة إشارة = متوسطة ⚡
-        - السعر عند قمة تاريخية → أقصى قوة إشارة = ضعيفة ❄️
-        - السعر في منطقة صراع (±1.5 نقطة من القمة) → القرار = احتفاظ 🟡
-        
-        **الهدف:** حتى يخرج السعر من منطقة الخطر بمسافة آمنة (≥ 1.5 نقطة)
-        """
-        
-        exit_zone_rule = """
-        ⚠️ **【قانون الهروب من منطقة الصراع (The Exit Zone Rule) V8.5】**
-
-        **قاعدة الحظر المطلق:**
-        يُمنع إصدار أي إشارة (بيع/شراء) طالما السعر داخل نطاق **±1.5 نقطة** من قمة أو قاع تاريخي.
-        
-        **الاستثناء الوحيد:**
-        - إذا كانت الشمعة **انفجارية** (Marubozu >85%)
-        - وكسرت المستوى بـ 0.5 نقطة
-        - يتم تفعيل "التجاوز الطارئ" فوراً
-        
-        **التطبيق:**
-        if abs(current_price - historical_peak) <= 1.5:
-            if is_marubozu and marubozu_ratio > 85% and (current_price > historical_peak + 0.5):
-                ACTIVATE_EMERGENCY_OVERRIDE()
-            else:
-                DECISION = "HOLD 🟡"
-        """
-        
-        smart_hold_protocol = """
-        ⚠️ **【بروتوكول احتفاظ 🟡 الذكي (Smart HOLD Protocol) V8.5】**
-
-        **شروط إخراج قرار الاحتفاظ:**
-        يتم إخراج قرار **احتفاظ 🟡** في حالة واحدة فقط:
-        
-        ✅ **الشرط الدقيق:**
-        - السعر عند مستوى سيولة (قمة/قاع تاريخي)
-        - **والزخم ضعيف <60%** أو **سرعة الحركة <1.0 نقطة/ثانية**
-        
-        ❌ **ممنوع الاحتفاظ في حالة:**
-        - إذا كان الزخم قوي (>80%) والسعر اخترق القمة بـ ≥ 1.5 نقطة
-        - عندها يجب التحول فوراً للقرار المناسب للزخم (شراء/بيع)
-        
-        **المنطق:**
-        if price_at_liquidity_level:
-            if momentum < 60% or velocity < 1.0:
-                decision = "HOLD 🟡"
-            elif momentum > 80% and price > peak + 1.5:
-                decision = "BUY 🟢 (Breakout Confirmed)"
-        """
-        
-        anti_counter_trend = """
-        ⚠️ **【فلتر منع الانتحار العكسي (Anti-Counter Trend Filter) V8.5】**
-
-        **قانون حماية رأس المال:**
-        إذا كان السعر يقترب من قمة تاريخية، يُحظر تماماً إصدار إشارة **"بيع"** إلا بعد ظهور:
-        
-        ✅ **شرط البيع الوحيد:**
-        - ظهور **ابتلاع ديناميكي** (Dynamic Engulfing)
-        - يغلق أسفل القمة بـ **1.5 نقطة على الأقل**
-        
-        **المنطق:**
-        if approaching_historical_peak:
-            if not (dynamic_engulfing and current_price < peak - 1.5):
-                SELL_SIGNAL = FORBIDDEN  # يمنع البيع تماماً
-        
-        **التبرير:**
-        هذا التعديل يضمن أنك لن تبيع أبداً أمام "قطار صاعد" (Strong Uptrend)
-        """
-        
-        # ============================================
-        # إضافات V9.1 - منع ضياع الصفقات
-        # ============================================
-        
-        v9_1_additions = f"""
-⚡ **【إضافات V9.1 - منع ضياع الصفقات】**
-
-**1. تقليص مسافة الاختراق (Breakout Distance Reduction):**
-- في الحالات العادية: مسافة الاختراق المطلوبة = 1.5 نقطة
-- **في حالة الزخم الانفجاري (Momentum > 85% & Velocity > 1.3):**
-  - مسافة الاختراق المطلوبة = {required_distance} نقطة فقط
-  - السبب: الدخول فور بداية الاختراق قبل أن يطير السعر بعيداً
-
-**2. مستشعر السرعة اللحظية (Velocity Sensor):**
-- السرعة المحسوبة: {velocity:.2f} نقطة/ثانية
-- عتبة السرعة للتفعيل: > 1.3 نقطة/ثانية
-- إذا كانت السرعة > 1.3: يتم إلغاء جميع قيود الحظر والدخول فوراً
-
-**3. قاعدة "إلغاء الاحتفاظ" الإجباري (Force Execution):**
-- الوضع الحالي: {"✅ مفعل - تم إلغاء الاحتفاظ" if force_trade else "❌ غير مفعل - الاحتفاظ مسموح"}
-- إذا كان الزخم > 85% والسرعة > 1.3: يمنع إصدار قرار "احتفاظ 🟡" تماماً
-- السبب: في الزخم العالي، "الاحتفاظ" يُعتبر خطأً فنيًا
-
-**4. تعطيل القفل الزمني (Time Lock Disabled):**
-- حالة القفل الزمني: {"✅ معطل - مسموح بالدخول في دقائق الغدر" if time_lock_disabled else "❌ مفعل - يطبق حظر دقائق الغدر"}
-- عند تفعيل وضع V9.1، يتم تجاهل دقائق الغدر (14,29,44,59) تماماً
-
-**5. نمط السوق المطور (Market Mode):**
-- نمط السوق الحالي: {market_mode}
-- في وضع V9.1_MOMENTUM_SNIPER: يتم الدخول فوراً مع أول إشارة اختراق
+3. **نقاط الإلغاء الفوري:**
+   - ظهور شمعة عكسية تبتلع 50% من الشمعة السابقة = إلغاء الإشارة
+   - وجود قمة تاريخية بدون اختراق حقيقي = إلغاء الشراء
+   - المسافة إلى الهدف أقل من 3 نقاط بدون زخم = إلغاء
 """
         
-        # دمج جميع التعديلات في البرومبت الرئيسي
-        four_updates_section = f"""
-⚡ **التعديلات الأربعة الجوهرية + بروتوكول الهجومي + الحلول الجذرية V8.1 + التعديلات النهائية V8.5 + إضافات V9.1:**
-
-{two_point_flash_rule}
-
-{dynamic_kill_switch}
-
-{marubozu_supremacy}
-
-{time_lock_release}
-
-{v8_protocol}
-
-{historical_peak_protection}
-
-{safe_distance_rule}
-
-{confidence_formula_modifier}
-
-{peak_zone_filter}
-
-{institutional_drive_sensor}
-
-{peak_blind_spot}
-
-{rejection_logic}
-
-{signal_strength_clarity}
-
-{exit_zone_rule}
-
-{smart_hold_protocol}
-
-{anti_counter_trend}
-
-{v9_1_additions}
-
-🔍 **كيفية تطبيق التعديلات في التحليل (V9.1 ULTIMATE):**
-
-1. **الفحص الأولي - منطقة الخطر:**
-   - هل السعر داخل نطاق ±1.5 نقطة من قمة/قاع تاريخي؟
-   - نعم → احتفاظ 🟡 (إلا مع Marubozu >85% + كسر 0.5 نقطة)
-
-2. **تحديد نوع السوق:**
-   - هل السوق OTC؟ → تعطيل فلاتر الأخبار تماماً
-   - هل السوق عرضي؟ → تفعيل وضع "الانتظار" حتى الخروج من النطاق
-   - هل هناك زخم >80% مع اختراق القمة بـ 1.5 نقطة؟ → شراء/بيع مع الاتجاه
-
-3. **عند رصد اندفاع مؤسسي (Marubozu >85%):**
-   - فعّل "قانون التجاوز الطارئ" فوراً (يسمح بكسر 0.5 نقطة فقط)
-   - تجاهل دقائق الغدر، فلتر المسافة
-   - أدخل فوراً
-
-4. **في حالة الزخم المتوسط (50-80%):**
-   - طبق قاعدة الـ 2 نقطة الفورية
-   - التزم بشرط المسافة المطلوبة ({required_distance} نقطة)
-   - راقب الابتلاع الديناميكي
-
-5. **منطق الاحتفاظ الذكي:**
-   - احتفاظ 🟡 = السعر عند مستوى سيولة + (زخم <60% أو سرعة <1.0)
-   - إذا كان الزخم >85% والسرعة >1.3 → **يمنع الاحتفاظ إجبارياً** (Force Trade = ON)
-
-6. **منع البيع العكسي:**
-   - عند اقتراب السعر من قمة تاريخية → يمنع البيع إلا بابتلاع ديناميكي + إغلاق -1.5 نقطة
-
-7. **بروتوكول V9.1 - القناص اللحظي:**
-   - إذا كان الزخم >85% والسرعة >1.3:
-     * المسافة المطلوبة = 0.3 نقطة فقط
-     * القفل الزمني معطل (يسمح بالدخول في دقائق الغدر)
-     * يمنع الاحتفاظ إجبارياً
-     * الدخول فوري مع أول إشارة اختراق
-"""
-        
-        # تعديل "قرار القمة التاريخية" - إضافة شرط force_trade
-        historical_peak_decision_modifier = """
-⚠️ **【تعديل قرار القمة التاريخية V9.1】**
-
-إذا كان هناك زخم انفجاري (force_trade = True) والسعر الحالي > (القمة التاريخية + 0.3):
-    القرار النهائي = "شراء 🟢"
-    يتم تعزيز الثقة +20% لأن الاختراق مدعوم بزخم حقيقي
-"""
-        
-        # البرومبت الرئيسي مع جميع التعديلات
+        # البرومبت الرئيسي مع إضافة التعديلات الثلاثة
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
-مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات مع تطبيق **قوانين السيادة الجديدة V9.1 ULTIMATE**.
+مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات مع تطبيق قوانين السيادة الجديدة (V6.0 ELITE) **والتعديلات الثلاثة الجديدة**.
 
 🎯 **التوجيه الأساسي: التركيز الكامل على استخراج البيانات وتحليل الصورة**
 أنت ملزم بالتركيز التام على الصورة المرفقة فقط. يجب أن تستخرج كل البيانات والأرقام من الصورة بكامل قدراتك البصرية. لا تتشتت بأي معلومات خارجية أو افتراضات. كل ما تحتاجه موجود في الصورة:
@@ -3823,160 +2898,138 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 {previous_context_info}
 
-{four_updates_section}
+{three_updates_section}
 
-{historical_peak_decision_modifier}
-
-⚡ **الملخص التنفيذي V9.1 ULTIMATE:**
+⚡ **الملخص التنفيذي - التعديلات الستة الكبرى (The Elite 6 Updates):**
 
 🛠️ **1. فلتر سحب السيولة (Liquidity Sweep Filter):**
 قبل أي قرار شراء عند القمة، ابحث عن قمة تاريخية قريبة. إذا لمسها السعر وارتد بفتيلة أو ظهرت شمعة حمراء سريعة، يتم إلغاء الشراء فوراً والتحول للبيع (انعكاس). هذا "فخ سيولة" لاستدراج المشترين قبل الهبوط.
 
 📊 **2. الزخم المشروط (Conditional Momentum):**
-لا يكفي أن تكون الشموع قوية (3 شموع >75%)؛ يجب أن يكون الطريق أمامها خالياً من "فخاخ السيولة" أو "الأرقام المستديرة" غير الملموسة. إذا كانت هناك قمة سيولة قريبة، الزخم ملغي.
+لا يكفي أن تكون الشموع قوية (3 شموع >85%)؛ يجب أن يكون الطريق أمامها خالياً من "فخاخ السيولة" أو "الأرقام المستديرة" غير الملموسة. إذا كانت هناك قمة سيولة قريبة، الزخم ملغي.
 
 ⚡ **3. قانون الابتلاع القاتل (The Kill Switch - Rule 8):**
 بمجرد ظهور شمعة عكسية تبتلع 50% من الشمعة الاندفاعية السابقة، يُعتبر الزخم "منتهياً" أو "خداعياً" ويمنع الدخول مع الاتجاه القديم. السعر الآن في مرحلة تغيير هيكل (Market Structure Shift).
 
 ⏰ **4. بروتوكول دقائق التحول (Pivot Minutes):**
-يمنع الدخول تماماً في الثواني الأخيرة (آخر 20 ثانية) من الدقائق الحرجة (14، 29، 44، 59) لتجنب "غدر" افتتاح الشمعة الجديدة. الاستثناء الوحيد: اختراق حقيقي لمستوى مغلق بشمعة انفجارية أو **تفعيل وضع V9.1 (Momentum >85% + Velocity >1.3)**.
+يمنع الدخول تماماً في الثواني الأخيرة (آخر 20 ثانية) من الدقائق الحرجة (14، 29، 44، 59) لتجنب "غدر" افتتاح الشمعة الجديدة في الفريمات الكبيرة. الاستثناء الوحيد: اختراق حقيقي لمستوى مغلق.
 
 🧲 **5. مغناطيس الفجوات (FVG Magnet):**
 إذا ترك السعر خلفه فجوة سعرية كبيرة (>5 نقاط)، يرفض البوت الدخول عند القمة، وينتظر عودة السعر لملء 50% من الفجوة (منطقة الخصم) لضمان دخول آمن. لا تشتري أبداً عند رأس الانفجار.
 
-✅ **6. تأكيد الاندفاع (Momentum Confirmation) V9.1:**
-لا يعتبر الاختراق حقيقياً إلا إذا:
-- تجاوز السعر المستوى المخترق بـ **{required_distance} نقطة** على الأقل
-- أو كان Marubozu >85% وتجاوز بـ 0.5 نقطة (تجاوز طارئ)
-- أو كان Momentum >85% و Velocity >1.3 → مسافة {required_distance} نقطة فقط
+✅ **6. تأكيد الاندفاع (Momentum Confirmation):**
+في "الجوكر"، لا يعتبر الاختراق حقيقياً إلا إذا تجاوز السعر المستوى المخترق (قمة، مقاومة، دعم) بـ 3 نقاط على الأقل، لضمان أنه كسر حقيقي وليس مجرد "ضرب ستوبات" أو فتيلة لسحب السيولة.
 
-⚠️ **7. قاعدة المنطقة العمياء (Peak Blind Spot) V8.5:**
-يُمنع منعاً باتاً إصدار إشارة (بيع/شراء) إذا كان السعر عند قمة أو قاع تاريخي دون تأكيد الاندفاع ({required_distance} نقطة). القرار الإجباري = احتفاظ 🟡 (إلا مع تفعيل Force Trade)
+⚠️ قاعدة الجوكر المنضبط (Disciplined Joker):
+- لا يُسمح بتجاهل الوقت (الجوكر) إلا إذا كانت الشمعة تخترق "مستوى مغلق" (Closed Level) وبجسم شمعة ممتلئ بنسبة >90%.
+- يجب أن يتجاوز السعر المستوى المخترق بـ 3 نقاط على الأقل (تأكيد الاندفاع).
+- إذا كان الاختراق لقمة تاريخية، انتظر 'تأكيد الاندفاع' بـ 3 نقاط. إذا لم يتحقق الشرط، اعتبره سحب سيولة (Liquidity Grab) وألغِ إشارة الجوكر.
+- عندما تكون المعطيات المرسلة لك هي market_mode: AGGRESSIVE، ولديك momentum_boost: True، يُسمح لك بتجاهل تحذير "الوقت المتبقي" (seconds_remaining) وفق الشروط أعلاه.
 
-⚠️ **8. منطق المنع (Rejection Logic) V8.5:**
-إذا كان الزخم متوسطاً (<80%) والسعر يقترب من مستوى سيولة، يُعتبر السوق غير واضح ويُمنع الدخول فوراً مع توضيح السبب "عدم وضوح كسر السيولة".
+⚠️ تفويض الجوكر النهائي:
+إذا كان 'momentum_boost' مفعلاً وتوفر شرط اختراق مستوى مغلق بـ 3 نقاط على الأقل، فأنت تمتلك صلاحية "كسر القواعد". إذا رأيت اختراقاً حقيقياً لمستوى (Breakout) مدعوماً بجسم شمعة قوي، أعطِ إشارة دخول فورية حتى لو تبقت ثانية واحدة على نهاية الوقت. الزخم الحقيقي أقوى من الساعة.
 
-⚠️ **9. ربط قوة الإشارة بالوضوح V8.5:**
-- السعر في منطقة تذبذب → أقصى قوة إشارة = متوسطة ⚡
-- السعر عند قمة تاريخية → أقصى قوة إشارة = ضعيفة ❄️ (إلا مع تفعيل Force Trade)
-- السعر في منطقة صراع (±1.5 نقطة من القمة) → القرار = احتفاظ 🟡 (إلا مع تفعيل Force Trade)
+📜 قواعد السيادة العشر (The 10 Supremacy Rules):
 
-⚠️ **10. قانون الهروب من منطقة الصراع (Exit Zone Rule) V9.1:**
-يُمنع إصدار أي إشارة طالما السعر داخل نطاق ±1.5 نقطة من قمة/قاع تاريخي. الاستثناءات:
-- Marubozu >85% + كسر 0.5 نقطة
-- Momentum >85% + Velocity >1.3 + كسر {required_distance} نقطة
+1. **الزخم المشروط (Conditional Momentum Supremacy):**
+   إذا كانت آخر 3 شموع ممتلئة بنسبة >85%، بشرط:
+   - عدم وجود قمة/قاع سيولة (Liquidity Pool) قريب جداً
+   - عدم ظهور أي شمعة رفض (Wick) تتجاوز 30% من الشمعة السابقة
+   - السعر ليس عند قمة تاريخية أو تجاوزها بأقل من 3 نقاط (تأكيد الاندفاع)
+   إذا ظهرت شمعة عكسية تبتلع 50% من شمعة الزخم، يُلغى 'مود القطار' فوراً ويتحول التحليل لنظام الانعكاس (SMC Reversal).
 
-⚠️ قاعدة الجوكر المنضبط (Disciplined Joker) V9.1:
-- لا يُسمح بتجاهل الوقت (الجوكر) إلا إذا كانت الشمعة تخترق مستوى مغلق.
-- يجب أن يتجاوز السعر المستوى المخترق بـ {required_distance} نقطة على الأقل (تأكيد الاندفاع).
-- إذا كان الاختراق لقمة تاريخية، انتظر تأكيد الاندفاع بـ {required_distance} نقطة.
+2. **بروتوكول الانفجار السعري المشروط:**
+   لا ترفض أي صفقة في الثواني الأخيرة (55-59) إذا كان الزخم مفرطاً (>90%)، بشرط:
+   - اختراق مستوى مغلق حقيقي
+   - تجاوز المستوى بـ 3 نقاط على الأقل (تأكيد الاندفاع)
 
-📜 **قواعد السيادة العشر V9.1 ULTIMATE:**
+3. **فحص الذيول (The 15/60 Rule):**
+   - أي ذيل يمثل أقل من 15% من حجم الشمعة يُعتبر "قوة دافعة" (Marubozu Mode).
+   - أي ذيل يمثل أكثر من 60% من حجم الشمعة هو "رفض سعري" قطعي؛ امنع الصفقة فوراً.
 
-⚡ **قانون التجاوز الطارئ (Emergency Override) V9.1:**
-
-في حال رصد اندفاع مؤسسي (جميع الشروط):
-✅ شمعة ممتلئة >85% (Marubozu)
-✅ عدم وجود ذيول >15%
-✅ اختراق مستوى رئيسي
-✅ سرعة حركة > 1.5x المتوسط
-
-🚨 **عند التفعيل:**
-1. تعطيل جميع القواعد
-2. الدخول بمجرد تجاوز السعر المستوى بـ **0.5 نقطة** (بدلاً من 1.5)
-3. حجم الصفقة: مضاعف (2x)
-
-⚡ **قاعدة الـ 2 نقطة الفورية (Flash Rule):**
-- زخم 50-80% + تجاوز المستوى بـ 2 نقطة + سرعة >1.3 = دخول فوري
-
-⚡ **فلتر الابتلاع الديناميكي (Dynamic Kill Switch):**
-- إذا تراجعت الشمعة الحالية وابتلعت 50% من جسمها = إلغاء فوري
-
-⚡ **قانون القناص اللحظي (Momentum Sniper) V9.1:**
-- زخم >85% + سرعة >1.3 = دخول فوري عند **{required_distance} نقطة**
-- إلغاء الاحتفاظ الإجباري
-- تعطيل القفل الزمني
-
-⚡ **هرم الأولويات V9.1:**
-
-【الرتبة 0】 التجاوز الطارئ (Marubozu >85% + كسر 0.5 نقطة)
-   ↓
-【الرتبة 1】 قانون القناص اللحظي V9.1 (Momentum >85% + Velocity >1.3)
-   ↓
-【الرتبة 2】 قاعدة الـ 2 نقطة الفورية (زخم متوسط + سرعة)
-   ↓
-【الرتبة 3】 القواعد القياسية مع الحلول الجذرية V8.5
-   ↓
-【الرتبة 4】 الانتظار والمراقبة
-
-⚡ **دقائق التحول (Time-Lock Release) V9.1:**
-- يُسمح بالدخول في الدقائق الحرجة إذا تحقق:
-  * اختراق مستوى مغلق
-  * زخم ≥ 70%
-  * تجاوز المستوى بـ {required_distance} نقطة (أو 0.5 مع Marubozu >85%)
-
-1. **الزخم المشروط V9.1:**
-   آخر 3 شموع >75% بشرط:
-   - عدم وجود قمة سيولة قريبة
-   - السعر > (القمة + {required_distance} نقطة) للشراء
-
-2. **بروتوكول الانفجار السعري:**
-   لا ترفض صفقة في الثواني الأخيرة إذا:
-   - زخم >75% + اختراق حقيقي + تجاوز {required_distance} نقطة
-
-3. **فحص الذيول (15/60 Rule):**
-   - ذيل <15% = Marubozu Mode
-   - ذيل >60% = رفض سعري قطعي
-
-4. **مغناطيس الأرقام المستديرة:**
-   انتظر تجاوز الرقم بـ {required_distance} نقطة مع زخم
+4. **مغناطيس الأرقام المستديرة (Round Numbers):**
+   الأرقام التي تنتهي بـ (.000) أو (.500) هي أهداف سيولة. إذا كان السعر قريباً منها والزخم صاعد، استهدف الرقم ولا تعتبره مقاومة. للدخول مع الاتجاه، انتظر تجاوز الرقم بـ 3 نقاط على الأقل.
 
 5. **هندسة السيولة (SMC/ICT):**
-   Liquidity Sweep = انعكاس محتمل
+   ابحث عن Liquidity Sweep (ضرب قمة/قاع سابق). إذا سحب السعر السيولة (لمس القمة وارتد) ثم أغلق داخل النطاق، فالدخول يكون انعكاسياً (Reversal).
 
-6. **معامل الفجوات:**
-   انتظر عودة السعر لملء 50% من الفجوة
+6. **معامل الفجوات (FVG/Imbalance):**
+   تأكد من وجود فجوات سعرية غير مملوءة. السعر ينجذب دائماً لملء الـ Imbalance قبل تغيير الاتجاه. لا تدخل عند القمة، انتظر عودة السعر لملء 50% من الفجوة.
 
-7. **فلتر سحب السيولة:**
-   قمة تاريخية مع ارتداد = إلغاء الشراء
+7. **فلتر سحب السيولة (Liquidity Sweep Filter):**
+   قبل تأكيد أي قرار شراء عند القمة، ابحث عن قمة تاريخية قريبة. إذا لمسها السعر وارتد بفتيلة أو ظهرت شمعة حمراء سريعة، يتم إلغاء الشراء فوراً والتحول للبيع (انعكاس).
 
-8. **قانون الابتلاع القاتل:**
-   شمعة عكسية تبتلع 50% = إلغاء الاتجاه
+8. **قانون الابتلاع القاتل (The Kill Switch - Rule 8):**
+   بمجرد ظهور شمعة عكسية تبتلع 50% من الشمعة الاندفاعية السابقة، يُعتبر الزخم "منتهياً" أو "خداعياً" ويمنع الدخول مع الاتجاه القديم. السعر الآن في مرحلة تغيير هيكل (Market Structure Shift).
+   إذا ظهرت شمعة عكسية حجمها أكبر من الشمعة السابقة بـ 1.2x، يُلغى الاتجاه السابق بالكامل.
 
-9. **مغناطيس الفجوات:**
-   فجوة >5 نقاط = انتظر عودة 50%
+9. **مغناطيس الفجوات السعرية (FVG Magnet):**
+   إذا ترك السعر خلفه فجوة سعرية (Imbalance) تزيد عن 5 نقاط:
+   - يرفض البوت الدخول عند القمة أبداً
+   - ينتظر عودة السعر لملء 50% على الأقل من الفجوة (منطقة الخصم) قبل إصدار أي توصية استمرار
+   - إذا كسر السعر نقطة المنشأ، فالصفقة ملغاة
 
-10. **التقييم النهائي:**
-    "السيولة تسبق الزخم" - لا تدخل عند القمة دون تأكيد
+10. **التقييم النهائي المرجح:**
+    تذكر دائماً: "السيولة تسبق الزخم".
+    - إذا رأيت زخماً قوياً يقترب من قمة سيولة، فكر في "الارتداد" أولاً
+    - لا تدخل صفقة استمرارية إلا إذا أغلق السعر "فوق" القمة المخترقة بشمعتين على الأقل (تأكيد الكسر)
+    - إذا كان الزخم مفرطاً (>90%) ولكن الذيول طويلة، فهذا دليل على "خروج المؤسسات" وليس دخولها
 
-⚠️ **نظام حساب الثقة المتقدم V9.1 مع معاملات الخصم:**
-
-base_confidence = (زخم_الاتجاه × 30%) + (توافق_الإطارات × 25%) + (وضوح_المستويات × 20%) + (حجم_سيولة × 15%) + (تطابق_أنماط × 10%)
-
-**معاملات الخصم:**
-- وجود FVG عكس الاتجاه ← خصم 40%
-- وجود قمة سيولة قريبة عكس الاتجاه ← خصم 40%
-- السعر في منطقة صراع (±3 نقاط من القمة) ← خصم 50%
-- نسبة الذيول <15% + اقتراب من القمة ← خصم 100% للبيع
-- السعر داخل نطاق ±1.5 نقطة من القمة ← خصم 80% + احتفاظ إجباري (إلا مع Force Trade)
-
-**معاملات التعزيز V9.1:**
-- Momentum >85% + Velocity >1.3 ← تعزيز +40%
-- تفعيل Force Trade ← تعزيز +30%
-- تعطيل Time Lock ← تعزيز +20%
-
-**مستويات الثقة:**
-- 💥 90-100%: ثقة عالية جداً (بشرط عدم وجود قمم قريبة أو مع Force Trade)
-- 🔥 71-89%: ثقة عالية
-- ⚡ 60-70%: ثقة متوسطة
-- ❄️ 40-59%: ثقة منخفضة
-- 🚫 أقل من 40%: احتفاظ وانتظار (إلا مع Force Trade)
+⚠️ نظام حساب الثقة المتقدم (Confidence Score Calculation)
+  
+  📊 **معادلة حساب الثقة النهائية:**
+  
+  الثقة = (زخم_الاتجاه × 30%) + (توافق_الإطارات × 25%) + (وضوح_المستويات × 20%) + (حجم_السيولة × 15%) + (تطابق_الأنماط × 10%)
+  
+  **معايير التقييم:**
+  
+  1. **زخم الاتجاه (30 نقطة كحد أقصى):**
+     - 25-30: زخم متفجر (آخر 3 شموع >85% بنفس الاتجاه، بشرط عدم وجود قمة سيولة قريبة)
+     - 20-24: زخم قوي (آخر 3 شموع 70-85%)
+     - 15-19: زخم متوسط (آخر 3 شموع 50-69%)
+     - 10-14: زخم ضعيف (آخر 3 شموع 30-49%)
+     - 0-9: بدون زخم واضح
+  
+  2. **توافق الإطارات (25 نقطة كحد أقصى):**
+     - 25: توافق كامل (H4, H1, M15, M5 بنفس الاتجاه)
+     - 20: توافق جيد (3 من 4 إطارات)
+     - 15: توافق متوسط (2 من 4 إطارات)
+     - 10: توافق ضعيف (إطار واحد فقط)
+     - 0: تضارب كامل
+  
+  3. **وضوح المستويات (20 نقطة كحد أقصى):**
+     - 18-20: مستويات دعم/مقاومة واضحة جداً
+     - 14-17: مستويات واضحة
+     - 10-13: مستويات متوسطة الوضوح
+     - 5-9: مستويات غير واضحة
+     - 0: بدون مستويات
+  
+  4. **حجم السيولة (15 نقطة كحد أقصى):**
+     - 13-15: سيولة عالية (مناطق عرض/طلب واضحة، مع تأكيد عدم وجود فخاخ سيولة قريبة)
+     - 10-12: سيولة متوسطة
+     - 7-9: سيولة منخفضة
+     - 0-6: بدون سيولة أو وجود فخاخ سيولة
+  
+  5. **تطابق الأنماط (10 نقطة كحد أقصى):**
+     - 9-10: نمط واضح (وتد، علم، مثلث) مع تأكيد عدم وجود فخ سيولة
+     - 7-8: نمط متوسط الوضوح
+     - 5-6: نمط غير مكتمل
+     - 0-4: بدون نمط
+  
+  📈 **مستويات الثقة ومعناها:**
+  
+  - **💥 90-100%: ثقة عالية جداً** - دخول بقوة مع مخاطرة عالية (جميع شروط الأمان متوفرة)
+  - **🔥 75-89%: ثقة عالية** - دخول بحجم جيد مع وقف ضيق
+  - **⚡ 60-74%: ثقة متوسطة** - دخول بحجم متوسط
+  - **❄️ 40-59%: ثقة منخفضة** - دخول بحجم صغير أو انتظار تأكيد
+  - **🚫 أقل من 40%: لا توجد ثقة** - احتفاظ وانتظار
+  
+  ⚠️ **هام:** في نهاية التحليل، يجب كتابة:
+  "🎯 **نسبة نجاح الصفقة المتوقعة:** [XX]% - [التقييم]"
 
 [1] تنبيه الربط البرمجي الإلزامي - المعطيات المستلمة من المستخدم
 
 📌 **المعطيات الأساسية:**
-• توقيت المنصة (GMT+3): {platform_time.strftime('%H:%M:%S')}
-• جلسة التداول الحالية: {trading_session}
 • إطار الشموع: {candle}
 • فريم التحقق: {verification_timeframe}
 • استراتيجية التداول: {trading_strategy}
@@ -3986,14 +3039,7 @@ base_confidence = (زخم_الاتجاه × 30%) + (توافق_الإطارات 
 • حجم الصفقة: {position_sizing}
 • نمط السوق: {market_mode}
 • وصف التوقيت: {time_status}
-• الوضع الديناميكي: {"تجاهل القيود الزمنية وادخل مع الزخم (بشرط اختراق مستوى مغلق)" if momentum_boost else "التزم بالقواعد القياسية"}
-
-📌 **إعدادات V9.1:**
-• المسافة المطلوبة للاختراق: {required_distance} نقطة
-• إلغاء الاحتفاظ الإجباري: {"✅ مفعل" if force_trade else "❌ غير مفعل"}
-• تعطيل القفل الزمني: {"✅ معطل" if time_lock_disabled else "❌ مفعل"}
-• السرعة المحسوبة: {velocity:.2f} نقطة/ثانية
-• الزخم المقدر: {momentum:.1f}%
+• الوضع الديناميكي: {"تجاهل القيود الزمنية وادخل مع الزخم (بشرط اختراق مستوى مغلق بـ 3 نقاط)" if momentum_boost else "التزم بالقواعد القياسية"}
 
 📌 **تأثير الأخبار والتوقيت:**
 • تأثير الأخبار: {news_impact} (معامل ×{news_risk_multiplier})
@@ -4002,7 +3048,7 @@ base_confidence = (زخم_الاتجاه × 30%) + (توافق_الإطارات 
 • حالة السوق: {last_minute_status}
 • حالة إغلاق الشمعة: {candle_closing_status}
 • الوقت المتبقي للإغلاق: {seconds_remaining} ثانية
-• توقيت التحليل: {local_time.strftime('%Y-%m-%d %H:%M:%S')} (بتوقيت المستخدم)
+• توقيت التحليل: {local_time.strftime('%Y-%m-%d %H:%M:%S')} (بالتوقيت المحلي)
 
 📌 **سياق التحليل السابق:**
 • {"✅ متوفر" if previous_context_info else "❌ غير متوفر"}
@@ -4034,24 +3080,14 @@ base_confidence = (زخم_الاتجاه × 30%) + (توافق_الإطارات 
    • **السعر الحالي الملاحظ:** [قراءة مباشرة من المحور Y]
    • **سعر الهدف الملاحظ:** [قراءة مباشرة من المستوى المستهدف]
    • **المعادلة الحسابية الأساسية:** |السعر الحالي - سعر الهدف| = [النقاط]
-   • **المسافة إلى أقرب قمة تاريخية:** [نقاط] - هل هي ≥ {required_distance} نقطة للاختراق الحقيقي؟
-   • **هل السعر داخل نطاق ±1.5 نقطة من القمة؟** [نعم/لا]
+   • **المسافة إلى أقرب قمة تاريخية:** [نقاط] - هل هي ≥ 3 نقاط للاختراق الحقيقي؟
    • **في فريمات S5, S10:** أضف "معامل الانزلاق السعري" = خصم نقطة أمان واحدة من نقطة الدخول
    • **نقطة الدخول المعدلة:** [السعر الحالي + (نقطة أمان في اتجاه الصفقة)]
 
-🔍 **المرحلة 4: حساب السرعة والزخم V9.1**
-   • **سرعة الحركة (Velocity):** احسبها بدقة من الصورة
-   • **الزخم (Momentum):** احسبه من أحجام الشموع
-   • **تطبيق قوانين V9.1:** إذا كان Momentum >85% و Velocity >1.3:
-     - المسافة المطلوبة = 0.3 نقطة
-     - Force Trade = مفعل
-     - Time Lock = معطل
-
-🔍 **المرحلة 5: كشف التناقضات البصرية ودقة القراءة**
+🔍 **المرحلة 4: كشف التناقضات البصرية ودقة القراءة**
    • إذا كانت المسافة المحسوبة ≠ المسافة المقدرة بالعين → أعد المسح
    • تأكد من تطابق كل ذيل مع رقمه على المحور اليميني
    • **عند قراءة المحور Y، إذا كان الرقم غير واضح، قم بمقارنة موضع الشمعة بمستويات الدعم/المقاومة المرئية الأقرب لتقدير السعر بدقة +/- 1 نقطة.**
-   • **إذا فشلت في قراءة السعر بدقة من الصورة، توقف فوراً وأرسل "الصورة غير صالحة للتحليل - السعر غير واضح"**
 
 [3] بروتوكول الفشل الذاتي - توقف فوراً إذا:
 
@@ -4059,160 +3095,165 @@ base_confidence = (زخم_الاتجاه × 30%) + (توافق_الإطارات 
 2. **محور أسعار مقطوع:** عدم وضوح الأرقام على المحور Y
 3. **ساعة منصة غير واضحة:** عدم القدرة على تحديد الوقت بدقة
 4. **جودة صورة رديئة:** عدم وضوح تفاصيل الشموع
-5. **السعر الحالي غير واضح:** عدم القدرة على قراءة السعر الحالي بدقة
 
 ✅ **الإجراء الإلزامي:** "الصورة غير صالحة للتحليل - يرجى إرسال صورة أوضح مع شموع ومحور أسعار واضحين."
 
-[4] قوانين السيادة V9.1 (Omni Priority) 
+[4] قوانين السيادة الجديدة (V6.0 ELITE - Omni Priority)
 
-【الرتبة 0】 قانون التجاوز الطارئ (Emergency Override) - Marubozu >85%
-   ✅ إذا تحققت جميع الشروط:
-      - شمعة ممتلئة >85% (Marubozu)
-      - عدم وجود ذيول >15%
-      - اختراق مستوى رئيسي
-      - سرعة حركة > 1.5x المتوسط
-   ✅ يتم تفعيل التجاوز الفوري: يُسمح بالدخول عند +0.5 نقطة فقط
+【الرتبة 1】 الزخم المشروط مع فلتر القمم (Conditional Momentum with Peak Filter)
+   ✅ إذا كانت آخر 3 شموع ممتلئة بنسبة >85%، بشرط:
+      - عدم وجود قمة/قاع سيولة (Liquidity Pool) قريب جداً
+      - عدم ظهور أي شمعة رفض (Wick) تتجاوز 30% من الشمعة السابقة
+      - السعر ليس عند قمة تاريخية أو تجاوزها بأقل من 3 نقاط (تأكيد الاندفاع)
+   ✅ إذا ظهرت شمعة عكسية تبتلع 50% من شمعة الزخم، يُلغى 'مود القطار' فوراً ويتحول التحليل لنظام الانعكاس (SMC Reversal).
 
-【الرتبة 1】 قانون القناص اللحظي V9.1 (Momentum Sniper)
-   ✅ إذا كان Momentum >85% و Velocity >1.3:
-      - المسافة المطلوبة = 0.3 نقطة
-      - Force Trade = مفعل
-      - Time Lock = معطل
-      - دخول فوري عند تحقيق المسافة المطلوبة
+【الرتبة 2】 السيولة المغناطيسية مع فلتر الفخاخ (Targeting with Trap Filter)
+   ✅ إذا كان السعر متجهاً لقمة/قاع تاريخي أو رقم مستدير
+   ✅ افحص أولاً: هل سبق للسعر أن لمس هذا المستوى وارتد؟ إذا نعم، احذره كـ "فخ سيولة" محتمل
+   ✅ يُمنع الشراء/البيع حتى يتم اختراق حقيقي (تجاوز المستوى بـ ≥ 3 نقاط) أو رفض بفتيلة
 
-【الرتبة 2】 قاعدة المنطقة العمياء (Peak Blind Spot)
-   ✅ إذا كان السعر داخل نطاق ±1.5 نقطة من قمة/قاع تاريخي:
-      - القرار الإجباري = احتفاظ 🟡
-      - (إلا مع تفعيل Force Trade)
+【الرتبة 3】 الهيكل الزمني
+   ✅ يُطبق فقط في الأسواق العرضية (Side-way)
+   ✅ عندما يكون الزخم ضعيف (<50%) والسيولة غير نشطة
 
-【الرتبة 3】 قاعدة الـ 2 نقطة الفورية (2-Point Flash Rule)
-   ✅ إذا كان الزخم 50-80% وتجاوز السعر المستوى بـ 2 نقطة بسرعة >1.3
-   ✅ دخول فوري دون انتظار إغلاق الشمعة
+【الرتبة 4】 الفجوات السعرية
+   ✅ مناطق imbalance تُملأ بعد ضرب السيولة الخارجية
+   ✅ لا تدخل عند القمة، انتظر عودة السعر لملء 50% من الفجوة
 
-【الرتبة 4】 الزخم المشروط مع فلتر القمم V9.1
-   ✅ إذا كانت آخر 3 شموع >75%، بشرط:
-      - عدم وجود قمة سيولة قريبة
-      - **السعر > (القمة التاريخية + {required_distance} نقطة) للشراء**
-   ✅ إذا ظهرت شمعة عكسية تبتلع 50% = إلغاء
+【الرتبة 5】 الفتيلة
+   ✅ تُستخدم فقط مع زخم ضعيف (أجسام <40%) وابتلاع 50%
+   ✅ تُلغى في حالة سيادة الجسم (>90%)
 
-【الرتبة 5】 السيولة المغناطيسية مع فلتر الفخاخ
-   ✅ يُمنع الشراء/البيع حتى اختراق حقيقي (≥ {required_distance} نقطة مع زخم)
+【الرتبة 6】 المؤشرات الفنية
+   ✅ تأتي في المرتبة الأخيرة عند التعارض مع السلوك السعري
 
-【الرتبة 6】 الهيكل الزمني - للأسواق العرضية فقط
+[5] قانون الفتيلة العالمي (The Universal Wick Filter)
 
-【الرتبة 7】 الفجوات السعرية - انتظر عودة 50%
+1. **الذيل الصاعد (في اتجاه التريند):** يُعتبر "استمراراً" طالما أن الشمعة التالية لم تبتلع 50% من جسم الشمعة السابقة لأسفل
+2. **الذيل المعاكس للاتجاه:** يحتاج تأكيد بابتلاع 50%
+3. **تجاهل الذيول المجهرية:** أي ذيل يمثل أقل من 15% من طول الشمعة يُعامل كأنه غير موجود (Marubozu Mode)
+4. **نسبة الذيل >60%:** مراقبة فقط، وليس دخول فوري (رفض سعري)
+5. **ممنوع إصدار إشارة انعكاس بناءً على الذيل وحده تحت أي ظرف**
 
-【الرتبة 8】 الفتيلة - فقط مع زخم ضعيف <30%
+[6] فلتر المسافة المرن (Dynamic Distance Filter)
 
-【الرتبة 9】 المؤشرات الفنية - المرتبة الأخيرة
+• **القاعدة الأساسية:** يُمنع رفض الصفقات القريبة من الهدف إذا كانت سرعة الشموع (Volatility) عالية
+• **المعادلة:** إذا كان الهدف على بُعد 3 نقاط والزخم قوي، ادخل؛ لأن الانزلاق السعري في الـ OTC سيجلب لك الربح في ثانية
+• **استثناء المغناطيس السعري:** 
+   - إذا كانت المسافة < 5 نقاط
+   - والشمعة الحالية تمتلك زخماً انفجارياً (تتحرك بسرعة عالية نحو الهدف)
+   - والهدف رقم مستدير أو مستوى سيولة واضح
+   - **بشرط:** أن يكون الاختراق حقيقياً (تجاوز المستوى بـ ≥ 3 نقاط)
+   - **القرار:** دخول سريع (Scalp) للمس الهدف
 
-[5] قانون الفتيلة العالمي V9.1:
+[7] قوانين إضافية متقدمة
 
-1. **الذيل الصاعد:** استمرار طالما لم تبتلع الشمعة التالية 50%
-2. **الذيل المعاكس:** يحتاج تأكيد بابتلاع 50%
-3. **تجاهل الذيول المجهرية:** <15% = Marubozu Mode
-4. **نسبة الذيل >60%:** رفض سعري (احتفاظ) - إلا مع Force Trade
-5. **ممنوع إشارة انعكاس بناءً على الذيل وحده**
+💰 **7.1 قاعدة الأرقام المستديرة مع تأكيد الاختراق**
+• الرقم المستدير (.000/.500) = مغناطيس وليس مقاومة
+• لا تدخل عكسه إلا بعد لمسه بذيل ثم العودة
+• للدخول مع الاتجاه، انتظر تجاوز الرقم بـ 3 نقاط على الأقل
 
-[6] فلتر المسافة المرن V9.1:
+🚀 **7.2 الزخم الثلاثي المشروط**
+• 3 شموع متتالية بنفس اللون بأجسام >80% = استمرار فقط
+• بشرط عدم وجود قمة سيولة قريبة
+• في OTC، الزخم الحقيقي (مع اختراق مستوى) يغلب الهيكل
 
-• **القاعدة الأساسية:** يُمنع رفض الصفقات القريبة إذا كانت السرعة عالية
-• **شرط إجباري:** اختراق حقيقي = تجاوز المستوى بـ ≥ {required_distance} نقطة مع زخم
-• **استثناء مغناطيسي:** إذا كان الهدف على بعد نقطتين والزخم قوي، ادخل
-• **استثناء V9.1:** إذا كان Momentum >85% و Velocity >1.3 → مسافة {required_distance} نقطة فقط
+💪 **7.3 سيادة الجسم - Marubozu Supremacy**
+• إذا كان الجسم >90% والذيل <20% = الذيل "جس نبض" وليس انعكاساً
+• يُلغى قانون الفتيلة في هذه الحالة
+• بشرط أن يكون الاختراق لمستوى مغلق
 
-[7] قوانين إضافية متقدمة V9.1:
+🔄 **7.4 قاعدة معالجة الشموع الانعكاسية الصغيرة (Micro-Rejection)**
+• إذا ظهرت شمعة عكس الاتجاه حجمها <25% من الشمعة الاندفاعية السابقة → تُهمل تماماً (تجميع سيولة)
 
-💰 **7.1 قاعدة الأرقام المستديرة:** انتظر تجاوز الرقم بـ {required_distance} نقطة
-🚀 **7.2 الزخم الثلاثي:** 3 شموع >75% = استمرار (بشرط عدم وجود قمة قريبة)
-💪 **7.3 سيادة الجسم:** Marubozu >85% يلغي قانون الفتيلة
-🔄 **7.4 الشموع الانعكاسية الصغيرة:** <25% من الشمعة السابقة = تُهمل
-🏢 **7.5 الاندفاع المؤسسي:** تغطية هبوط 10 دقائق بصعود دقيقتين = يمنع البيع
-⚡ **7.6 اختراق المقاومة الصامت:** انتظر تجاوز بـ {required_distance} نقطة مع زخم
-🧲 **7.7 قانون الفجوة المغناطيسية:** لا تشتري عند رأس الانفجار
+🏢 **7.5 الاندفاع المؤسسي**
+• تغطية هبوط 10 دقائق بصعود دقيقتين = اندفاع - يُمنع البيع
 
-[8] فلاتر الرفض الإلزامية V9.1:
+⚡ **7.6 قانون اختراق المقاومة الصامت مع التأكيد**
+• إذا اقترب السعر من منطقة عرض (Supply) أو رقم مستدير بشموع خضراء متزايدة الحجم
+• يُحظر توقع الارتداد تماماً
+• **الإجراء:** تحول التوصية إلى "شراء" مع كسر المستوى بشرط تجاوزه بـ ≥ 3 نقاط
 
-💰 **8.1 فلتر المسافة الحقيقية:** المسافة الصافية < {required_distance} نقطة = احتفاظ 🟡 (إلا مع Force Trade)
-📰 **8.2 فلتر الأخبار:** OTC = تعطيل، حقيقي = احتفاظ عند شموع >300%
+🧲 **7.7 قانون الفجوة المغناطيسية (FVG Magnet)**
+• أي حركة انفجارية تترك فجوة (Imbalance) > 5 نقاط، تجعل الشراء عند القمة "مخاطرة انتحارية"
+• انتظر عودة السعر لمنطقة 'الخصم' (50% من الفجوة) قبل أي توصية استمرار
+• لا تشتري أبداً عند رأس الانفجار
 
-⚠️ **8.3 أسباب المنع التسعة V9.1:**
-1. زخم معاكس: آخر 3 شموع >70% عكس الاتجاه
-2. فخ سيولة: السعر عند قمة تاريخية مع ارتداد سابق
-3. **اختراق غير حقيقي: عدم تجاوز المستوى بـ {required_distance} نقطة مع زخم**
-4. **منطقة عمياء: السعر داخل نطاق ±1.5 نقطة من القمة (إلا مع Force Trade)**
-5. دقيقة الغدر: داخل (55-59) إلخ (تُلغى مع الاختراق الحقيقي أو Force Trade)
-6. زخم منهك: الشمعة الحالية >200% من المتوسط
-7. غياب التأكيد: عدم ابتلاع 50%
-8. تضارب الإطارات
-9. أخبار نشطة (للسوق الحقيقي فقط)
+[8] فلاتر الرفض الإلزامية وأسباب المنع الثمانية
 
-[9] النظام الزمني الذكي مع دقائق التحول V9.1:
+💰 **8.1 فلتر المسافة الحقيقية مع معامل الانزلاق**
+• المسافة الصافية = المسافة - (السبريد × 2)
+• المسافة الصافية < 3 نقاط = احتفاظ 🟡 (إلا مع استثناء المغناطيس السعري)
+
+📰 **8.2 فلتر الأخبار**
+• شمعة حجمها >300% من المتوسط = احتفاظ 🟡 لمدة 3 شموع
+• ذيول الأخبار لا تُحتسب في التحليل
+
+⚠️ **8.3 قائمة أسباب المنع الثمانية (إذا وُجد سبب واحد → احتفاظ)**
+1. **زخم معاكس:** آخر 3 شموع >80% عكس الاتجاه
+2. **فخ سيولة محتمل:** السعر عند قمة تاريخية أو رقم مستدير مع ارتداد سابق
+3. **اختراق غير حقيقي:** المسافة إلى الهدف >3 نقاط بدون تجاوز المستوى بـ 3 نقاط
+4. **دقيقة الغدر:** داخل (55-59) أو (25-29) أو (40-44) أو (10-14) - تُلغى فقط مع الاختراق الحقيقي
+5. **زخم منهك:** الشمعة الحالية >200% من المتوسط
+6. **غياب التأكيد:** عدم ابتلاع 50% (إلا مع سيادة الجسم)
+7. **تضارب الإطارات:** تعارض {candle} مع {verification_timeframe}
+8. **أخبار نشطة:** ±30 دقيقة من خبر قوي
+
+[9] النظام الزمني الذكي مع دقائق التحول
 
 【استخراج الوقت】
 • الوقت على المنصة: [______] من الصورة - المرجع الوحيد
 • الفريم: {candle}
 • المسافة للهدف: [______] نقطة
 • سرعة الشموع: [______] نقطة/شمعة
-• السرعة اللحظية: [______] نقطة/ثانية
+• الشموع المتوقعة: [______]
+• وقت الوصول المتوقع: [______]
 
 【معامل الانزلاق - S5, S10 فقط】
-• نقطة الدخول المعدلة = السعر الحالي + نقطة أمان
+• نقطة الدخول المعدلة = السعر الحالي + نقطة أمان في اتجاه الصفقة
+• المسافة الفعلية = المسافة - 1 نقطة
 
-⚠️ **بروتوكول دقائق التحول V9.1:**
-• **الدقائق الحرجة (00,15,30,45):** انتظر 20 ثانية بعد الافتتاح
-• **دقائق الغدر (14,29,44,59):** حظر الدخول إلا إذا تحقق:
-  - اختراق مستوى مغلق
-  - زخم ≥ 70%
-  - تجاوز المستوى بـ {required_distance} نقطة (أو 0.5 مع Marubozu >85%)
-  - **أو تفعيل Force Trade (Momentum >85% + Velocity >1.3)**
+⚠️ **بروتوكول دقائق التحول (The Pivot Minutes):**
+• في الدقائق الحرجة (14, 29, 44, 59):
+   - إذا تبقى أقل من 20 ثانية، يُمنع الدخول تماماً
+   - الاستثناء الوحيد: اختراق حقيقي لمستوى مغلق بـ ≥ 3 نقاط
+• التفسير: الشمعة الجديدة في الدقائق (15, 30, 45, 00) غالباً ما تعكس الاتجاه بفتيلة طويلة
 
-[10] مفتاح الطوارئ - The Momentum Override V9.1:
+[10] مفتاح الطوارئ - The Momentum Override
 
-🚨 إذا تحقق (Marubozu >85% + كسر 0.5 نقطة + سرعة >1.5x):
-1. تُلغى جميع الفلاتر
-2. دخول فوري بحجم مضاعف
+🚨 **【مفتاح تجاوز النظام - Momentum Override】**
 
-🚨 **إذا تحقق (Momentum >85% + Velocity >1.3):**
-1. تفعيل وضع القناص اللحظي
-2. المسافة المطلوبة = 0.3 نقطة
-3. إلغاء الاحتفاظ الإجباري
-4. تعطيل القفل الزمني
-5. دخول فوري بحجم 1.5x
+إذا تحقق الشرط التالي:
+• الشمعة الحالية تخترق مستوى مغلق بـ ≥ 3 نقاط
+• الشمعة ممتلئة >90% (Marubozu)
+• ابتلعت آخر 3 شموع معاكسة في أقل من 30 ثانية
 
-[11] خوارزمية القرار النهائي V9.1 (Final Decision Matrix):
+✅ **الإجراء الإلزامي:**
+1. تُلغى فوراً جميع الفلاتر التالية:
+   - دقيقة الغدر
+   - السبريد
+   - المسافة الحقيقية
+   - الفتيلة
+   - أسباب المنع (عدا فحص الفخاخ)
+2. **الإجراء:** دخول فوري مع الاتجاه الانفجاري
 
-🚨 **القرار النهائي حسب الأولويات:**
+[11] خوارزمية القرار النهائي (Final Decision Matrix)
 
-1. **هل هناك اندفاع مؤسسي (Marubozu >85% + كسر 0.5 نقطة)؟** → **تجاوز طارئ**
-
-2. **هل الزخم >85% والسرعة >1.3؟** → **قناص لحظي (دخول فوري عند 0.3 نقطة)**
-
-3. **هل السعر داخل نطاق ±1.5 نقطة من قمة/قاع تاريخي مع Force Trade مفعل؟** → **دخول مع الاتجاه**
-
-4. **هل السعر داخل نطاق ±1.5 نقطة من قمة/قاع تاريخي بدون Force Trade؟** → **احتفاظ 🟡**
-
-5. **هل هناك اختراق بـ 2 نقطة بسرعة >1.3 (زخم متوسط)؟** → **دخول فوري (Flash)**
-
-6. **هل هناك فخ سيولة (قمة تاريخية + ارتداد)؟** → **انعكاس 🔄**
-
-7. **هل السعر عند قمة تاريخية والزخم >50% (دون اختراق {required_distance} نقطة)؟** → **احتفاظ 🟡**
-
-8. **هل الزخم >80% مع تجاوز القمة بـ {required_distance} نقطة؟** → **شراء/بيع مع الاتجاه**
-
-9. **هل السوق متذبذب (عرضي)؟** → **احتفاظ 🟡**
-
-10. **إذا شككت (<80% ثقة)** → **احتفاظ 🟡**
+🚨 **القرار النهائي بناءً على الأولويات:**
+- **هل هناك فخ سيولة (قمة تاريخية مع ارتداد)؟** نعم ↝ القرار: **انعكاس (بيع/شراء عكسي)**.
+- **هل الزخم > 90% مع شرط عدم وجود سيولة قريبة واختراق حقيقي؟** نعم ↝ القرار: **شراء/بيع فوري**.
+- **هل السعر يخترق مستوى مغلق بـ ≥ 3 نقاط؟** نعم ↝ القرار: **شراء/بيع فوري**.
+- **هل السوق متذبذب؟** نعم ↝ القرار: **احتفاظ 🟡**.
+- **إذا شككت (<90% ثقة)** → احتفاظ 🟡
 
 🎯 **التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصر:**
 
 📊 التحليل الفني المتقدم:
 • **بروتوكول الفشل الذاتي:** [الصورة صالحة / الصورة غير صالحة - يرجى إرسال صورة أوضح]
 • **الوقت على المنصة (المرجع):** [الوقت المستخرج من الصورة]
-• **تطبيق القناص اللحظي V9.1:** [نعم/لا] - السرعة: [نقاط/ثانية] - الزخم: [٪]
-• **تطبيق التجاوز الطارئ:** [نعم/لا] - نسبة الزخم: [٪]
-• **تطبيق قاعدة الـ 2 نقطة الفورية:** [نعم/لا] - سرعة الحركة: [نقاط/ثانية]
-• **تطبيق فلتر الابتلاع الديناميكي:** [نعم/لا] - نسبة الابتلاع: [٪]
+• **تطبيق سيادة الزخم:** [نعم/لا] - نسبة الزخم: [٪]
+• **تطبيق قانون الفتيلة:** [نعم/لا] - نسبة الذيل: [٪]
+• **تطبيق فلتر المسافة المرن:** [نعم/لا] - المسافة: [نقاط]
 • حالة الهيكل: (صاعد/هابط) + (توافق 4/4 إطارات: نعم / لا )
 • خريطة السيولة: (أقرب فخ سيولة Inducement + مناطق السيولة المستهدفة)
 
@@ -4222,8 +3263,8 @@ base_confidence = (زخم_الاتجاه × 30%) + (توافق_الإطارات 
 • حالة الشمعة: [مفتوحة / مغلقة] [ حمراء 🔴  / خضراء 🟢 ] - الوقت المتبقي: [ وقت دقيق من ساعة المنصة ]
 • القرار الفني: (شراء 🟢 / بيع 🔴 / احتفاظ 🟡 / انعكاس 🔄)
 • قوة الإشارة: (عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️)
-• نقطة الدخول: [السعر الدقيق بناءً على OB + شرط الدخول]
-• وقت الدخول: [الآن / فوري (Flash) / بعد إغلاق الشمعة الحالية / بعد X شموع]
+• نقطة الدخول: [السعر الدقيق بناءً على OB + شرط الإغلاق]
+• الوقت المتبقي للدخول: [الآن / بعد إغلاق الشمعة الحالية / بعد X شموع]
 • الأهداف الربحية:
 🎯 TP1: [سحب أول سيولة داخلية], [احتمالية الوصول]
 🎯 TP2: [الهدف الرئيسي - منطقة عرض/طلب قوية]
@@ -4236,15 +3277,17 @@ base_confidence = (زخم_الاتجاه × 30%) + (توافق_الإطارات 
 • مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
 🎯 نسبة نجاح الصفقة المتوقعة: [XX]% - [التقييم]
 • نقطة الإلغاء: [السعر الذي يفسد التحليل]
-• القوانين المطبقة: [القناص اللحظي V9.1 ✓ / التجاوز الطارئ ✓ / قاعدة الـ 2 نقطة ✓ / الابتلاع الديناميكي ✓]
+• القوانين المطبقة: [سيادة الزخم ✓ / سيادة السيولة ✓ / فلتر المسافة المرن ✓]
 
-الآن قم بتحليل الشارت المرفق **بتركيز كامل على استخراج البيانات من الصورة** بتطبيق التعديلات الأربعة الجوهرية وبروتوكول الهجومي وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
+الآن قم بتحليل الشارت المرفق **** وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
+
+الآن قم بتحليل الشارت المرفق **بتركيز كامل على استخراج البيانات من الصورة** بتطبيق التعديلات الستة الكبرى (The Elite 6 Updates) **والتعديلات الثلاثة الجديدة (3 Points Rule, 50% Kill Switch, Historical Peak Filter)** وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
 """
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         # --- الخطوة 1: التحليل الأولي الأساسي ---
-        await wait_msg.edit_text("⚡ انتظار قليلآ جاري تحليل الصورة ...")
+        await wait_msg.edit_text(" انتظار قليلآ جاري تحليل 🤌...")
         
         payload_1 = {
             "model": MISTRAL_MODEL,
@@ -4284,7 +3327,7 @@ base_confidence = (زخم_الاتجاه × 30%) + (توافق_الإطارات 
         
         # إعداد النص النهائي
         full_result = (
-            f"✅ **تم التحليل بنجاح (V9.1 القناص اللحظي)** ✅\n"
+            f"✅ **تم التحليل بنجاح** ✅\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"{initial_analysis}\n\n"
             f"━━━━━━━━━━━━━━━━\n"
@@ -4292,12 +3335,8 @@ base_confidence = (زخم_الاتجاه × 30%) + (توافق_الإطارات 
             f"•🕧 فريم التحقق للكسر: {verification_timeframe}\n"
             f"•🕧 جلسة السوق: {session_name} ({session_time})\n"
             f"•🕧 نمط السوق: {market_mode}\n"
-            f"•🕧 نوع السوق: {'OTC 🚀' if is_otc_market else 'حقيقي 🌍'}\n"
-            f"•📊 الزخم: {momentum:.1f}% | السرعة: {velocity:.2f} نقطة/ثانية\n"
-            f"•🎯 مسافة الاختراق: {required_distance} نقطة\n"
-            f"•⚡ وضع القناص: {'✅ مفعل' if force_trade else '❌ غير مفعل'}\n"
             f"━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Powered by - Obeida Trading V9.1 (Momentum Sniper)**"
+            f"🤖 **Powered by - Obeida Trading**"
         )
         
         # تنظيف النهائي من التكرارات
@@ -4985,11 +4024,42 @@ async def backup_scheduler():
     while True:
         try:
             await asyncio.sleep(3600)  # كل ساعة
-            DataProtectionAdvanced.backup_databases_secure()
-            DataProtectionAdvanced.export_users_to_json()
+            DataProtection.auto_backup()
             print("⏰ تم تنفيذ النسخ الاحتياطي التلقائي المجدول")
         except Exception as e:
             print(f"⚠️ خطأ في النسخ الاحتياطي المجدول: {e}")
+
+# دالة DataProtection للنسخ الاحتياطي (مبسطة)
+class DataProtection:
+    @staticmethod
+    def backup_database():
+        """نسخ احتياطي لقاعدة البيانات الرئيسية"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = os.path.join(BACKUP_DIR, f"main_backup_{timestamp}.db")
+            if os.path.exists(DB_NAME):
+                shutil.copy2(DB_NAME, backup_file)
+                print(f"💾 تم نسخ قاعدة البيانات الرئيسية: {backup_file}")
+        except Exception as e:
+            print(f"⚠️ خطأ في نسخ قاعدة البيانات: {e}")
+    
+    @staticmethod
+    def backup_codes_db():
+        """نسخ احتياطي لقاعدة بيانات الاشتراك"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = os.path.join(BACKUP_DIR, f"subscription_backup_{timestamp}.db")
+            if os.path.exists(SUBSCRIPTION_DB_NAME):
+                shutil.copy2(SUBSCRIPTION_DB_NAME, backup_file)
+                print(f"💾 تم نسخ قاعدة بيانات الاشتراك: {backup_file}")
+        except Exception as e:
+            print(f"⚠️ خطأ في نسخ قاعدة بيانات الاشتراك: {e}")
+    
+    @staticmethod
+    def auto_backup():
+        """نسخ احتياطي تلقائي للجميع"""
+        DataProtection.backup_database()
+        DataProtection.backup_codes_db()
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر المساعدة"""
@@ -5009,6 +4079,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • اختر "دولتك" من القائمة الرئيسية
     • سيتم ضبط جميع التحليلات على توقيت دولتك
     • دعم أكثر من 70 دولة حول العالم
+    
+    🔑 **نظام الاشتراك المتطور V2:**
+    • إدارة الاشتراكات عبر لوحة المشرف
+    • إضافة اشتراك مباشر باستخدام User ID
+    • مدة الاشتراكات: ساعة، يوم، أسبوع، شهر، سنة،
+    • إمكانية حظر المستخدمين وإلغاء حظرهم
     
     🔑 **أسعار الاشتراكات:**
     • ساعة : 1$
@@ -5313,7 +4389,6 @@ ADMIN_PANEL_HTML = """
             <h1>🤖 لوحة تحكم Obeida Trading - V2</h1>
             <p>نظام إدارة الاشتراكات المتطور - المشرف: @Sz2zv</p>
             <p style="color: #28a745; font-size: 0.9em;">🌍 نظام المناطق الزمنية للمستخدمين نشط</p>
-            <p style="color: #ffc107; font-size: 0.9em;">💾 نظام النسخ الاحتياطي المتقدم - آخر نسخة: {{ last_backup }}</p>
         </div>
 
         <div class="stats-grid">
@@ -5483,9 +4558,6 @@ ADMIN_PANEL_HTML = """
 
 @app.route('/')
 def home():
-    # التحقق من سلامة قاعدة البيانات عند كل زيارة
-    DataProtectionAdvanced.verify_database_integrity()
-    
     return """
     <!DOCTYPE html>
     <html>
@@ -5517,7 +4589,6 @@ def health():
         "subscription_system": "advanced_v2",
         "timezone_support": True,
         "data_version": DATA_VERSION,
-        "backup_system": "advanced",
         "total_users": stats.get('total_users', 0),
         "active_users": stats.get('active_users', 0),
         "blocked_users": stats.get('blocked_users', 0),
@@ -5566,7 +4637,7 @@ def admin_panel():
         if os.path.exists(BACKUP_DIR):
             backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')])
             if backups:
-                last_backup = backups[-1].replace('main_backup_', '').replace('subscription_backup_', '').replace('.db', '')
+                last_backup = backups[-1].replace('backup_', '').replace('.db', '')
         
         return render_template_string(
             ADMIN_PANEL_HTML,
@@ -5594,9 +4665,7 @@ def add_subscription_v2():
         )
         
         if success:
-            # إنشاء نسخة احتياطية فورية
-            DataProtectionAdvanced.backup_databases_secure()
-            DataProtectionAdvanced.export_users_to_json()
+            DataProtection.backup_database()
             return jsonify({'success': True, 'subscription': result})
         else:
             return jsonify({'success': False, 'error': result})
@@ -5613,8 +4682,7 @@ def revoke_subscription_v2():
         success, message = SubscriptionSystem.revoke_subscription(user_id, performed_by=ADMIN_ID)
         
         if success:
-            DataProtectionAdvanced.backup_databases_secure()
-            DataProtectionAdvanced.export_users_to_json()
+            DataProtection.backup_database()
             return jsonify({'success': True, 'message': message})
         else:
             return jsonify({'success': False, 'error': message})
@@ -5636,8 +4704,7 @@ def extend_subscription_v2():
         )
         
         if success:
-            DataProtectionAdvanced.backup_databases_secure()
-            DataProtectionAdvanced.export_users_to_json()
+            DataProtection.backup_database()
             return jsonify({'success': True, 'message': message})
         else:
             return jsonify({'success': False, 'error': message})
@@ -5683,32 +4750,6 @@ def get_stats_v2():
     stats = SubscriptionSystem.get_stats()
     return jsonify({'success': True, 'stats': stats})
 
-@app.route('/admin/restore_backup', methods=['POST'])
-def restore_backup():
-    """استعادة آخر نسخة احتياطية"""
-    try:
-        success = DataProtectionAdvanced.restore_latest_backup()
-        if success:
-            return jsonify({'success': True, 'message': 'تم استعادة آخر نسخة احتياطية بنجاح'})
-        else:
-            return jsonify({'success': False, 'error': 'فشل في استعادة النسخة الاحتياطية'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/admin/export_users')
-def export_users():
-    """تصدير المستخدمين إلى JSON"""
-    try:
-        json_path = DataProtectionAdvanced.export_users_to_json()
-        if json_path and os.path.exists(json_path):
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            return jsonify({'success': True, 'data': data})
-        else:
-            return jsonify({'success': False, 'error': 'فشل في تصدير البيانات'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
 @app.route('/ping')
 def ping():
     return "PONG"
@@ -5716,17 +4757,14 @@ def ping():
 def main():
     """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية"""
     print("🤖 Starting Obeida Trading with Timezone Support ...")
+    print(f"📊 نسخة البيانات: {DATA_VERSION}")
     
-    # التحقق من سلامة قاعدة البيانات قبل التهيئة
-    DataProtectionAdvanced.verify_database_integrity()
-    
-    # تهيئة قاعدة البيانات الرئيسية مع استعادة النسخ الاحتياطية
+    # تهيئة قاعدة البيانات الرئيسية
     init_db_with_subscription()
     
-    # إنشاء نسخة احتياطية أولية وتصدير JSON
-    DataProtectionAdvanced.backup_databases_secure()
-    DataProtectionAdvanced.export_users_to_json()
-    DataProtectionAdvanced.create_restore_point()
+    # إنشاء نسخة احتياطية أولية
+    DataProtection.backup_database()
+    DataProtection.backup_codes_db()
     
     # تشغيل Flask
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
@@ -5827,6 +4865,7 @@ def main():
     loop.create_task(backup_scheduler())
     
     print("✅ Telegram Bot with Timezone Support ready ...")
+    print("📡 Bot Obeida Trading V2 online with timezone system and subscription system...")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
