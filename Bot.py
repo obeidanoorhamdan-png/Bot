@@ -3525,7 +3525,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         # --- الخطوة 1: التحليل الأولي الأساسي ---
-        await wait_msg.edit_text("⚡ انتظار قليلآ جاري تحليل الصورة بتقنية V8.0 الهجومية...")
+        await wait_msg.edit_text("⚡ انتظار قليلآ جاري تحليل الصورة ...")
         
         payload_1 = {
             "model": MISTRAL_MODEL,
@@ -5111,3 +5111,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
