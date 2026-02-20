@@ -29,7 +29,7 @@ import pytz
 # --- الإعدادات الأساسية ---
 TOKEN = os.environ.get('TOKEN', "8583903565:AAFveu3KYGkPsC8L6WyermoaZ1tI_EtFHHs")
 
-MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "oTSiwbzfmJyU5WCtGDGfbG8apWo0DBq9")
+MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "TuXbJy2wpmUG0qzO06MmwpSgy7isTr9A")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "pixtral-large-latest"          # للرؤية والاستخراج البصري
 MISTRAL_MODEL_AUDIT = "mistral-large-latest"        # للتحليل المنطقي
@@ -65,7 +65,7 @@ COUNTRIES_TIMEZONES = {
     "الأردن 🇯🇴": "Asia/Amman",
     "لبنان 🇱🇧": "Asia/Beirut",
     "سوريا 🇸🇾": "Asia/Damascus",
-    "ليبيا 🇾🇱": "Africa/Tripoli",
+    "ليبيا 🇱🇾": "Africa/Tripoli",
     "تونس 🇹🇳": "Africa/Tunis",
     "الجزائر 🇩🇿": "Africa/Algiers",
     "المغرب 🇲🇦": "Africa/Casablanca",
@@ -137,7 +137,7 @@ ARAB_COUNTRIES = {
     "عمان 🇴🇲": "Asia/Muscat",
     "اليمن 🇾🇪": "Asia/Aden",
     "العراق 🇮🇶": "Asia/Baghdad",
-    "الأردن 🇯🇴": "Asia/Amman",
+    "الأردن 🇴🇯": "Asia/Amman",
     "لبنان 🇱🇧": "Asia/Beirut",
     "سوريا 🇸🇾": "Asia/Damascus",
     "ليبيا 🇾🇱": "Africa/Tripoli",
@@ -179,7 +179,7 @@ def get_user_timezone(user_id):
     columns = [col[1] for col in cursor.fetchall()]
     
     if 'country_timezone' not in columns:
-        cursor.execute("ALTER TABLE users ADD COLUMN country_timezone TEXT DEFAULT 'Asia/Riyadh'")
+        cursor.execute("ALTER TABLE users ADD COLUMN country_timezone TEXT DEFAULT 'Asia/Gaza'")
         conn.commit()
     
     cursor.execute("SELECT country_timezone FROM users WHERE user_id = ?", (user_id,))
@@ -188,7 +188,7 @@ def get_user_timezone(user_id):
     
     if result and result[0]:
         return result[0]
-    return "Asia/Riyadh"  # القيمة الافتراضية (توقيت السعودية = GMT+3)
+    return "Asia/Gaza"  # القيمة الافتراضية
 
 def set_user_timezone(user_id, timezone):
     """تعيين المنطقة الزمنية للمستخدم"""
@@ -215,38 +215,34 @@ def get_localized_time(user_id):
         return datetime.now(user_tz)
     except Exception as e:
         print(f"⚠️ خطأ في الحصول على الوقت المحلي: {e}")
-        return datetime.now(pytz.timezone('Asia/Riyadh'))  # الرجوع للافتراضي
+        return datetime.now(pytz.timezone('Asia/Gaza'))  # الرجوع للافتراضي
 
-# دالة get_market_session المعدلة حسب توقيت التداول الصحيح
+# تعديل دالة get_market_session لاستخدام المنطقة الزمنية للمستخدم
 def get_market_session(user_id=None):
-    """الحصول على جلسة السوق باستخدام توقيت التداول الصحيح (GMT+3)"""
+    """الحصول على جلسة السوق باستخدام المنطقة الزمنية للمستخدم"""
     try:
         if user_id:
             local_time = get_localized_time(user_id)
         else:
-            local_time = datetime.now(pytz.timezone('Asia/Riyadh'))  # توقيت السعودية (GMT+3)
+            local_time = datetime.now(pytz.timezone('Asia/Gaza'))
         
         current_hour = local_time.hour
-        timezone_name = get_user_timezone(user_id) if user_id else "Asia/Riyadh"
+        timezone_name = get_user_timezone(user_id) if user_id else "Asia/Gaza"
         
-        # أوقات جلسات التداول الصحيحة حسب توقيت GMT+3 (توقيت المنصات)
-        # الجلسة الآسيوية: 03:00 - 11:00 بتوقيت GMT+3
-        if 3 <= current_hour < 11:
-            return "الجلسة الآسيوية", f"{current_hour:02d}:00-{current_hour+8:02d}:00 (توقيت المنصة)", "منخفضة", timezone_name
-        # جلسة لندن/أوروبا: 11:00 - 19:00 بتوقيت GMT+3
-        elif 11 <= current_hour < 19:
-            return "جلسة لندن/أوروبا", f"{current_hour:02d}:00-{current_hour+8:02d}:00 (توقيت المنصة)", "مرتفعة", timezone_name
-        # جلسة نيويورك: 15:00 - 23:00 بتوقيت GMT+3 (تتداخل مع لندن)
-        elif 15 <= current_hour < 23:
-            return "جلسة نيويورك", f"{15:02d}:00-{23:02d}:00 (توقيت المنصة)", "عالية جداً", timezone_name
-        # جلسة المحيط الهادئ: 23:00 - 03:00 بتوقيت GMT+3
-        elif 23 <= current_hour < 24 or 0 <= current_hour < 3:
-            return "جلسة المحيط الهادئ", f"{23 if current_hour>=23 else 0:02d}:00-{3 if current_hour>=23 else 11:02d}:00 (توقيت المنصة)", "منخفضة", timezone_name
+        # تحديد الجلسة حسب التوقيت العالمي
+        if 2 <= current_hour < 8:
+            return "الجلسة الآسيوية", f"{current_hour:02d}:00-{current_hour+6:02d}:00 بالتوقيت المحلي", "منخفضة", timezone_name
+        elif 8 <= current_hour < 14:
+            return "جلسة لندن/أوروبا", f"{current_hour:02d}:00-{current_hour+6:02d}:00 بالتوقيت المحلي", "مرتفعة", timezone_name
+        elif 14 <= current_hour < 20:
+            return "جلسة نيويورك", f"{current_hour:02d}:00-{current_hour+6:02d}:00 بالتوقيت المحلي", "عالية جداً", timezone_name
+        elif 20 <= current_hour < 24 or 0 <= current_hour < 2:
+            return "جلسة المحيط الهادئ", f"{20 if current_hour>=20 else 0:02d}:00-{2 if current_hour>=20 else 8:02d}:00 بالتوقيت المحلي", "منخفضة", timezone_name
         else:
             return "جلسة عالمية", "متداخلة", "متوسطة", timezone_name
     except Exception as e:
         print(f"⚠️ خطأ في تحديد جلسة السوق: {e}")
-        return "جلسة عالمية", "غير محددة", "متوسطة", "Asia/Riyadh"
+        return "جلسة عالمية", "غير محددة", "متوسطة", "Asia/Gaza"
 
 # توزيع العملات للنظام الجديد
 CATEGORIES = {
@@ -637,7 +633,7 @@ class SubscriptionSystem:
                 cursor.execute("""
                     INSERT INTO users (user_id, username, subscription_end, candle, trade_time, country_timezone)
                     VALUES (?, ?, ?, ?, ?, ?)
-                """, (user_id, username, end_date, "M1", "قصير (1m-15m)", "Asia/Riyadh"))
+                """, (user_id, username, end_date, "M1", "قصير (1m-15m)", "Asia/Gaza"))
             
             conn.commit()
             print(f"✅ تمت مزامنة المستخدم {user_id} مع قاعدة البيانات الرئيسية")
@@ -1132,7 +1128,7 @@ def init_db_with_subscription():
             'subscription_start': 'DATETIME DEFAULT NULL',
             'subscription_end': 'DATETIME DEFAULT NULL',
             'is_admin': 'INTEGER DEFAULT 0',
-            'country_timezone': "TEXT DEFAULT 'Asia/Riyadh'"  # عمود المنطقة الزمنية الجديد
+            'country_timezone': "TEXT DEFAULT 'Asia/Gaza'"  # عمود المنطقة الزمنية الجديد
         }
         
         for col_name, col_type in required_columns.items():
@@ -1156,7 +1152,7 @@ def init_db_with_subscription():
             subscription_start DATETIME DEFAULT NULL,
             subscription_end DATETIME DEFAULT NULL,
             is_admin INTEGER DEFAULT 0,
-            country_timezone TEXT DEFAULT 'Asia/Riyadh'
+            country_timezone TEXT DEFAULT 'Asia/Gaza'
         )
     ''')
     
@@ -1192,7 +1188,7 @@ def init_db_with_subscription():
     else:
         # إضافة المشرف الجديد
         cursor.execute("INSERT INTO users (user_id, username, is_admin, country_timezone) VALUES (?, ?, ?, ?)", 
-                      (ADMIN_ID, "Sz2zv", 1, "Asia/Riyadh"))
+                      (ADMIN_ID, "Sz2zv", 1, "Asia/Gaza"))
     
     conn.commit()
     conn.close()
@@ -1381,7 +1377,7 @@ def get_user_setting(user_id):
     conn.close()
     if res:
         return res
-    return ("M1", "قصير (1m-15m)", "", None, "Asia/Riyadh")
+    return ("M1", "قصير (1m-15m)", "", None, "Asia/Gaza")
 
 def save_analysis_context(user_id, analysis_text):
     """حفظ تحليل الصورة الأخيرة كسياق للتحليل التالي"""
@@ -1903,8 +1899,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         welcome_msg = (
             "🚀 أهلاً بك في Obeida Trading\n\n"
             "👑 أنت مسؤول النظام - لديك صلاحيات كاملة.\n\n"
-            f"🕒 **توقيتك المحلي:** {local_time} ({user_timezone})\n"
-            f"⏰ **توقيت المنصة (GMT+3):** {datetime.now(pytz.timezone('Asia/Riyadh')).strftime('%H:%M:%S')}\n\n"
+            f"🕒 **توقيتك المحلي:** {local_time} ({user_timezone})\n\n"
             "🤖 الخدمات المتاحة:\n"
             "• 📊 تحليل الشارتات\n"
             "• 📈 توصيات فورية\n"
@@ -1939,8 +1934,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚀 أهلاً بك في Obeida Trading\n\n"
             f"✅ اشتراكك: {sub_name}\n"
             f"{end_info}\n\n"
-            f"🕒 **توقيتك المحلي:** {local_time} ({user_timezone})\n"
-            f"⏰ **توقيت المنصة (GMT+3):** {datetime.now(pytz.timezone('Asia/Riyadh')).strftime('%H:%M:%S')}\n\n"
+            f"🕒 **توقيتك المحلي:** {local_time} ({user_timezone})\n\n"
             f"🤖 الخدمات المتاحة:\n"
             f"• 📊 تحليل الشارتات\n"
             f"• 📈 توصيات فورية\n"
@@ -2668,7 +2662,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     return RECOMMENDATION_MODE
 
 async def analyze_chart_image(update, context, image_path, candle, trade_time, symbol):
-    """تحليل صورة الشارت مع القوانين الجديدة والتعديلات الأربعة الجوهرية"""
+    """تحليل صورة الشارت مع القوانين الجديدة والتعديلات الأربعة الجوهرية V8.0"""
     try:
         user_id = update.effective_user.id
         prev_context, prev_time = get_analysis_context(user_id)
@@ -2695,14 +2689,17 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         current_minute = local_time.minute
         current_second = local_time.second
         
-        # تحديد جلسة التداول الحالية
-        if 3 <= current_hour < 11:
+        # تحديد جلسة التداول الحالية بتوقيت المنصة
+        platform_hour = platform_time.hour
+        platform_minute = platform_time.minute
+        
+        if 3 <= platform_hour < 11:
             trading_session = "آسيوية"
-        elif 11 <= current_hour < 15:
+        elif 11 <= platform_hour < 15:
             trading_session = "لندن (افتتاح)"
-        elif 15 <= current_hour < 19:
+        elif 15 <= platform_hour < 19:
             trading_session = "لندن + نيويورك (تداخل)"
-        elif 19 <= current_hour < 23:
+        elif 19 <= platform_hour < 23:
             trading_session = "نيويورك (متأخر)"
         else:
             trading_session = "المحيط الهادئ"
@@ -2737,10 +2734,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         news_impact = "🟢 منخفض"
         news_warning = ""
         news_risk_multiplier = 1.0
-        
-        # ============================================
-        # التعديل الجوهري V8.0 - تفعيل "قناص الزخم" وإضافة الفلاتر الذكية
-        # ============================================
         
         # التحقق من أن السوق OTC لتعطيل فلاتر الأخبار
         is_otc_market = "OTC" in symbol.upper() if symbol else False
@@ -2781,16 +2774,16 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             ]
             
             for news_hour, news_minute in high_impact_hours:
-                time_diff = abs((current_hour * 60 + current_minute) - (news_hour * 60 + news_minute))
+                time_diff = abs((platform_hour * 60 + platform_minute) - (news_hour * 60 + news_minute))
                 if time_diff <= 60:
                     news_impact = "🔴 عالي جداً"
                     news_risk_multiplier = 2.5
-                    news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة"
+                    news_warning = f"⚠️ **تحذير:** خبر اقتصادي قوي خلال ±60 دقيقة (بتوقيت المنصة)"
                     break
                 elif time_diff <= 120:
                     news_impact = "🟡 متوسط"
                     news_risk_multiplier = 1.5
-                    news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
+                    news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة (بتوقيت المنصة)"
                     break
         
         # الفلتر الزمني (Kill Zones) - بتوقيت المنصة GMT+3
@@ -2798,31 +2791,31 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         # مناطق القتل السعري الصحيحة بتوقيت GMT+3
         # افتتاح لندن: 11:00 - 14:00
-        if 11 <= current_hour < 14:
+        if 11 <= platform_hour < 14:
             kill_zone_status = "⚡ منطقة القتل السعري - افتتاح لندن (11:00-14:00 بتوقيت المنصة)"
         # تداخل لندن + نيويورك: 15:00 - 19:00 (أقوى منطقة)
-        elif 15 <= current_hour < 19:
+        elif 15 <= platform_hour < 19:
             kill_zone_status = "💥 منطقة القتل السعري القصوى - تداخل لندن + نيويورك (15:00-19:00 بتوقيت المنصة)"
         # افتتاح نيويورك: 15:00 - 18:00
-        elif 15 <= current_hour < 18:
+        elif 15 <= platform_hour < 18:
             kill_zone_status = "⚡ منطقة القتل السعري - افتتاح نيويورك (15:00-18:00 بتوقيت المنصة)"
         # إغلاق لندن + نيويورك: 19:00 - 20:00
-        elif 19 <= current_hour < 20:
+        elif 19 <= platform_hour < 20:
             kill_zone_status = "⚠️ منطقة إغلاق الجلسات - تقلبات عالية (19:00-20:00 بتوقيت المنصة)"
         # الجلسة الآسيوية: 03:00 - 11:00
-        elif 3 <= current_hour < 11:
+        elif 3 <= platform_hour < 11:
             kill_zone_status = "🌏 جلسة آسيوية - سيولة منخفضة (03:00-11:00 بتوقيت المنصة)"
         # جلسة المحيط الهادئ: 23:00 - 03:00
-        elif 23 <= current_hour < 24 or 0 <= current_hour < 3:
+        elif 23 <= platform_hour < 24 or 0 <= platform_hour < 3:
             kill_zone_status = "🌊 جلسة المحيط الهادئ - سيولة منخفضة جداً (23:00-03:00 بتوقيت المنصة)"
         else:
             kill_zone_status = "⏰ خارج مناطق القتل الرئيسية - سيولة متوسطة"
         
-        # دقائق التحول (Pivot Minutes) - الأوقات الحرجة في التداول
+        # دقائق التحول (Pivot Minutes) - الأوقات الحرجة في التداول بتوقيت المنصة
         # الدقائق التي يحدث فيها انعكاسات قوية: 00, 15, 30, 45 (افتتاح شموع جديدة)
         # الدقائق الأخيرة من كل شمعة: 14, 29, 44, 59
-        is_critical_minute = current_minute in [0, 15, 30, 45]  # دقائق افتتاح الشموع
-        is_trap_minute = current_minute in [14, 29, 44, 59]      # دقائق الغدر (آخر دقيقة)
+        is_critical_minute = platform_minute in [0, 15, 30, 45]  # دقائق افتتاح الشموع
+        is_trap_minute = platform_minute in [14, 29, 44, 59]      # دقائق الغدر (آخر دقيقة)
         
         if is_trap_minute:
             last_minute_status = "⚠️ دقيقة الغدر - حظر الدخول إلا مع اختراق حقيقي"
@@ -2902,16 +2895,18 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 previous_context_info = ""
         
         # ============================================
-        # التعديلات الأربعة الجوهرية - نسخة V7.0
+        # التعديلات الأربعة الجوهرية - نسخة V8.0
         # ============================================
         
-        # [التعديل 1 - قاعدة الـ 5 نقاط الفورية] (The 5-Point Flash Rule)
-        five_point_flash_rule = """
+        # [التعديل 1 - قاعدة الـ 2 نقطة الفورية] (The 2-Point Flash Rule)
+        two_point_flash_rule = """
         【التعديل 1 - قاعدة الـ 2 نقطة الفورية V8.0 (The 2-Point Flash Rule)】
         - الانتظار حتى إغلاق الشمعة فوق المستوى قد يفوتك الانفجار
         - إذا تجاوز السعر المستوى بـ 1.5-2 نقطة أثناء تكون الشمعة وبسرعة عالية (Volatility > 1.3)
         - يعتبر الاختراق ناجحاً ويتم إصدار أمر دخول 'فوري' دون انتظار إغلاق الشمعة
         - الشرط: سرعة الحركة (Velocity) > 1.3 نقطة في آخر 10 ثوانٍ
+        - **لصفقات الشراء (CALL):** تجاوز المقاومة بـ 2 نقطة بسرعة = دخول فوري
+        - **لصفقات البيع (PUT):** كسر الدعم بـ 2 نقطة بسرعة = دخول فوري
         """
         
         # [التعديل 2 - فلتر الابتلاع الديناميكي] (Dynamic Kill Switch)
@@ -2922,6 +2917,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         - يتم إلغاء إشارة الدخول فوراً حتى قبل إغلاق الشمعة
         - هذا يحمي من "فتائل الغدر" قبل وقوعها
         - **لصفقات البيع (PUT):** إذا رأيت شمعة حمراء تبتلع أي شمعة خضراء سابقة ولو كانت صغيرة، ادخل بيع فوراً
+        - **لصفقات الشراء (CALL):** إذا رأيت شمعة خضراء تبتلع أي شمعة حمراء سابقة، ادخل شراء فوراً
         """
         
         # [التعديل 3 - هرم السيادة الجديد] (Logic Hierarchy - Marubozu Supremacy)
@@ -2932,7 +2928,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         في حال رصد اندفاع مؤسسي (جميع الشروط التالية):
         - شمعة ممتلئة بنسبة >80% (Marubozu) - تم تخفيضها من 90% لزيادة الفرص
         - عدم وجود ذيول علوية (في الشراء) أو سفلية (في البيع) بنسبة <15%
-        - اختراق مستوى مقاومة/دعم رئيسي
+        - اختراق مستوى مقاومة/دعم رئيسي (مستوى مغلق)
         - سرعة حركة عالية (Volatility > 1.5x المتوسط)
         
         ✅ **يتم تفعيل التجاوز الفوري:**
@@ -2940,6 +2936,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         2. يتم تعطيل بروتوكول دقائق التحول (دقائق 14,29,44,59)
         3. يتم تعطيل فلتر المسافة - حتى لو كان الهدف على بعد نقطتين فقط
         4. يتم الدخول بمجرد تجاوز المستوى بـ 1.5 نقطة (Flash Entry) دون انتظار الإغلاق
+        5. حجم الصفقة: مضاعف (2x) بسبب قوة الإشارة
         
         ⚠️ **هام:** إذا لم تكن الشمعة انفجارية (<80%)، تعود جميع القيود الصارمة للعمل فوراً.
         """
@@ -2951,6 +2948,12 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         - القاعدة الجديدة: يُسمح بالدخول في 'دقائق الغدر' فقط إذا كان السعر يخترق 'مستوى مغلقاً' بشمعة انفجارية
         - الزخم الحقيقي يمتص تقلبات افتتاح الشموع الجديدة
         - إذا لم يكن هناك اختراق حقيقي، استمر في الحظر
+        
+        **شروط الدخول في دقائق الغدر:**
+        - اختراق مستوى مغلق واضح
+        - زخم ≥ 70% (أجسام الشموع)
+        - تجاوز المستوى بـ 1.5 نقطة على الأقل
+        - سرعة حركة > 1.3x المتوسط
         """
         
         # ============================================
@@ -2979,13 +2982,18 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         - نسبة الذيل المسموح بها = 15% (بدلاً من 5%)
         - أي ذيل أقل من 15% = شمعة ممتلئة صالحة للدخول
         - أي ذيل أكثر من 60% = رفض سعري (احتفاظ)
+        
+        【فلتر 5 - سرعة الحركة (Velocity Filter)】
+        - احسب سرعة الحركة: (السعر الحالي - سعر قبل 10 ثوانٍ) / 10
+        - إذا كانت السرعة > 1.3 نقطة/ثانية = زخم انفجاري
+        - إذا كانت السرعة < 0.5 نقطة/ثانية = سوق هادئ (انتظار)
         """
         
         # دمج التعديلات الأربعة الجوهرية وبروتوكول V8.0 في البرومبت الرئيسي
         four_updates_section = f"""
 ⚡ **التعديلات الأربعة الجوهرية + بروتوكول V8.0 الهجومي:**
 
-{five_point_flash_rule}
+{two_point_flash_rule}
 
 {dynamic_kill_switch}
 
@@ -3628,6 +3636,64 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
     
     return MAIN_MENU
 
+async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور في وضع التوصية"""
+    # التحقق من الاشتراك
+    if not await subscription_required(update, context):
+        return RECOMMENDATION_MODE
+    
+    user_id = update.effective_user.id
+    
+    # تسجيل استخدام
+    SubscriptionSystem.increment_usage(user_id, 'recommendation_photo')
+    
+    # الحصول على آخر عملة تم اختيارها
+    last_symbol = get_last_recommendation_symbol(context)
+    
+    wait_msg = await update.message.reply_text(f"📊 استنى شوي العملة: {last_symbol} قيد تحليل 🤌...")
+    
+    try:
+        # حفظ الصورة مؤقتاً
+        photo = await update.message.photo[-1].get_file()
+        timestamp = int(time.time())
+        image_path = os.path.join(IMAGE_CACHE_DIR, f"recommendation_{user_id}_{timestamp}.jpg")
+        await photo.download_to_drive(image_path)
+        
+        # الحصول على إعدادات المستخدم
+        candle, trade_time, _, _, _ = get_user_setting(user_id)
+        
+        if not candle or not trade_time:
+            await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
+            return RECOMMENDATION_MODE
+        
+        # تحليل الصورة
+        analysis_result = await analyze_chart_image(
+            update, 
+            context, 
+            image_path, 
+            candle, 
+            trade_time, 
+            last_symbol
+        )
+        
+        # تنسيق النتيجة مع دعم النسخ السريع
+        formatted_result = format_as_copyable_code(analysis_result, "text")
+        await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
+                
+    except Exception as e:
+        print(f"❌ خطأ في تحليل صورة التوصية: {e}")
+        await wait_msg.edit_text("❌ حدث خطأ في معالجة الصورة. يرجى المحاولة مرة أخرى.")
+    
+    # عرض خيارات المتابعة
+    reply_keyboard = [[key] for key in CATEGORIES.keys()]
+    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+    
+    await update.message.reply_text(
+        "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return RECOMMENDATION_MODE
+
 async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور في وضع التحليل"""
     return await handle_photo_analysis(update, context)
@@ -4252,31 +4318,24 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • اختر "دولتك" من القائمة الرئيسية
     • سيتم ضبط جميع التحليلات على توقيت دولتك
     • دعم أكثر من 70 دولة حول العالم
-    • توقيت المنصة (GMT+3) معروض في التحليلات
     
     🔑 **نظام الاشتراك المتطور V2:**
     • إدارة الاشتراكات عبر لوحة المشرف
     • إضافة اشتراك مباشر باستخدام User ID
-    • مدة الاشتراكات: ساعة، يوم، أسبوع، شهر، سنة، مدى الحياة
+    • مدة الاشتراكات: ساعة، يوم، أسبوع، شهر، سنة،
     • إمكانية حظر المستخدمين وإلغاء حظرهم
     
     🔑 **أسعار الاشتراكات:**
     • ساعة : 1$
     • يوم : 5$
-    • أسبوعي : 15$
+    • سبوعي : 15$
     • شهري : 40$
-    • نسخة خاصة : 300$
+    • نسخة خاص بيك : 300$
     
     ⏱️ **خيارات مدة الصفقة:**
     • **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة
     • **متوسط (4h-Daily)**: انتظار أيام، مخاطر متوسطة
     • **طويل (Weekly-Monthly)**: استثمار طويل، مخاطر مرتفعة
-    
-    ⚡ **التعديلات الجوهرية V7.0:**
-    • قاعدة الـ 5 نقاط الفورية (Flash Entry)
-    • فلتر الابتلاع الديناميكي (Dynamic Kill Switch)
-    • هرم السيادة الجديد (Marubozu Supremacy)
-    • تحرير دقائق التحول (Time-Lock Release)
     """
     
     formatted_help = format_as_copyable_code(help_text, "markdown")
@@ -4566,9 +4625,9 @@ ADMIN_PANEL_HTML = """
 <body>
     <div class="container">
         <div class="header">
-            <h1>🤖 لوحة تحكم Obeida Trading - V7.0</h1>
+            <h1>🤖 لوحة تحكم Obeida Trading - V2</h1>
             <p>نظام إدارة الاشتراكات المتطور - المشرف: @Sz2zv</p>
-            <p style="color: #28a745; font-size: 0.9em;">🌍 نظام المناطق الزمنية للمستخدمين نشط | ⏰ توقيت المنصة GMT+3</p>
+            <p style="color: #28a745; font-size: 0.9em;">🌍 نظام المناطق الزمنية للمستخدمين نشط</p>
         </div>
 
         <div class="stats-grid">
@@ -4685,7 +4744,7 @@ ADMIN_PANEL_HTML = """
     </div>
 
     <div class="footer">
-        <p>Obeida Trading - نظام إدارة الاشتراكات المتطور V7.0</p>
+        <p>Obeida Trading - نظام إدارة الاشتراكات المتطور V2</p>
         <p style="font-size: 0.8em;">نسخة البيانات: {{ data_version }} - آخر نسخة احتياطية: {{ last_backup }}</p>
     </div>
 
@@ -4742,7 +4801,7 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Obeida Trading V7.0</title>
+        <title>Obeida Trading V2</title>
         <style>
             body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
             h1 { font-size: 3em; margin-bottom: 20px; }
@@ -4751,9 +4810,9 @@ def home():
         </style>
     </head>
     <body>
-        <h1> 📊 Obeida Trading V7.0 - Subscription System 📊</h1>
+        <h1> 📊 Obeida Trading V2 - Subscription System 📊</h1>
         <p>Chat & Technical Analysis Bot with Advanced Subscription System</p>
-        <div class="status">🌍 نظام المناطق الزمنية للمستخدمين نشط - ⏰ توقيت المنصة GMT+3</div>
+        <div class="status">🌍 نظام المناطق الزمنية للمستخدمين نشط - اختر دولتك</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
         <a href="/admin" class="admin-link">🔐 لوحة تحكم المشرف</a>
     </body>
@@ -4766,9 +4825,8 @@ def health():
     return {
         "status": "active", 
         "ai_provider": "Mistral AI", 
-        "subscription_system": "advanced_v7",
+        "subscription_system": "advanced_v2",
         "timezone_support": True,
-        "platform_timezone": "GMT+3",
         "data_version": DATA_VERSION,
         "total_users": stats.get('total_users', 0),
         "active_users": stats.get('active_users', 0),
@@ -4936,10 +4994,9 @@ def ping():
     return "PONG"
 
 def main():
-    """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية والتعديلات الجوهرية"""
-    print("🤖 Starting Obeida Trading V7.0 with Timezone Support and Elite Updates...")
+    """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية"""
+    print("🤖 Starting Obeida Trading with Timezone Support ...")
     print(f"📊 نسخة البيانات: {DATA_VERSION}")
-    print(f"⏰ توقيت المنصة: GMT+3")
     
     # تهيئة قاعدة البيانات الرئيسية
     init_db_with_subscription()
@@ -5046,8 +5103,8 @@ def main():
     loop.create_task(periodic_cleanup())
     loop.create_task(backup_scheduler())
     
-    print("✅ Telegram Bot with Timezone Support and Elite Updates ready ...")
-    print("📡 Bot Obeida Trading V7.0 online with timezone system, subscription system, and elite updates...")
+    print("✅ Telegram Bot with Timezone Support ready ...")
+    print("📡 Bot Obeida Trading V2 online with timezone system and subscription system...")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
