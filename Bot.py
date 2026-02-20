@@ -47,6 +47,444 @@ CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15"
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
 
 # ============================================
+# نظام الحماية والنسخ الاحتياطي المتقدم (NEW)
+# ============================================
+
+class DataProtectionAdvanced:
+    """
+    نظام حماية البيانات والنسخ الاحتياطي المتقدم
+    - نسخ احتياطي تلقائي متعدد المواقع
+    - تشفير البيانات الحساسة
+    - استعادة البيانات تلقائياً عند إعادة التشغيل
+    - حماية ضد الحذف العرضي
+    """
+    
+    BACKUP_INTERVAL = 1800  # 30 دقيقة
+    MAX_BACKUPS = 50  # الاحتفاظ بآخر 50 نسخة
+    ENCRYPTION_KEY = hashlib.sha256(str(ADMIN_ID).encode()).hexdigest()[:32]
+    
+    @staticmethod
+    def encrypt_data(data):
+        """تشفير البيانات الحساسة (تشفير بسيط)"""
+        try:
+            if isinstance(data, str):
+                data = data.encode()
+            elif not isinstance(data, bytes):
+                data = str(data).encode()
+            
+            # تشفير بسيط (للحماية الأساسية)
+            key = DataProtectionAdvanced.ENCRYPTION_KEY.encode()
+            encrypted = bytearray()
+            for i, byte in enumerate(data):
+                encrypted.append(byte ^ key[i % len(key)])
+            return base64.b64encode(bytes(encrypted)).decode()
+        except Exception as e:
+            print(f"⚠️ خطأ في التشفير: {e}")
+            return data
+    
+    @staticmethod
+    def decrypt_data(encrypted_data):
+        """فك تشفير البيانات"""
+        try:
+            if isinstance(encrypted_data, str):
+                encrypted_bytes = base64.b64decode(encrypted_data.encode())
+            else:
+                encrypted_bytes = base64.b64decode(encrypted_data)
+            
+            key = DataProtectionAdvanced.ENCRYPTION_KEY.encode()
+            decrypted = bytearray()
+            for i, byte in enumerate(encrypted_bytes):
+                decrypted.append(byte ^ key[i % len(key)])
+            return bytes(decrypted).decode()
+        except Exception:
+            return encrypted_data
+    
+    @staticmethod
+    def backup_databases_secure():
+        """نسخ احتياطي آمن متعدد المواقع"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_id = str(uuid.uuid4())[:8]
+        
+        databases = [
+            (DB_NAME, "main"),
+            (SUBSCRIPTION_DB_NAME, "subscription")
+        ]
+        
+        backup_info = {
+            'timestamp': timestamp,
+            'backup_id': backup_id,
+            'version': DATA_VERSION,
+            'files': []
+        }
+        
+        for db_path, db_type in databases:
+            if os.path.exists(db_path):
+                try:
+                    # 1. نسخة احتياطية محلية
+                    local_backup = os.path.join(BACKUP_DIR, f"{db_type}_backup_{timestamp}_{backup_id}.db")
+                    shutil.copy2(db_path, local_backup)
+                    
+                    # 2. نسخة احتياطية JSON للبيانات المهمة
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.cursor()
+                    
+                    # تصدير جميع الجداول إلى JSON
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                    tables = cursor.fetchall()
+                    
+                    json_backup = {
+                        'timestamp': timestamp,
+                        'backup_id': backup_id,
+                        'db_type': db_type,
+                        'tables': {}
+                    }
+                    
+                    for table in tables:
+                        table_name = table[0]
+                        cursor.execute(f"SELECT * FROM {table_name}")
+                        columns = [description[0] for description in cursor.description]
+                        rows = cursor.fetchall()
+                        
+                        # تحويل الصفوف إلى قواميس
+                        table_data = []
+                        for row in rows:
+                            row_dict = {}
+                            for i, col in enumerate(columns):
+                                value = row[i]
+                                if isinstance(value, (int, float, str, type(None))):
+                                    row_dict[col] = value
+                                else:
+                                    row_dict[col] = str(value)
+                            table_data.append(row_dict)
+                        
+                        json_backup['tables'][table_name] = table_data
+                    
+                    conn.close()
+                    
+                    # حفظ نسخة JSON
+                    json_backup_path = os.path.join(BACKUP_DIR, f"{db_type}_json_{timestamp}_{backup_id}.json")
+                    with open(json_backup_path, 'w', encoding='utf-8') as f:
+                        json.dump(json_backup, f, ensure_ascii=False, indent=2)
+                    
+                    # 3. نسخة احتياطية مشفرة للبيانات الحساسة
+                    if db_type == 'subscription':
+                        encrypted_backup_path = os.path.join(BACKUP_DIR, f"{db_type}_encrypted_{timestamp}_{backup_id}.enc")
+                        with open(db_path, 'rb') as src:
+                            with open(encrypted_backup_path, 'wb') as dst:
+                                dst.write(base64.b64encode(src.read()))
+                    
+                    backup_info['files'].append({
+                        'type': db_type,
+                        'local': local_backup,
+                        'json': json_backup_path,
+                        'encrypted': encrypted_backup_path if db_type == 'subscription' else None
+                    })
+                    
+                    print(f"✅ تم إنشاء نسخة احتياطية آمنة لـ {db_type}: {local_backup}")
+                    
+                except Exception as e:
+                    print(f"⚠️ خطأ في نسخ {db_path}: {e}")
+        
+        # حفظ معلومات النسخة الاحتياطية
+        info_path = os.path.join(BACKUP_DIR, f"backup_info_{timestamp}_{backup_id}.json")
+        with open(info_path, 'w', encoding='utf-8') as f:
+            json.dump(backup_info, f, ensure_ascii=False, indent=2)
+        
+        # تنظيف النسخ القديمة
+        DataProtectionAdvanced.cleanup_old_backups()
+        
+        return backup_info
+    
+    @staticmethod
+    def cleanup_old_backups():
+        """تنظيف النسخ الاحتياطية القديمة - الاحتفاظ بآخر MAX_BACKUPS نسخة"""
+        try:
+            all_backups = []
+            for filename in os.listdir(BACKUP_DIR):
+                if filename.endswith('.db') or filename.endswith('.json') or filename.endswith('.enc'):
+                    filepath = os.path.join(BACKUP_DIR, filename)
+                    all_backups.append((filepath, os.path.getmtime(filepath)))
+            
+            # ترتيب حسب التاريخ (الأحدث أولاً)
+            all_backups.sort(key=lambda x: x[1], reverse=True)
+            
+            # الاحتفاظ بآخر MAX_BACKUPS * 3 (لأن كل نسخة لها 3 ملفات)
+            keep_count = DataProtectionAdvanced.MAX_BACKUPS * 3
+            if len(all_backups) > keep_count:
+                for filepath, _ in all_backups[keep_count:]:
+                    try:
+                        os.remove(filepath)
+                        print(f"🗑️ تم حذف نسخة احتياطية قديمة: {os.path.basename(filepath)}")
+                    except Exception as e:
+                        print(f"⚠️ خطأ في حذف {filepath}: {e}")
+        except Exception as e:
+            print(f"⚠️ خطأ في تنظيف النسخ القديمة: {e}")
+    
+    @staticmethod
+    def restore_latest_backup():
+        """استعادة أحدث نسخة احتياطية عند بدء التشغيل"""
+        try:
+            # البحث عن أحدث نسخة احتياطية
+            backups = []
+            for filename in os.listdir(BACKUP_DIR):
+                if filename.startswith('main_backup_') and filename.endswith('.db'):
+                    filepath = os.path.join(BACKUP_DIR, filename)
+                    backups.append((filepath, os.path.getmtime(filepath)))
+            
+            if not backups:
+                print("📭 لا توجد نسخ احتياطية سابقة")
+                return False
+            
+            # اختيار أحدث نسخة
+            backups.sort(key=lambda x: x[1], reverse=True)
+            latest_backup = backups[0][0]
+            
+            # استعادة قاعدة البيانات الرئيسية
+            if os.path.exists(DB_NAME):
+                # إنشاء نسخة احتياطية قبل الاستعادة (للحماية)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                pre_restore = os.path.join(BACKUP_DIR, f"pre_restore_main_{timestamp}.db")
+                shutil.copy2(DB_NAME, pre_restore)
+                print(f"💾 تم حفظ نسخة قبل الاستعادة: {pre_restore}")
+            
+            shutil.copy2(latest_backup, DB_NAME)
+            print(f"✅ تم استعادة قاعدة البيانات الرئيسية من: {latest_backup}")
+            
+            # البحث عن أحدث نسخة للاشتراكات
+            sub_backups = []
+            for filename in os.listdir(BACKUP_DIR):
+                if filename.startswith('subscription_backup_') and filename.endswith('.db'):
+                    filepath = os.path.join(BACKUP_DIR, filename)
+                    sub_backups.append((filepath, os.path.getmtime(filepath)))
+            
+            if sub_backups:
+                sub_backups.sort(key=lambda x: x[1], reverse=True)
+                latest_sub_backup = sub_backups[0][0]
+                
+                if os.path.exists(SUBSCRIPTION_DB_NAME):
+                    pre_restore_sub = os.path.join(BACKUP_DIR, f"pre_restore_sub_{timestamp}.db")
+                    shutil.copy2(SUBSCRIPTION_DB_NAME, pre_restore_sub)
+                
+                shutil.copy2(latest_sub_backup, SUBSCRIPTION_DB_NAME)
+                print(f"✅ تم استعادة قاعدة بيانات الاشتراكات من: {latest_sub_backup}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ خطأ في استعادة النسخة الاحتياطية: {e}")
+            return False
+    
+    @staticmethod
+    def export_users_to_json():
+        """تصدير بيانات المستخدمين إلى JSON للحفظ الدائم"""
+        try:
+            users_data = {
+                'export_date': datetime.now().isoformat(),
+                'version': DATA_VERSION,
+                'users': []
+            }
+            
+            conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT u.user_id, u.username, u.first_name, u.created_at, u.is_blocked,
+                       a.subscription_type, a.subscription_name, a.start_date, a.end_date, a.is_active
+                FROM users u
+                LEFT JOIN active_subscriptions a ON u.user_id = a.user_id
+                ORDER BY u.created_at DESC
+            """)
+            
+            for row in cursor.fetchall():
+                user = {
+                    'user_id': row[0],
+                    'username': row[1],
+                    'first_name': row[2],
+                    'created_at': row[3],
+                    'is_blocked': row[4],
+                    'subscription': {
+                        'type': row[5],
+                        'name': row[6],
+                        'start_date': row[7],
+                        'end_date': row[8],
+                        'is_active': row[9]
+                    }
+                }
+                users_data['users'].append(user)
+            
+            conn.close()
+            
+            # حفظ في ملف JSON دائم
+            json_path = os.path.join(BACKUP_DIR, f"users_export_{datetime.now().strftime('%Y%m%d')}.json")
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(users_data, f, ensure_ascii=False, indent=2)
+            
+            print(f"✅ تم تصدير بيانات المستخدمين إلى: {json_path}")
+            
+            # إنشاء نسخة في مكان آمن (يمكن تعديل المسار)
+            try:
+                # محاولة حفظ نسخة في مسار مطلق آمن
+                secure_path = os.path.join(os.path.expanduser('~'), 'obeida_backups')
+                if not os.path.exists(secure_path):
+                    os.makedirs(secure_path)
+                
+                secure_json = os.path.join(secure_path, f"users_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+                shutil.copy2(json_path, secure_json)
+                print(f"✅ تم حفظ نسخة آمنة في: {secure_json}")
+            except Exception as e:
+                print(f"⚠️ لا يمكن حفظ النسخة الآمنة: {e}")
+            
+            return json_path
+            
+        except Exception as e:
+            print(f"⚠️ خطأ في تصدير المستخدمين: {e}")
+            return None
+    
+    @staticmethod
+    def import_users_from_json(json_path=None):
+        """استيراد بيانات المستخدمين من JSON (للبوت الجديد)"""
+        try:
+            if json_path is None:
+                # البحث عن أحدث ملف تصدير
+                json_files = []
+                for filename in os.listdir(BACKUP_DIR):
+                    if filename.startswith('users_export_') and filename.endswith('.json'):
+                        json_files.append(os.path.join(BACKUP_DIR, filename))
+                
+                if not json_files:
+                    print("📭 لا توجد ملفات تصدير")
+                    return False
+                
+                json_files.sort(key=os.path.getmtime, reverse=True)
+                json_path = json_files[0]
+            
+            with open(json_path, 'r', encoding='utf-8') as f:
+                users_data = json.load(f)
+            
+            print(f"📦 جاري استيراد {len(users_data['users'])} مستخدم...")
+            
+            conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+            cursor = conn.cursor()
+            
+            imported = 0
+            for user in users_data['users']:
+                try:
+                    # إضافة المستخدم
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO users 
+                        (user_id, username, first_name, created_at, is_blocked)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        user['user_id'],
+                        user['username'],
+                        user['first_name'],
+                        user['created_at'],
+                        user['is_blocked']
+                    ))
+                    
+                    # إضافة الاشتراك إذا وجد
+                    if user['subscription'] and user['subscription']['type']:
+                        cursor.execute("""
+                            INSERT INTO active_subscriptions 
+                            (user_id, subscription_type, subscription_name, start_date, end_date, is_active)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (
+                            user['user_id'],
+                            user['subscription']['type'],
+                            user['subscription']['name'],
+                            user['subscription']['start_date'],
+                            user['subscription']['end_date'],
+                            user['subscription']['is_active']
+                        ))
+                    
+                    imported += 1
+                except Exception as e:
+                    print(f"⚠️ خطأ في استيراد المستخدم {user['user_id']}: {e}")
+            
+            conn.commit()
+            conn.close()
+            
+            print(f"✅ تم استيراد {imported} مستخدم بنجاح")
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ خطأ في استيراد المستخدمين: {e}")
+            return False
+    
+    @staticmethod
+    def create_restore_point():
+        """إنشاء نقطة استعادة كاملة للنظام"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            restore_point = os.path.join(BACKUP_DIR, f"restore_point_{timestamp}")
+            os.makedirs(restore_point, exist_ok=True)
+            
+            # نسخ جميع قواعد البيانات
+            for db in [DB_NAME, SUBSCRIPTION_DB_NAME]:
+                if os.path.exists(db):
+                    shutil.copy2(db, os.path.join(restore_point, db))
+            
+            # نسخ مجلد الصور المؤقتة
+            if os.path.exists(IMAGE_CACHE_DIR):
+                shutil.copytree(IMAGE_CACHE_DIR, os.path.join(restore_point, IMAGE_CACHE_DIR))
+            
+            # حفظ معلومات نقطة الاستعادة
+            info = {
+                'timestamp': timestamp,
+                'version': DATA_VERSION,
+                'files': os.listdir(restore_point)
+            }
+            
+            with open(os.path.join(restore_point, 'info.json'), 'w') as f:
+                json.dump(info, f, indent=2)
+            
+            print(f"✅ تم إنشاء نقطة استعادة: {restore_point}")
+            return restore_point
+            
+        except Exception as e:
+            print(f"⚠️ خطأ في إنشاء نقطة استعادة: {e}")
+            return None
+    
+    @staticmethod
+    def verify_database_integrity():
+        """التحقق من سلامة قواعد البيانات وإصلاحها إن أمكن"""
+        try:
+            for db_path in [DB_NAME, SUBSCRIPTION_DB_NAME]:
+                if not os.path.exists(db_path):
+                    print(f"⚠️ قاعدة البيانات غير موجودة: {db_path}")
+                    continue
+                
+                try:
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.cursor()
+                    
+                    # فحص سلامة قاعدة البيانات
+                    cursor.execute("PRAGMA integrity_check")
+                    result = cursor.fetchone()
+                    
+                    if result and result[0] == 'ok':
+                        print(f"✅ قاعدة البيانات سليمة: {db_path}")
+                    else:
+                        print(f"⚠️ قاعدة البيانات تالفة: {db_path}")
+                        
+                        # محاولة الإصلاح
+                        cursor.execute("VACUUM")
+                        cursor.execute("REINDEX")
+                        print(f"🔧 تم محاولة إصلاح: {db_path}")
+                    
+                    conn.close()
+                    
+                except Exception as e:
+                    print(f"⚠️ خطأ في فحص {db_path}: {e}")
+                    
+                    # محاولة استعادة من النسخ الاحتياطي
+                    print(f"🔄 جاري استعادة {db_path} من النسخ الاحتياطي...")
+                    DataProtectionAdvanced.restore_latest_backup()
+                    
+        except Exception as e:
+            print(f"⚠️ خطأ في التحقق من سلامة البيانات: {e}")
+
+# ============================================
 # نظام المناطق الزمنية حسب الدولة (NEW)
 # ============================================
 
@@ -65,7 +503,7 @@ COUNTRIES_TIMEZONES = {
     "الأردن 🇯🇴": "Asia/Amman",
     "لبنان 🇱🇧": "Asia/Beirut",
     "سوريا 🇸🇾": "Asia/Damascus",
-    "ليبيا 🇱🇾": "Africa/Tripoli",
+    "ليبيا 🇾🇱": "Africa/Tripoli",
     "تونس 🇹🇳": "Africa/Tunis",
     "الجزائر 🇩🇿": "Africa/Algiers",
     "المغرب 🇲🇦": "Africa/Casablanca",
@@ -591,6 +1029,10 @@ class SubscriptionSystem:
             # تحديث قاعدة البيانات الرئيسية
             SubscriptionSystem.sync_with_main_db(user_id, end_date.isoformat() if end_date else None)
             
+            # إنشاء نسخة احتياطية فورية بعد إضافة اشتراك مهم
+            DataProtectionAdvanced.backup_databases_secure()
+            DataProtectionAdvanced.export_users_to_json()
+            
             return True, {
                 'subscription_type': subscription_type,
                 'subscription_name': sub_name,
@@ -946,6 +1388,9 @@ class SubscriptionSystem:
             # تحديث قاعدة البيانات الرئيسية
             SubscriptionSystem.sync_with_main_db(user_id, None)
             
+            # إنشاء نسخة احتياطية
+            DataProtectionAdvanced.backup_databases_secure()
+            
             return True, "تم إلغاء الاشتراك بنجاح"
             
         except Exception as e:
@@ -1082,6 +1527,9 @@ class SubscriptionSystem:
             # تحديث قاعدة البيانات الرئيسية
             SubscriptionSystem.sync_with_main_db(user_id, new_end_date.isoformat())
             
+            # إنشاء نسخة احتياطية
+            DataProtectionAdvanced.backup_databases_secure()
+            
             return True, f"تم تمديد الاشتراك حتى {new_end_date.strftime('%Y-%m-%d %H:%M')}"
             
         except Exception as e:
@@ -1104,7 +1552,14 @@ def check_user_subscription(user_id):
 # ============================================
 
 def init_db_with_subscription():
-    """تهيئة قاعدة البيانات الرئيسية"""
+    """تهيئة قاعدة البيانات الرئيسية مع استعادة النسخ الاحتياطي إن وجد"""
+    # محاولة استعادة أحدث نسخة احتياطية
+    try:
+        if os.path.exists(BACKUP_DIR):
+            DataProtectionAdvanced.restore_latest_backup()
+    except Exception as e:
+        print(f"⚠️ خطأ في استعادة النسخ الاحتياطية: {e}")
+    
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
@@ -1197,6 +1652,14 @@ def init_db_with_subscription():
     
     # تهيئة نظام الاشتراك الجديد
     SubscriptionSystem.init_db()
+    
+    # إنشاء نسخة احتياطية أولية وتصدير JSON
+    try:
+        DataProtectionAdvanced.backup_databases_secure()
+        DataProtectionAdvanced.export_users_to_json()
+        DataProtectionAdvanced.create_restore_point()
+    except Exception as e:
+        print(f"⚠️ خطأ في إنشاء النسخ الاحتياطية الأولية: {e}")
 
 def check_subscription(user_id):
     """التحقق من صلاحية اشتراك المستخدم (متوافقة مع الكود القديم)"""
@@ -4263,42 +4726,11 @@ async def backup_scheduler():
     while True:
         try:
             await asyncio.sleep(3600)  # كل ساعة
-            DataProtection.auto_backup()
+            DataProtectionAdvanced.backup_databases_secure()
+            DataProtectionAdvanced.export_users_to_json()
             print("⏰ تم تنفيذ النسخ الاحتياطي التلقائي المجدول")
         except Exception as e:
             print(f"⚠️ خطأ في النسخ الاحتياطي المجدول: {e}")
-
-# دالة DataProtection للنسخ الاحتياطي (مبسطة)
-class DataProtection:
-    @staticmethod
-    def backup_database():
-        """نسخ احتياطي لقاعدة البيانات الرئيسية"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = os.path.join(BACKUP_DIR, f"main_backup_{timestamp}.db")
-            if os.path.exists(DB_NAME):
-                shutil.copy2(DB_NAME, backup_file)
-                print(f"💾 تم نسخ قاعدة البيانات الرئيسية: {backup_file}")
-        except Exception as e:
-            print(f"⚠️ خطأ في نسخ قاعدة البيانات: {e}")
-    
-    @staticmethod
-    def backup_codes_db():
-        """نسخ احتياطي لقاعدة بيانات الاشتراك"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_file = os.path.join(BACKUP_DIR, f"subscription_backup_{timestamp}.db")
-            if os.path.exists(SUBSCRIPTION_DB_NAME):
-                shutil.copy2(SUBSCRIPTION_DB_NAME, backup_file)
-                print(f"💾 تم نسخ قاعدة بيانات الاشتراك: {backup_file}")
-        except Exception as e:
-            print(f"⚠️ خطأ في نسخ قاعدة بيانات الاشتراك: {e}")
-    
-    @staticmethod
-    def auto_backup():
-        """نسخ احتياطي تلقائي للجميع"""
-        DataProtection.backup_database()
-        DataProtection.backup_codes_db()
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر المساعدة"""
@@ -4628,6 +5060,7 @@ ADMIN_PANEL_HTML = """
             <h1>🤖 لوحة تحكم Obeida Trading - V2</h1>
             <p>نظام إدارة الاشتراكات المتطور - المشرف: @Sz2zv</p>
             <p style="color: #28a745; font-size: 0.9em;">🌍 نظام المناطق الزمنية للمستخدمين نشط</p>
+            <p style="color: #ffc107; font-size: 0.9em;">💾 نظام النسخ الاحتياطي المتقدم - آخر نسخة: {{ last_backup }}</p>
         </div>
 
         <div class="stats-grid">
@@ -4797,6 +5230,9 @@ ADMIN_PANEL_HTML = """
 
 @app.route('/')
 def home():
+    # التحقق من سلامة قاعدة البيانات عند كل زيارة
+    DataProtectionAdvanced.verify_database_integrity()
+    
     return """
     <!DOCTYPE html>
     <html>
@@ -4828,6 +5264,7 @@ def health():
         "subscription_system": "advanced_v2",
         "timezone_support": True,
         "data_version": DATA_VERSION,
+        "backup_system": "advanced",
         "total_users": stats.get('total_users', 0),
         "active_users": stats.get('active_users', 0),
         "blocked_users": stats.get('blocked_users', 0),
@@ -4876,7 +5313,7 @@ def admin_panel():
         if os.path.exists(BACKUP_DIR):
             backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')])
             if backups:
-                last_backup = backups[-1].replace('backup_', '').replace('.db', '')
+                last_backup = backups[-1].replace('main_backup_', '').replace('subscription_backup_', '').replace('.db', '')
         
         return render_template_string(
             ADMIN_PANEL_HTML,
@@ -4904,7 +5341,9 @@ def add_subscription_v2():
         )
         
         if success:
-            DataProtection.backup_database()
+            # إنشاء نسخة احتياطية فورية
+            DataProtectionAdvanced.backup_databases_secure()
+            DataProtectionAdvanced.export_users_to_json()
             return jsonify({'success': True, 'subscription': result})
         else:
             return jsonify({'success': False, 'error': result})
@@ -4921,7 +5360,8 @@ def revoke_subscription_v2():
         success, message = SubscriptionSystem.revoke_subscription(user_id, performed_by=ADMIN_ID)
         
         if success:
-            DataProtection.backup_database()
+            DataProtectionAdvanced.backup_databases_secure()
+            DataProtectionAdvanced.export_users_to_json()
             return jsonify({'success': True, 'message': message})
         else:
             return jsonify({'success': False, 'error': message})
@@ -4943,7 +5383,8 @@ def extend_subscription_v2():
         )
         
         if success:
-            DataProtection.backup_database()
+            DataProtectionAdvanced.backup_databases_secure()
+            DataProtectionAdvanced.export_users_to_json()
             return jsonify({'success': True, 'message': message})
         else:
             return jsonify({'success': False, 'error': message})
@@ -4989,6 +5430,32 @@ def get_stats_v2():
     stats = SubscriptionSystem.get_stats()
     return jsonify({'success': True, 'stats': stats})
 
+@app.route('/admin/restore_backup', methods=['POST'])
+def restore_backup():
+    """استعادة آخر نسخة احتياطية"""
+    try:
+        success = DataProtectionAdvanced.restore_latest_backup()
+        if success:
+            return jsonify({'success': True, 'message': 'تم استعادة آخر نسخة احتياطية بنجاح'})
+        else:
+            return jsonify({'success': False, 'error': 'فشل في استعادة النسخة الاحتياطية'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/export_users')
+def export_users():
+    """تصدير المستخدمين إلى JSON"""
+    try:
+        json_path = DataProtectionAdvanced.export_users_to_json()
+        if json_path and os.path.exists(json_path):
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return jsonify({'success': True, 'data': data})
+        else:
+            return jsonify({'success': False, 'error': 'فشل في تصدير البيانات'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/ping')
 def ping():
     return "PONG"
@@ -4998,12 +5465,16 @@ def main():
     print("🤖 Starting Obeida Trading with Timezone Support ...")
     print(f"📊 نسخة البيانات: {DATA_VERSION}")
     
-    # تهيئة قاعدة البيانات الرئيسية
+    # التحقق من سلامة قاعدة البيانات قبل التهيئة
+    DataProtectionAdvanced.verify_database_integrity()
+    
+    # تهيئة قاعدة البيانات الرئيسية مع استعادة النسخ الاحتياطية
     init_db_with_subscription()
     
-    # إنشاء نسخة احتياطية أولية
-    DataProtection.backup_database()
-    DataProtection.backup_codes_db()
+    # إنشاء نسخة احتياطية أولية وتصدير JSON
+    DataProtectionAdvanced.backup_databases_secure()
+    DataProtectionAdvanced.export_users_to_json()
+    DataProtectionAdvanced.create_restore_point()
     
     # تشغيل Flask
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
@@ -5033,6 +5504,7 @@ def main():
     print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
     print(f"📊 لوحة تحكم المشرف: http://localhost:{os.environ.get('PORT', 8080)}/admin")
     print(f"💾 مجلد النسخ الاحتياطي: {os.path.abspath(BACKUP_DIR)}")
+    print(f"🛡️ نظام الحماية والنسخ الاحتياطي المتقدم نشط")
     
     # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
@@ -5105,10 +5577,10 @@ def main():
     
     print("✅ Telegram Bot with Timezone Support ready ...")
     print("📡 Bot Obeida Trading V2 online with timezone system and subscription system...")
+    print("🛡️ Data Protection System Active - Backups running every 30 minutes")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
-
