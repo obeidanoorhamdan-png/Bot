@@ -2807,7 +2807,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         # إعدادات ثابتة
         GENERATION_CONFIG = {
-            "max_tokens": 1100,
+            "max_tokens": 950,
             "temperature": 0.0,
             "top_p": 1.0,
             "random_seed": 42
@@ -3336,7 +3336,7 @@ else:
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         # --- الخطوة 1: التحليل الأولي الأساسي ---
-        await wait_msg.edit_text("🔍 جاري التحليل المتقدم بالنظام الهجومي V7.2...")
+        await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌...")
         
         payload_1 = {
             "model": MISTRAL_MODEL,
@@ -3376,7 +3376,7 @@ else:
         
         # إعداد النص النهائي
         full_result = (
-            f"✅ **تم التحليل بنجاح - V7.2 ELITE SNIPER MODE** ✅\n"
+            f"✅ **تم التحليل بنجاح - V2 PRO MAX** ✅\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"{initial_analysis}\n\n"
             f"━━━━━━━━━━━━━━━━\n"
@@ -3385,7 +3385,7 @@ else:
             f"• 🕧 جلسة السوق: {session_name} ({session_time})\n"
             f"• 🕧 نمط السوق: {market_mode}\n"
             f"━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Powered by - Obeida Trading - Sniper Mode**"
+            f"🤖 **Powered by - Obeida Trading - Sniper**"
         )
         
         # تنظيف النهائي من التكرارات
@@ -4914,7 +4914,6 @@ def main():
     loop.create_task(backup_scheduler())
     
     print("✅ Telegram Bot with Timezone Support ready ...")
-    print("📡 Bot Obeida Trading V2 online with timezone system and subscription system...")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
