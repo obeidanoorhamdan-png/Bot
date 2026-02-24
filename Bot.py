@@ -273,7 +273,7 @@ CATEGORIES = {
 # إعدادات إضافية
 IMAGE_CACHE_DIR = "image_cache"
 MAX_IMAGE_SIZE = (1024, 1024)  # أقصى حجم للصورة بعد الضغط
-IMAGE_QUALITY = 85  # جودة الصورة بعد الضغط (من 0-100)
+IMAGE_QUALITY = 95  # جودة الصورة بعد الضغط (من 0-100)
 
 # حالات المحادثة (للنسخة الجديدة V2)
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION, ADMIN_MENU, ADD_SUBSCRIPTION, SELECT_DURATION, REMOVE_USER, BROADCAST_MESSAGE, SET_USER_DURATION, COUNTRY_SELECTION = range(14)
@@ -1128,7 +1128,7 @@ def init_db_with_subscription():
             'subscription_start': 'DATETIME DEFAULT NULL',
             'subscription_end': 'DATETIME DEFAULT NULL',
             'is_admin': 'INTEGER DEFAULT 0',
-            'country_timezone': "TEXT DEFAULT 'Asia/Gaza'"  # عمود المنطقة الزمنية الجديد
+            'country_timezone': "TEXT DEFAULT 'Asia/Gaza'"  
         }
         
         for col_name, col_type in required_columns.items():
@@ -1217,7 +1217,7 @@ def log_data_change(action, user_id, details=""):
         print(f"⚠️ خطأ في تسجيل التغيير: {e}")
 
 def cleanup_old_images():
-    """تنظيف الصور القديمة - حذف الملفات الأقدم من 5 دقائق"""
+    """تنظيف الصور القديمة - حذف الملفات الأقدم من 1 دقائق"""
     try:
         current_time = time.time()
         deleted_count = 0
@@ -1225,7 +1225,7 @@ def cleanup_old_images():
             filepath = os.path.join(IMAGE_CACHE_DIR, filename)
             if os.path.isfile(filepath):
                 file_age = current_time - os.path.getmtime(filepath)
-                if file_age > 300:  # 5 دقائق (300 ثانية)
+                if file_age > 60:  
                     try:
                         os.remove(filepath)
                         deleted_count += 1
@@ -1329,7 +1329,7 @@ def download_chart_image(symbol="BTCUSDT"):
         
         api_url = f"https://api.screenshotmachine.com/?key={API_KEY}&url={CHART_URL}&dimension=800x600&device=desktop&delay=2000&format=png"
         
-        print(f"📥 جاري سحب صورة لـ {symbol}...")
+        print(f"📥 جاري سحب صورة للعملة الذي تم اختيارها 📥")
         
         response = requests.get(api_url, timeout=30)
         
@@ -1414,20 +1414,20 @@ def cleanup_old_database_records():
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         
-        # حذف سجلات المحادثات القديمة فقط (أقدم من 30 يوم)
-        month_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+        # حذف سجلات المحادثات القديمة فقط (أقدم من 1 يوم)
+        month_ago = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute("DELETE FROM chat_history WHERE timestamp < ?", (month_ago,))
         deleted_rows = cursor.rowcount
         
-        # حذف سجلات التتبع القديمة (أقدم من 60 يوم)
-        two_months_ago = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d %H:%M:%S')
+        # حذف سجلات التتبع القديمة (أقدم من 1 يوم)
+        two_months_ago = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute("DELETE FROM data_log WHERE timestamp < ?", (two_months_ago,))
         
         conn.commit()
         conn.close()
         
         if deleted_rows > 0:
-            print(f"🧹 تم حذف {deleted_rows} سجل دردشة قديم (أقدم من 30 يوم)")
+            print(f"🧹 تم حذف {deleted_rows} سجل دردشة قديم (أقدم من 1 يوم)")
             
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف قاعدة البيانات: {e}")
@@ -1597,7 +1597,7 @@ def get_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE):
     return context.user_data.get('last_recommendation_symbol', 'BTC (OTC)')
 
 def get_mistral_analysis(symbol):
-    """الحصول على تحليل من Mistral AI API للعملة مع القوانين الجديدة"""
+
     headers = {
         "Authorization": f"Bearer {MISTRAL_KEY}",
         "Content-Type": "application/json"
@@ -2022,10 +2022,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"⚙️ الإعدادات الذي تستخدمها ⚙️:\n"
                 f"•🏃 سرعة الشموع: {candle}\n"
                 f"•🕧 استراتيجية : {time_display}\n\n"
-                f"📡 *نظام التحليل الشارات :* \n"
-                f"1. 🔧 مرحلة تفكيك هيكل الشارت \n"
-                f"2. 🔬 مرحلة تحليل صورة الشارت \n\n"
-                f"📤 قم برفع صورة  (الشارت) الآن: 📤",
+                f"📤 قم برفع صورة (الشارت) الآن: 📤\n",
                 reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
                 parse_mode="Markdown"
             )
@@ -2785,7 +2782,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             }
             return liquidity_layers
         
-        # متغيرات بروتوكول التشريح الهيكلي V7.3
+        # متغيرات بروتوكول التشريح الهيكلي
         breakout_force = 0.0  # سيتم تحديثها من التحليل
         avg_volume = 0.0  # سيتم تحديثها من التحليل
         has_fvg = False  # سيتم تحديثها من التحليل
@@ -3506,7 +3503,6 @@ else:
 • مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
 🎯 نسبة نجاح الصفقة المتوقعة: [XX]% - [التقييم]
 • نقطة الإلغاء: [السعر الذي يفسد التحليل]
-• القوانين المطبقة: [التشريح الهيكلي ✓ / التجاوز الطارئ ✓ / قاعدة الـ 2 نقطة ✓ / الابتلاع الديناميكي ✓ / منطق الاحتمالات المزدوجة ✓]
 
 الآن قم بتحليل الشارت المرفق **بتركيز كامل على استخراج البيانات من الصورة** بتطبيق جميع التعديلات والتحديثات (V7.3 ELITE SNIPER MODE) وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
 """
@@ -3514,7 +3510,7 @@ else:
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         # --- الخطوة 1: التحليل الأولي الأساسي ---
-        await wait_msg.edit_text("🔬 جاري تحليل الصورة ببروتوكول التشريح الهيكلي V7.3...")
+        await wait_msg.edit_text(" انتظار قليلآ جاري تحليل 🤌🤌🤌...")
         
         payload_1 = {
             "model": MISTRAL_MODEL,
@@ -3544,7 +3540,7 @@ else:
             # التحقق من شروط الأمان المعزز
             if "breakout_points" in locals() and breakout_points < 5:
                 # إضافة تحذير إضافي
-                enhanced_warning = "\n\n⚠️ **تنبيه V7.3 - تشريح هيكلي:**\nالسعر عند قمة/قاع تاريخي بدون استقرار ≥ 5 نقاط. يُمنع الدخول إلا مع FVG مؤسسي وحجم ≥ 1.5x."
+                enhanced_warning = "\n\n⚠️ **تنبيه Obeida Trading:**\nالسعر عند قمة/قاع تاريخي بدون استقرار ≥ 5 نقاط. يُمنع الدخول إلا مع FVG مؤسسي وحجم ≥ 1.5x."
                 initial_analysis += enhanced_warning
         
         # تنظيف النصوص من التكرار
@@ -3562,7 +3558,7 @@ else:
         
         # إعداد النص النهائي
         full_result = (
-            f"✅ **تم التحليل بنجاح - V7.3 ELITE SNIPER** ✅\n"
+            f"✅ **تم التحليل بنجاح -  🤯🤯 ** ✅\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"{initial_analysis}\n\n"
             f"━━━━━━━━━━━━━━━━\n"
@@ -3571,7 +3567,7 @@ else:
             f"• 🕧 جلسة السوق: {session_name} ({session_time})\n"
             f"• 🕧 نمط السوق: {market_mode}\n"
             f"━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Powered by - Obeida Trading - Structural Autopsy V7.3**"
+            f"🤖 **Powered by - Obeida Trading **"
         )
         
         # تنظيف النهائي من التكرارات
@@ -3718,7 +3714,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return MAIN_MENU
 
-    wait_msg = await update.message.reply_text(" 📸 تم استلام الصورة 📸")
+    wait_msg = await update.message.reply_text(" 📸 تم استلام الصورة بنجاح 📸")
     photo = await update.message.photo[-1].get_file()
     
     timestamp = int(time.time())
@@ -3941,7 +3937,8 @@ async def handle_add_subscription(update: Update, context: ContextTypes.DEFAULT_
             ["🕐 ساعة", "📅 يوم"],
             ["📆 أسبوع", "📅 شهر"],
             ["📅 سنة", "♾️ مدى الحياة"],
-            ["إلغاء", "🔙 العودة للقائمة الرئيسية"]
+            ["إلغاء", "🔙 العودة للقائمة الرئيسية"],
+            ["➕ إضافة اشتراك"]
         ]
         
         await update.message.reply_text(
@@ -4021,7 +4018,7 @@ async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_T
         try:
             await context.bot.send_message(
                 chat_id=target_user_id,
-                text=f"✅ **تم تفعيل اشتراكك في Obeida Trading!**\n\n"
+                text=f"✅ **تم تفعيل اشتراكك في البوت الخاص بنا!**\n\n"
                      f"📅 نوع الاشتراك: {sub_info['subscription_name']}\n"
                      f"{end_info}\n\n"
                      f"أرسل /start لبدء استخدام البوت",
@@ -4094,7 +4091,7 @@ async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 try:
                     await context.bot.send_message(
                         chat_id=target_user_id,
-                        text=f"⚠️ **تم إلغاء اشتراكك في Obeida Trading**\n\n"
+                        text=f"⚠️ **تم إلغاء اشتراكك في البوت الخاص بنا**\n\n"
                              f"للتواصل مع المشرف: @Sz2zv",
                         parse_mode="Markdown"
                     )
@@ -4190,7 +4187,7 @@ async def handle_set_duration(update: Update, context: ContextTypes.DEFAULT_TYPE
             try:
                 await context.bot.send_message(
                     chat_id=target_user_id,
-                    text=f"✅ **تم تمديد اشتراكك في Obeida Trading**\n\n{message}",
+                    text=f"✅ **تم تمديد اشتراكك في البوت الخاص بنا**\n\n{message}",
                     parse_mode="Markdown"
                 )
             except:
@@ -4243,13 +4240,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         print(f"❌ خطأ في معالج الأخطاء نفسه: {e}")
 
 async def periodic_cleanup():
-    """تنظيف دوري للملفات المؤقتة - كل 5 دقائق"""
+    """تنظيف دوري للملفات المؤقتة - كل 1 دقائق"""
     while True:
         try:
-            await asyncio.sleep(300)  # كل 5 دقائق (بدلاً من 30 دقيقة)
+            await asyncio.sleep(60)  # كل 1 دقائق (بدلاً من 5 دقيقة)
             cleanup_old_images()
             cleanup_old_database_records()
-            print("🧹 تم التنظيف الدوري للملفات المؤقتة (كل 5 دقائق)")
+            print("🧹 تم التنظيف الدوري للملفات المؤقتة (كل 1 دقائق)")
             
         except Exception as e:
             print(f"⚠️ خطأ في التنظيف الدوري: {e}")
@@ -4258,7 +4255,7 @@ async def backup_scheduler():
     """جدولة النسخ الاحتياطي التلقائي كل ساعة"""
     while True:
         try:
-            await asyncio.sleep(3600)  # كل ساعة
+            await asyncio.sleep(3600)  # كل 60 دقائق
             DataProtection.auto_backup()
             print("⏰ تم تنفيذ النسخ الاحتياطي التلقائي المجدول")
         except Exception as e:
@@ -4315,11 +4312,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     • سيتم ضبط جميع التحليلات على توقيت دولتك
     • دعم أكثر من 70 دولة حول العالم
     
-    🔑 **نظام الاشتراك المتطور V2:**
-    • إدارة الاشتراكات عبر لوحة المشرف
-    • إضافة اشتراك مباشر باستخدام User ID
-    • مدة الاشتراكات: ساعة، يوم، أسبوع، شهر، سنة،
-    • إمكانية حظر المستخدمين وإلغاء حظرهم
+    🔑 **أسعار الاشتراكات:**
+    • ساعة : 1$
+    • يوم : 5$
+    • سبوعي : 15$
+    • شهري : 40$
+    • نسخة خاص بيك : 300$
     
     🤯  انواع القرار الفني 🤯
      🟢 شراء :  مع الاتجاه 
@@ -4327,13 +4325,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
      💥 كسر هيكلي :  تغيير اتجاه
      🔄 سحب سيولة :  عكس الاتجاه
      🔄 انعكاس فوري : تصحيح مسار
-    
-    🔑 **أسعار الاشتراكات:**
-    • ساعة : 1$
-    • يوم : 5$
-    • سبوعي : 15$
-    • شهري : 40$
-    • نسخة خاص بيك : 300$
     
     ⏱️ **خيارات مدة الصفقة:**
     • **قصير (1m-15m)**: تنفيذ سريع، مخاطر منخفضة
@@ -4370,7 +4361,7 @@ ADMIN_PANEL_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>لوحة تحكم Obeida Trading - نظام الاشتراك المتطور</title>
+    <title> Obeida Trading - نظام الاشتراك المتطور</title>
     <style>
         * {
             margin: 0;
@@ -4629,7 +4620,7 @@ ADMIN_PANEL_HTML = """
     <div class="container">
         <div class="header">
             <h1>🤖 لوحة تحكم Obeida Trading - V2</h1>
-            <p>نظام إدارة الاشتراكات المتطور - المشرف: @Sz2zv</p>
+            <p>نظام إدارة الاشتراكات - المشرف: @Sz2zv</p>
             <p style="color: #28a745; font-size: 0.9em;">🌍 نظام المناطق الزمنية للمستخدمين نشط</p>
         </div>
 
@@ -4747,7 +4738,7 @@ ADMIN_PANEL_HTML = """
     </div>
 
     <div class="footer">
-        <p>Obeida Trading - نظام إدارة الاشتراكات المتطور V2</p>
+        <p>🤯 Obeida Trading 🤯 </p>
         <p style="font-size: 0.8em;">نسخة البيانات: {{ data_version }} - آخر نسخة احتياطية: {{ last_backup }}</p>
     </div>
 
@@ -4804,7 +4795,7 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Obeida Trading V2</title>
+        <title>🤯 Obeida Trading 🤯</title>
         <style>
             body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
             h1 { font-size: 3em; margin-bottom: 20px; }
@@ -4813,11 +4804,11 @@ def home():
         </style>
     </head>
     <body>
-        <h1> 📊 Obeida Trading V2 - Subscription System 📊</h1>
+        <h1> 📊 Obeida Trading - Subscription System 📊</h1>
         <p>Chat & Technical Analysis Bot with Advanced Subscription System</p>
-        <div class="status">🌍 نظام المناطق الزمنية للمستخدمين نشط - اختر دولتك</div>
+        <div class="status">🌍 نظام المناطق الزمنية للمستخدمين نشط ✅</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <a href="/admin" class="admin-link">🔐 لوحة تحكم المشرف</a>
+        <a href="/admin" class="admin-link">🔐 عرض بيانات المشرف</a>
     </body>
     </html>
     """
@@ -4999,7 +4990,6 @@ def ping():
 def main():
     """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية"""
     print("🤖 Starting Obeida Trading with Timezone Support ...")
-    print(f"📊 نسخة البيانات: {DATA_VERSION}")
     
     # تهيئة قاعدة البيانات الرئيسية
     init_db_with_subscription()
@@ -5032,8 +5022,6 @@ def main():
             print(f"📁 تم إنشاء مجلد الصور المؤقتة: {IMAGE_CACHE_DIR}")
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الملفات عند بدء التشغيل: {e}")
-    
-    print(f"🌐 Flask server started on port {os.environ.get('PORT', 8080)}")
     
     # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
