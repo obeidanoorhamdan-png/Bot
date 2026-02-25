@@ -1,4 +1,4 @@
-import logging
+عند بدء التشغيلimport logging
 import base64
 import os
 import sqlite3
@@ -3126,6 +3126,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 🔄 **الإجراء القادم:**
 انتظر إغلاق الشمعة الحالية؛ إذا عادت تحت القمة، ادخل بيع 🔴 (انعكاس فوري) بمجرد لمس مستوى الـ -2 نقطة.
 """
+        
         # البرومبت الرئيسي مع إضافة جميع التعديلات
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
