@@ -2877,7 +2877,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         # إعدادات ثابتة
         GENERATION_CONFIG = {
-            "max_tokens": 1000,
+            "max_tokens": 950,
             "temperature": 0.0,
             "top_p": 1.0,
             "random_seed": 42
