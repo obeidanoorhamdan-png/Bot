@@ -3107,7 +3107,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         # نموذج تنبيه فخ السيولة (سيتم إضافته ديناميكياً في التحليل)
         # ============================================
         
-                liquidity_trap_alert_template = """
+                liquidity_trap_alert_template = f"""
 🚨 **نموذج تنبيه: اكتشاف فخ سيولة (Liquidity Trap)**
 
 ⚠️ **تحذير عالي الخطورة - V7.4** ⚠️
