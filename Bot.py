@@ -44,7 +44,7 @@ DATA_VERSION = "2.0.0"  # نسخة البيانات للحماية من التغ
 ADMIN_ID = 6207431030
 
 # كلمة مرور لوحة التحكم (يمكن تغييرها)
-ADMIN_PANEL_PASSWORD = "Obeida2024@Secure"
+ADMIN_PANEL_PASSWORD = "Obeida2008"
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
