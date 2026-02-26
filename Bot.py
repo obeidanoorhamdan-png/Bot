@@ -4510,9 +4510,8 @@ ADMIN_PANEL_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>👑 Obeida Trading - لوحة تحكم المشرف المتطورة V2</title>
+    <title>👑 Obeida Trading - لوحة التحكم</title>
     <style>
-        /* جميع الأنماط كما هي دون تغيير */
         * {
             margin: 0;
             padding: 0;
@@ -4527,395 +4526,199 @@ ADMIN_PANEL_HTML = """
         }
         
         .container {
-            max-width: 1600px;
+            max-width: 1400px;
             margin: 0 auto;
         }
         
         .header {
-            background: rgba(255,255,255,0.95);
+            background: white;
             border-radius: 30px;
-            padding: 40px;
+            padding: 30px;
             margin-bottom: 30px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.2);
             text-align: center;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255,255,255,0.2);
-            animation: slideDown 0.5s ease;
-        }
-        
-        @keyframes slideDown {
-            from { transform: translateY(-30px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
         }
         
         .header h1 {
             color: #333;
-            font-size: 3em;
+            font-size: 2.5em;
             margin-bottom: 10px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        
-        .header p {
-            color: #666;
-            font-size: 1.2em;
-            margin-bottom: 15px;
-        }
-        
-        .badge {
-            display: inline-block;
-            padding: 8px 20px;
-            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-            color: white;
-            border-radius: 50px;
-            font-weight: 600;
-            font-size: 1.1em;
-            box-shadow: 0 5px 15px rgba(40,167,69,0.3);
         }
         
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 25px;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
             margin-bottom: 30px;
         }
         
         .stat-card {
             background: white;
-            border-radius: 25px;
-            padding: 30px;
-            box-shadow: 0 15px 40px rgba(0,0,0,0.1);
-            transition: all 0.3s ease;
-            position: relative;
-            overflow: hidden;
-            animation: fadeIn 0.5s ease;
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            text-align: center;
             cursor: pointer;
-        }
-        
-        .stat-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 5px;
-            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: transform 0.3s;
         }
         
         .stat-card:hover {
-            transform: translateY(-10px);
-            box-shadow: 0 25px 50px rgba(0,0,0,0.15);
+            transform: translateY(-5px);
         }
         
         .stat-card h3 {
             color: #666;
-            font-size: 1.1em;
-            margin-bottom: 15px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-        
-        .stat-card .number {
-            color: #333;
-            font-size: 3.5em;
-            font-weight: bold;
+            font-size: 1em;
             margin-bottom: 10px;
         }
         
-        .stat-card .trend {
-            color: #28a745;
-            font-size: 0.9em;
+        .stat-card .number {
+            color: #667eea;
+            font-size: 2.5em;
+            font-weight: bold;
+        }
+        
+        .quick-actions {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .action-btn {
+            background: white;
+            padding: 15px 30px;
+            border-radius: 50px;
+            cursor: pointer;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            border: none;
+            font-size: 1em;
+        }
+        
+        .action-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 25px rgba(102,126,234,0.3);
         }
         
         .tabs {
             display: flex;
-            gap: 15px;
-            margin-bottom: 25px;
+            gap: 10px;
+            margin-bottom: 20px;
             flex-wrap: wrap;
         }
         
         .tab {
             background: white;
-            padding: 15px 35px;
+            padding: 12px 25px;
             border-radius: 50px;
             cursor: pointer;
             font-weight: 600;
-            transition: all 0.3s ease;
-            border: 2px solid transparent;
-            font-size: 1.1em;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
-        }
-        
-        .tab:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 25px rgba(102,126,234,0.2);
+            border: none;
+            font-size: 1em;
         }
         
         .tab.active {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #667eea;
             color: white;
-            border-color: white;
         }
         
         .tab-content {
             display: none;
-            animation: fadeIn 0.5s ease;
         }
         
         .tab-content.active {
             display: block;
         }
         
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
         .section {
             background: white;
-            border-radius: 30px;
-            padding: 35px;
+            border-radius: 20px;
+            padding: 25px;
             margin-bottom: 30px;
-            box-shadow: 0 15px 40px rgba(0,0,0,0.1);
         }
         
         .section-title {
+            font-size: 1.8em;
+            margin-bottom: 20px;
             color: #333;
-            font-size: 2em;
-            margin-bottom: 25px;
-            padding-bottom: 15px;
-            border-bottom: 3px solid #f0f0f0;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .section-title span {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 5px 15px;
-            border-radius: 50px;
-            font-size: 0.5em;
-            margin-right: 15px;
-        }
-        
-        .search-box {
-            margin-bottom: 25px;
-            position: relative;
-        }
-        
-        .search-box input {
-            width: 100%;
-            padding: 15px 20px 15px 50px;
-            border: 2px solid #f0f0f0;
-            border-radius: 50px;
-            font-size: 1.1em;
-            transition: all 0.3s;
-            background: #f8f9ff;
-        }
-        
-        .search-box input:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 5px rgba(102,126,234,0.1);
-        }
-        
-        .search-box::before {
-            content: '🔍';
-            position: absolute;
-            left: 20px;
-            top: 50%;
-            transform: translateY(-50%);
-            font-size: 1.2em;
-            color: #999;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
         }
         
         .table-container {
             overflow-x: auto;
-            border-radius: 15px;
-            border: 1px solid #f0f0f0;
-            max-height: 600px;
-            overflow-y: auto;
         }
         
         table {
             width: 100%;
             border-collapse: collapse;
-            min-width: 1200px;
         }
         
         th {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #667eea;
             color: white;
-            padding: 18px 15px;
-            font-weight: 600;
-            text-align: center;
-            font-size: 1em;
-            position: sticky;
-            top: 0;
-            z-index: 10;
+            padding: 12px;
         }
         
         td {
-            padding: 15px;
+            padding: 12px;
             border-bottom: 1px solid #f0f0f0;
             text-align: center;
-            vertical-align: middle;
         }
         
-        tr:hover {
-            background: #f8f9ff;
+        .user-id {
+            background: #f0f0f0;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-family: monospace;
         }
         
         .status-badge {
-            padding: 8px 15px;
+            padding: 5px 12px;
             border-radius: 50px;
             font-size: 0.9em;
-            font-weight: 600;
             display: inline-block;
-            min-width: 90px;
         }
         
         .status-active {
             background: #d4edda;
             color: #155724;
-            border: 1px solid #c3e6cb;
         }
         
         .status-expired {
             background: #f8d7da;
             color: #721c24;
-            border: 1px solid #f5c6cb;
         }
         
         .status-blocked {
             background: #f8d7da;
             color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        
-        .status-trial {
-            background: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeeba;
-        }
-        
-        .user-id {
-            background: #f8f9ff;
-            padding: 5px 10px;
-            border-radius: 8px;
-            font-family: 'Courier New', monospace;
-            font-size: 0.9em;
-            border: 1px dashed #667eea;
-            display: inline-block;
         }
         
         .actions {
             display: flex;
-            gap: 8px;
+            gap: 5px;
             justify-content: center;
-            flex-wrap: wrap;
         }
         
         .btn {
-            padding: 8px 15px;
+            padding: 8px 12px;
             border: none;
-            border-radius: 12px;
+            border-radius: 8px;
             cursor: pointer;
             font-weight: 600;
-            transition: all 0.3s;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            font-size: 0.9em;
-            min-width: 80px;
-            justify-content: center;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .btn::after {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 5px;
-            height: 5px;
-            background: rgba(255,255,255,0.5);
-            opacity: 0;
-            border-radius: 100%;
-            transform: scale(1, 1) translate(-50%);
-            transform-origin: 50% 50%;
-        }
-        
-        .btn:active::after {
-            animation: ripple 0.3s ease-out;
-        }
-        
-        @keyframes ripple {
-            0% {
-                transform: scale(0, 0);
-                opacity: 0.5;
-            }
-            100% {
-                transform: scale(20, 20);
-                opacity: 0;
-            }
-        }
-        
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }
         
-        .btn-success {
-            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-            color: white;
-        }
-        
-        .btn-warning {
-            background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
-            color: #333;
-        }
-        
-        .btn-danger {
-            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
-            color: white;
-        }
-        
-        .btn-info {
-            background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
-            color: white;
-        }
-        
-        .quick-actions {
-            display: flex;
-            gap: 15px;
-            margin-bottom: 25px;
-            flex-wrap: wrap;
-        }
-        
-        .quick-action-btn {
-            background: white;
-            padding: 15px 25px;
-            border-radius: 50px;
-            cursor: pointer;
-            font-weight: 600;
-            transition: all 0.3s;
-            border: 2px solid transparent;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .quick-action-btn:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 25px rgba(102,126,234,0.2);
-            border-color: #667eea;
-        }
+        .btn-primary { background: #667eea; }
+        .btn-success { background: #28a745; }
+        .btn-warning { background: #ffc107; color: #333; }
+        .btn-danger { background: #dc3545; }
+        .btn-info { background: #17a2b8; }
         
         .modal {
             display: none;
@@ -4924,261 +4727,78 @@ ADMIN_PANEL_HTML = """
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0,0,0,0.6);
+            background: rgba(0,0,0,0.5);
             justify-content: center;
             align-items: center;
             z-index: 1000;
-            backdrop-filter: blur(5px);
         }
         
         .modal-content {
             background: white;
-            padding: 40px;
-            border-radius: 30px;
+            padding: 30px;
+            border-radius: 20px;
             width: 90%;
-            max-width: 600px;
-            max-height: 80vh;
-            overflow-y: auto;
-            animation: slideUp 0.3s ease;
-            box-shadow: 0 30px 60px rgba(0,0,0,0.3);
-        }
-        
-        @keyframes slideUp {
-            from { transform: translateY(50px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
+            max-width: 500px;
         }
         
         .form-group {
-            margin-bottom: 25px;
+            margin-bottom: 20px;
         }
         
         .form-group label {
             display: block;
-            margin-bottom: 8px;
-            color: #555;
-            font-weight: 600;
-            font-size: 1em;
+            margin-bottom: 5px;
+            color: #666;
         }
         
         .form-group input, .form-group select, .form-group textarea {
             width: 100%;
-            padding: 15px;
+            padding: 10px;
             border: 2px solid #f0f0f0;
-            border-radius: 15px;
+            border-radius: 10px;
             font-size: 1em;
-            transition: all 0.3s;
-            background: #f8f9ff;
-        }
-        
-        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 5px rgba(102,126,234,0.1);
-        }
-        
-        .form-group input.error {
-            border-color: #dc3545;
-        }
-        
-        .form-group .error-message {
-            color: #dc3545;
-            font-size: 0.9em;
-            margin-top: 5px;
-            display: none;
-        }
-        
-        .form-group textarea {
-            min-height: 120px;
-            resize: vertical;
         }
         
         .modal-actions {
             display: flex;
-            gap: 15px;
+            gap: 10px;
             justify-content: flex-end;
-            margin-top: 30px;
+            margin-top: 20px;
         }
         
-        .filter-bar {
-            display: flex;
-            gap: 15px;
-            margin-bottom: 25px;
-            flex-wrap: wrap;
+        .search-box {
+            margin-bottom: 20px;
         }
         
-        .filter-btn {
-            padding: 10px 20px;
+        .search-box input {
+            width: 100%;
+            padding: 12px;
             border: 2px solid #f0f0f0;
-            border-radius: 50px;
-            background: white;
-            cursor: pointer;
-            font-weight: 600;
-            transition: all 0.3s;
-        }
-        
-        .filter-btn.active {
-            background: #667eea;
-            color: white;
-            border-color: #667eea;
-        }
-        
-        .filter-btn:hover {
-            border-color: #667eea;
+            border-radius: 10px;
+            font-size: 1em;
         }
         
         .notification {
             position: fixed;
-            top: 30px;
-            right: 30px;
+            top: 20px;
+            right: 20px;
             background: white;
-            padding: 20px 30px;
-            border-radius: 15px;
-            box-shadow: 0 15px 40px rgba(0,0,0,0.2);
+            padding: 15px 25px;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
             display: none;
-            align-items: center;
-            gap: 15px;
-            z-index: 2000;
-            animation: slideInRight 0.3s ease;
             border-right: 5px solid #28a745;
-            min-width: 300px;
+            z-index: 2000;
         }
         
         .notification.error {
             border-right-color: #dc3545;
         }
         
-        .notification.warning {
-            border-right-color: #ffc107;
-        }
-        
-        @keyframes slideInRight {
-            from { transform: translateX(100px); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-        
         .footer {
             text-align: center;
             color: white;
-            margin-top: 50px;
-            padding: 30px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 30px;
-            backdrop-filter: blur(10px);
-        }
-        
-        .loading-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 3000;
-            backdrop-filter: blur(3px);
-        }
-        
-        .loading-spinner {
-            width: 50px;
-            height: 50px;
-            border: 5px solid #f3f3f3;
-            border-top: 5px solid #667eea;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
-        .upload-area {
-            border: 3px dashed #667eea;
-            border-radius: 20px;
-            padding: 40px;
-            text-align: center;
-            background: #f8f9ff;
-            cursor: pointer;
-            transition: all 0.3s;
-            margin-bottom: 20px;
-        }
-        
-        .upload-area:hover {
-            background: #e8eaff;
-            border-color: #764ba2;
-        }
-        
-        .upload-area.dragover {
-            background: #e8eaff;
-            border-color: #28a745;
-            transform: scale(1.02);
-        }
-        
-        .pagination {
-            display: flex;
-            gap: 10px;
-            justify-content: center;
-            margin-top: 20px;
-            flex-wrap: wrap;
-        }
-        
-        .page-btn {
-            padding: 8px 15px;
-            border: 2px solid #f0f0f0;
-            border-radius: 10px;
-            background: white;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        
-        .page-btn:hover {
-            border-color: #667eea;
-        }
-        
-        .page-btn.active {
-            background: #667eea;
-            color: white;
-            border-color: #667eea;
-        }
-        
-        .page-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        
-        @media (max-width: 768px) {
-            .header h1 {
-                font-size: 2em;
-            }
-            
-            .stat-card .number {
-                font-size: 2.5em;
-            }
-            
-            .quick-actions {
-                flex-direction: column;
-            }
-            
-            .quick-action-btn {
-                width: 100%;
-                justify-content: center;
-            }
-            
-            .modal-content {
-                padding: 25px;
-            }
-            
-            .btn {
-                min-width: 60px;
-                padding: 6px 10px;
-            }
-            
-            .notification {
-                left: 20px;
-                right: 20px;
-                min-width: auto;
-            }
+            margin-top: 30px;
         }
     </style>
 </head>
@@ -5186,90 +4806,54 @@ ADMIN_PANEL_HTML = """
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <h1>👑 Obeida Trading - V2</h1>
-            <p>نظام إدارة الاشتراكات المتطور - المشرف: @Sz2zv</p>
-            <div class="badge" id="systemStatus">
-                🌍 النظام متصل | نسخة البيانات: {{ data_version|default('2.0.0') }}
-            </div>
+            <h1>👑 Obeida Trading - لوحة التحكم</h1>
+            <p>المشرف: @Sz2zv</p>
         </div>
 
-        <!-- Stats Cards -->
+        <!-- Stats -->
         <div class="stats-grid">
             <div class="stat-card" onclick="filterUsers('all')">
                 <h3>إجمالي المستخدمين</h3>
-                <div class="number" id="totalUsers">{{ stats.total_users|default(0) }}</div>
-                <div class="trend">📈 جميع المستخدمين المسجلين</div>
+                <div class="number">{{ stats.total_users|default(0) }}</div>
             </div>
             <div class="stat-card" onclick="filterUsers('active')">
                 <h3>المشتركين النشطين</h3>
-                <div class="number" id="activeUsers">{{ stats.active_users|default(0) }}</div>
-                <div class="trend">✅ اشتراكات سارية المفعول</div>
+                <div class="number">{{ stats.active_users|default(0) }}</div>
             </div>
             <div class="stat-card" onclick="filterUsers('blocked')">
                 <h3>المحظورين</h3>
-                <div class="number" id="blockedUsers">{{ stats.blocked_users|default(0) }}</div>
-                <div class="trend">🚫 مستخدمين محظورين</div>
-            </div>
-            <div class="stat-card" onclick="filterUsers('expired')">
-                <h3>منتهي الاشتراك</h3>
-                <div class="number" id="expiredUsers">0</div>
-                <div class="trend">📊 اشتراكات منتهية</div>
+                <div class="number">{{ stats.blocked_users|default(0) }}</div>
             </div>
         </div>
 
         <!-- Quick Actions -->
         <div class="quick-actions">
-            <div class="quick-action-btn" onclick="openModal('addSubscriptionModal')">
-                <span>➕</span> إضافة اشتراك جديد
-            </div>
-            <div class="quick-action-btn" onclick="openBroadcastModal()">
-                <span>📢</span> إذاعة للمشتركين
-            </div>
-            <div class="quick-action-btn" onclick="refreshData()">
-                <span>🔄</span> تحديث البيانات
-            </div>
-            <div class="quick-action-btn" onclick="exportData()">
-                <span>📥</span> تصدير البيانات
-            </div>
-            <div class="quick-action-btn" onclick="importData()">
-                <span>📤</span> استيراد بيانات
-            </div>
+            <button class="action-btn" onclick="openModal('addModal')">
+                <span>➕</span> إضافة اشتراك
+            </button>
+            <button class="action-btn" onclick="openModal('broadcastModal')">
+                <span>📢</span> إذاعة
+            </button>
+            <button class="action-btn" onclick="refreshData()">
+                <span>🔄</span> تحديث
+            </button>
         </div>
 
         <!-- Tabs -->
         <div class="tabs">
-            <div class="tab active" onclick="showTab('users')">👥 المستخدمين</div>
-            <div class="tab" onclick="showTab('subscriptions')">📊 الاشتراكات</div>
-            <div class="tab" onclick="showTab('stats')">📈 إحصائيات الاستخدام</div>
-            <div class="tab" onclick="showTab('broadcast')">📢 الإذاعة</div>
-            <div class="tab" onclick="showTab('backups')">💾 النسخ الاحتياطي</div>
+            <button class="tab active" onclick="showTab('users')">👥 المستخدمين</button>
+            <button class="tab" onclick="showTab('subscriptions')">📊 الاشتراكات</button>
+            <button class="tab" onclick="showTab('backups')">💾 النسخ</button>
         </div>
 
         <!-- Users Tab -->
-        <div id="users-tab" class="tab-content active">
+        <div id="usersTab" class="tab-content active">
             <div class="section">
-                <div class="section-title">
-                    👥 قائمة المستخدمين
-                    <span id="userCount">{{ users|length|default(0) }}</span>
-                </div>
-
-                <!-- Filters -->
-                <div class="filter-bar">
-                    <div class="filter-btn active" data-filter="all" onclick="filterUsers('all')">الكل</div>
-                    <div class="filter-btn" data-filter="active" onclick="filterUsers('active')">نشط</div>
-                    <div class="filter-btn" data-filter="expired" onclick="filterUsers('expired')">منتهي</div>
-                    <div class="filter-btn" data-filter="blocked" onclick="filterUsers('blocked')">محظور</div>
-                    <div class="filter-btn" data-filter="trial" onclick="filterUsers('trial')">تجريبي</div>
-                </div>
-
-                <!-- Search and Export -->
-                <div style="display: flex; gap: 15px; margin-bottom: 25px;">
-                    <div class="search-box" style="flex: 1;">
-                        <input type="text" id="searchInput" placeholder="🔍 بحث عن مستخدم بالمعرف أو الاسم..." onkeyup="searchUsers()">
-                    </div>
-                    <button class="btn btn-info" onclick="exportUsersCSV()" style="min-width: 120px;">
-                        <span>📥</span> تصدير CSV
-                    </button>
+                <div class="section-title">👥 قائمة المستخدمين</div>
+                
+                <!-- Search -->
+                <div class="search-box">
+                    <input type="text" id="searchInput" placeholder="🔍 بحث..." onkeyup="searchUsers()">
                 </div>
 
                 <!-- Users Table -->
@@ -5279,767 +4863,294 @@ ADMIN_PANEL_HTML = """
                             <tr>
                                 <th>المعرف</th>
                                 <th>الاسم</th>
-                                <th>نوع الاشتراك</th>
-                                <th>تاريخ البداية</th>
+                                <th>الاشتراك</th>
                                 <th>تاريخ الانتهاء</th>
-                                <th>المدة المتبقية</th>
-                                <th>آخر نشاط</th>
                                 <th>الحالة</th>
-                                <th>المنطقة الزمنية</th>
                                 <th>الإجراءات</th>
                             </tr>
                         </thead>
-                        <tbody id="usersTableBody">
+                        <tbody>
                             {% if users %}
                                 {% for user in users %}
-                                <tr data-user-id="{{ user.id }}">
+                                <tr>
                                     <td><span class="user-id">{{ user.id }}</span></td>
                                     <td>{{ user.name }}</td>
-                                    <td><span class="status-badge {% if user.subscription_type == 'مدى الحياة' %}status-active{% elif user.subscription_type == 'تجريبي' %}status-trial{% endif %}">{{ user.subscription_type }}</span></td>
-                                    <td>{{ user.start_date if user.start_date else '-' }}</td>
-                                    <td>{{ user.end_date if user.end_date else 'غير محدد' }}</td>
-                                    <td id="days-{{ user.id }}">-</td>
-                                    <td>{{ user.last_active if user.last_active else '-' }}</td>
-                                    <td><span class="status-badge {% if user.is_blocked %}status-blocked{% elif user.is_active %}status-active{% else %}status-expired{% endif %}">
-                                        {% if user.is_blocked %}محظور{% elif user.is_active %}نشط{% else %}منتهي{% endif %}
-                                    </span></td>
-                                    <td>{{ user.timezone if user.timezone else 'Asia/Gaza' }}</td>
+                                    <td>{{ user.subscription_type }}</td>
+                                    <td>{{ user.end_date|default('غير محدد') }}</td>
+                                    <td>
+                                        <span class="status-badge 
+                                            {% if user.is_blocked %}status-blocked
+                                            {% elif user.is_active %}status-active
+                                            {% else %}status-expired{% endif %}">
+                                            {% if user.is_blocked %}محظور
+                                            {% elif user.is_active %}نشط
+                                            {% else %}منتهي{% endif %}
+                                        </span>
+                                    </td>
                                     <td>
                                         <div class="actions">
-                                            <button class="btn btn-primary" onclick="editUser('{{ user.id }}')" title="تعديل">
-                                                <span>✏️</span>
-                                            </button>
-                                            <button class="btn btn-success" onclick="extendSubscription('{{ user.id }}')" title="تمديد">
-                                                <span>⏱️</span>
-                                            </button>
-                                            <button class="btn btn-warning" onclick="changeSubscription('{{ user.id }}')" title="تغيير الاشتراك">
-                                                <span>🔄</span>
-                                            </button>
+                                            <button class="btn btn-success" onclick="extendUser('{{ user.id }}')">⏱️</button>
+                                            <button class="btn btn-warning" onclick="changeUserSub('{{ user.id }}')">🔄</button>
                                             {% if not user.is_blocked %}
-                                                <button class="btn btn-danger" onclick="blockUser('{{ user.id }}')" title="حظر">
-                                                    <span>🚫</span>
-                                                </button>
+                                                <button class="btn btn-danger" onclick="blockUser('{{ user.id }}')">🚫</button>
                                             {% else %}
-                                                <button class="btn btn-success" onclick="unblockUser('{{ user.id }}')" title="إلغاء الحظر">
-                                                    <span>✅</span>
-                                                </button>
+                                                <button class="btn btn-success" onclick="unblockUser('{{ user.id }}')">✅</button>
                                             {% endif %}
-                                            <button class="btn btn-info" onclick="sendMessage('{{ user.id }}')" title="إرسال رسالة">
-                                                <span>💬</span>
-                                            </button>
+                                            <button class="btn btn-info" onclick="messageUser('{{ user.id }}')">💬</button>
                                         </div>
                                     </td>
                                 </tr>
                                 {% endfor %}
                             {% else %}
                                 <tr>
-                                    <td colspan="10" style="text-align: center; padding: 50px;">لا يوجد مستخدمين</td>
+                                    <td colspan="6" style="text-align: center;">لا يوجد مستخدمين</td>
                                 </tr>
                             {% endif %}
                         </tbody>
                     </table>
                 </div>
-
-                <!-- Pagination -->
-                <div class="pagination" id="usersPagination"></div>
             </div>
         </div>
 
         <!-- Subscriptions Tab -->
-        <div id="subscriptions-tab" class="tab-content">
+        <div id="subscriptionsTab" class="tab-content">
             <div class="section">
-                <div class="section-title">
-                    📊 توزيع الاشتراكات
-                    <span>حسب النوع</span>
-                </div>
-
+                <div class="section-title">📊 توزيع الاشتراكات</div>
                 <div class="table-container">
                     <table>
                         <thead>
                             <tr>
-                                <th>نوع الاشتراك</th>
+                                <th>النوع</th>
                                 <th>العدد</th>
-                                <th>النسبة المئوية</th>
-                                <th>الإيرادات المتوقعة ($)</th>
-                                <th>الحالة</th>
-                                <th>الإجراءات</th>
-                            </tr>
-                        </thead>
-                        <tbody id="subscriptionsTableBody">
-                            {% if stats and stats.subscriptions_by_type %}
-                                {% for type, count in stats.subscriptions_by_type.items() %}
-                                <tr>
-                                    <td>
-                                        <strong>
-                                            {% if type == 'trial' %}تجريبي
-                                            {% elif type == 'hourly' %}ساعة
-                                            {% elif type == 'daily' %}يوم
-                                            {% elif type == 'weekly' %}أسبوع
-                                            {% elif type == 'monthly' %}شهر
-                                            {% elif type == 'yearly' %}سنة
-                                            {% elif type == 'lifetime' %}مدى الحياة
-                                            {% else %}{{ type }}
-                                            {% endif %}
-                                        </strong>
-                                    </td>
-                                    <td>{{ count }}</td>
-                                    <td>
-                                        {% if stats.active_users and stats.active_users > 0 %}
-                                            {{ (count / stats.active_users * 100)|round|int }}%
-                                        {% else %}
-                                            0%
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if type == 'hourly' %}${{ count * 1 }}
-                                        {% elif type == 'daily' %}${{ count * 5 }}
-                                        {% elif type == 'weekly' %}${{ count * 15 }}
-                                        {% elif type == 'monthly' %}${{ count * 40 }}
-                                        {% elif type == 'yearly' %}${{ count * 400 }}
-                                        {% else %}$0
-                                        {% endif %}
-                                    </td>
-                                    <td><span class="status-badge status-active">نشط</span></td>
-                                    <td>
-                                        <button class="btn btn-info" onclick="filterBySubscription('{{ type }}')">
-                                            <span>👥</span> عرض
-                                        </button>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            {% else %}
-                                <tr>
-                                    <td colspan="6" style="text-align: center;">لا توجد بيانات</td>
-                                </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- Stats Tab -->
-        <div id="stats-tab" class="tab-content">
-            <div class="section">
-                <div class="section-title">
-                    📈 إحصائيات استخدام الميزات
-                    <span>الأكثر استخداماً</span>
-                </div>
-
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>الميزة</th>
-                                <th>عدد مرات الاستخدام</th>
-                                <th>آخر استخدام</th>
                                 <th>النسبة</th>
                             </tr>
                         </thead>
-                        <tbody id="statsTableBody">
-                            {% if stats and stats.feature_usage %}
-                                {% set total = stats.feature_usage.values()|sum %}
-                                {% for feature, count in stats.feature_usage.items() %}
+                        <tbody>
+                            {% if stats and stats.subscriptions_by_type %}
+                                {% for type, count in stats.subscriptions_by_type.items() %}
                                 <tr>
-                                    <td>
-                                        {% if feature == 'bot_access' %}⭐ دخول البوت
-                                        {% elif feature == 'chat_mode' %}💬 وضع الدردشة
-                                        {% elif feature == 'chat_message' %}📝 رسائل دردشة
-                                        {% elif feature == 'recommendation' %}📈 توصيات
-                                        {% elif feature == 'recommendation_photo' %}📸 صور التوصيات
-                                        {% elif feature == 'photo_analysis' %}🖼️ تحليل صور
-                                        {% else %}{{ feature }}
-                                        {% endif %}
-                                    </td>
+                                    <td>{{ type }}</td>
                                     <td>{{ count }}</td>
-                                    <td>-</td>
-                                    <td>
-                                        {% if total and total > 0 %}
-                                            <div style="width: 100%; background: #f0f0f0; border-radius: 10px; height: 20px;">
-                                                <div style="width: {{ (count / total * 100)|round|int }}%; background: linear-gradient(90deg, #667eea, #764ba2); height: 20px; border-radius: 10px;"></div>
-                                            </div>
-                                            <small>{{ (count / total * 100)|round|int }}%</small>
-                                        {% else %}
-                                            <small>0%</small>
-                                        {% endif %}
-                                    </td>
+                                    <td>{{ (count / stats.active_users * 100)|round|int if stats.active_users > 0 else 0 }}%</td>
                                 </tr>
                                 {% endfor %}
                             {% else %}
                                 <tr>
-                                    <td colspan="4" style="text-align: center;">لا توجد إحصائيات</td>
+                                    <td colspan="3">لا توجد بيانات</td>
                                 </tr>
                             {% endif %}
                         </tbody>
                     </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- Broadcast Tab -->
-        <div id="broadcast-tab" class="tab-content">
-            <div class="section">
-                <div class="section-title">
-                    📢 نظام الإذاعة للمشتركين
-                    <span id="activeSubscribers">{{ stats.active_users|default(0) }}</span>
-                </div>
-
-                <form id="broadcastForm" onsubmit="event.preventDefault(); sendBroadcast();">
-                    <div class="form-group">
-                        <label>نوع الاستقبال *</label>
-                        <select id="broadcastType" onchange="toggleBroadcastType()" required>
-                            <option value="all">جميع المشتركين النشطين ({{ stats.active_users|default(0) }})</option>
-                            <option value="specific">مستخدم محدد</option>
-                            <option value="subscription">حسب نوع الاشتراك</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group" id="specificUserGroup" style="display: none;">
-                        <label>معرف المستخدم *</label>
-                        <input type="text" id="specificUserId" placeholder="مثال: 123456789">
-                        <div class="error-message" id="userIdError"></div>
-                    </div>
-
-                    <div class="form-group" id="subscriptionTypeGroup" style="display: none;">
-                        <label>نوع الاشتراك *</label>
-                        <select id="subscriptionType">
-                            <option value="hourly">ساعة</option>
-                            <option value="daily">يوم</option>
-                            <option value="weekly">أسبوع</option>
-                            <option value="monthly">شهر</option>
-                            <option value="yearly">سنة</option>
-                            <option value="lifetime">مدى الحياة</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label>عنوان الرسالة</label>
-                        <input type="text" id="broadcastTitle" placeholder="مثال: تحديث هام من الإدارة" value="📢 رسالة إدارية">
-                    </div>
-
-                    <div class="form-group">
-                        <label>نص الرسالة *</label>
-                        <textarea id="broadcastMessage" placeholder="اكتب الرسالة هنا..." required></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="includeButton" checked> 
-                            إضافة زر للعودة للقائمة الرئيسية
-                        </label>
-                    </div>
-
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="includeKeyboard" checked> 
-                            إضافة لوحة مفاتيح تفاعلية
-                        </label>
-                    </div>
-
-                    <div class="modal-actions">
-                        <button type="submit" class="btn btn-primary" id="sendBroadcastBtn">
-                            <span>📢</span> إرسال الإذاعة
-                        </button>
-                        <button type="button" class="btn btn-warning" onclick="previewBroadcast()">
-                            <span>👁️</span> معاينة
-                        </button>
-                        <button type="button" class="btn btn-info" onclick="scheduleBroadcast()">
-                            <span>⏰</span> جدولة
-                        </button>
-                    </div>
-                </form>
-
-                <!-- Broadcast History -->
-                <div style="margin-top: 30px;">
-                    <h3 style="margin-bottom: 15px;">📋 سجل الإذاعات</h3>
-                    <div class="table-container">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>التاريخ</th>
-                                    <th>الرسالة</th>
-                                    <th>المستلمين</th>
-                                    <th>تم الإرسال</th>
-                                    <th>فشل</th>
-                                    <th>الحالة</th>
-                                </tr>
-                            </thead>
-                            <tbody id="broadcastHistoryBody">
-                                <tr>
-                                    <td colspan="6" style="text-align: center;">لا يوجد سجل</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Backups Tab -->
-        <div id="backups-tab" class="tab-content">
+        <div id="backupsTab" class="tab-content">
             <div class="section">
-                <div class="section-title">
-                    💾 النسخ الاحتياطي
-                    <span>آخر نسخة: {{ last_backup|default('لا توجد') }}</span>
+                <div class="section-title">💾 النسخ الاحتياطي</div>
+                <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                    <button class="btn btn-primary" onclick="createBackup()">إنشاء نسخة</button>
+                    <button class="btn btn-info" onclick="uploadBackup()">رفع نسخة</button>
                 </div>
-
-                <div class="quick-actions">
-                    <div class="quick-action-btn" onclick="createBackup()">
-                        <span>💾</span> إنشاء نسخة احتياطية الآن
-                    </div>
-                    <div class="quick-action-btn" onclick="uploadBackup()">
-                        <span>📤</span> رفع نسخة من جهازي
-                    </div>
-                    <div class="quick-action-btn" onclick="downloadLatestBackup()">
-                        <span>📥</span> تحميل آخر نسخة
-                    </div>
-                    <div class="quick-action-btn" onclick="syncWithDevice()">
-                        <span>🔄</span> مزامنة مع جهاز آخر
-                    </div>
-                </div>
-
-                <!-- Upload Area -->
-                <div class="upload-area" id="uploadArea" onclick="document.getElementById('backupFile').click()" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
-                    <i>📁</i>
-                    <p>اسحب وأفلت ملف النسخة الاحتياطية هنا أو انقر للاختيار</p>
-                    <p style="font-size: 0.9em; color: #999;">يدعم ملفات .db و .backup و .sqlite</p>
-                    <input type="file" id="backupFile" accept=".db,.backup,.sqlite,.zip" style="display: none;" onchange="handleFileSelect(event)">
-                </div>
-
-                <!-- Upload Progress -->
-                <div id="uploadProgress" style="display: none;">
-                    <div class="file-info">
-                        <span id="uploadFileName"></span>
-                        <span id="uploadFileSize"></span>
-                    </div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" id="uploadProgressFill"></div>
-                    </div>
-                </div>
-
-                <!-- Backup Files Table -->
-                <div style="margin-top: 30px;">
-                    <h3 style="margin-bottom: 15px;">📋 قائمة النسخ الاحتياطية</h3>
-                    <div class="table-container">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>اسم النسخة</th>
-                                    <th>التاريخ</th>
-                                    <th>الحجم</th>
-                                    <th>النوع</th>
-                                    <th>عدد المستخدمين</th>
-                                    <th>المشتركين النشطين</th>
-                                    <th>الإجراءات</th>
-                                </tr>
-                            </thead>
-                            <tbody id="backupsTableBody">
-                                <tr>
-                                    <td colspan="7" style="text-align: center;">لا توجد نسخ احتياطية</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>الاسم</th>
+                                <th>التاريخ</th>
+                                <th>الحجم</th>
+                                <th>الإجراءات</th>
+                            </tr>
+                        </thead>
+                        <tbody id="backupsList">
+                            <tr>
+                                <td colspan="4">لا توجد نسخ</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- Footer -->
-    <div class="footer">
-        <p>🤖 Obeida Trading - نظام إدارة الاشتراكات المتطور V2</p>
-        <p style="font-size: 0.8em; margin-top: 10px;">
-            آخر تحديث: <span id="lastUpdate">{{ now|default('') }}</span> | 
-            عدد المستخدمين: <span id="footerTotalUsers">{{ stats.total_users|default(0) }}</span> | 
-            المشتركين النشطين: <span id="footerActiveUsers">{{ stats.active_users|default(0) }}</span>
-        </p>
-    </div>
-
-    <!-- Modals -->
-    <div id="addSubscriptionModal" class="modal">
-        <div class="modal-content">
-            <h2>➕ إضافة اشتراك جديد</h2>
-            <form id="addSubscriptionForm" onsubmit="event.preventDefault(); confirmAddSubscription();">
-                <div class="form-group">
-                    <label>معرف المستخدم *</label>
-                    <input type="text" id="addUserId" placeholder="مثال: 123456789" required>
-                    <div class="error-message" id="addUserIdError"></div>
-                </div>
-                <div class="form-group">
-                    <label>نوع الاشتراك *</label>
-                    <select id="addSubscriptionType" required>
-                        <option value="trial">تجريبي (مجاني - 24 ساعة)</option>
-                        <option value="hourly">ساعة ($1)</option>
-                        <option value="daily">يوم ($5)</option>
-                        <option value="weekly">أسبوع ($15)</option>
-                        <option value="monthly">شهر ($40)</option>
-                        <option value="yearly">سنة ($400)</option>
-                        <option value="lifetime">مدى الحياة ($1000)</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>سبب الإضافة (اختياري)</label>
-                    <input type="text" id="addReason" placeholder="مثال: اشتراك عن طريق المشرف">
-                </div>
-                <div class="form-group">
-                    <label><input type="checkbox" id="notifyUser" checked> إرسال إشعار للمستخدم</label>
-                </div>
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-success">✅ تأكيد الإضافة</button>
-                    <button type="button" class="btn btn-danger" onclick="closeModal('addSubscriptionModal')">❌ إلغاء</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="extendModal" class="modal">
-        <div class="modal-content">
-            <h2>⏱️ تمديد اشتراك</h2>
-            <form id="extendForm" onsubmit="event.preventDefault(); confirmExtend();">
+        <!-- Add Subscription Modal -->
+        <div id="addModal" class="modal">
+            <div class="modal-content">
+                <h2>➕ إضافة اشتراك</h2>
                 <div class="form-group">
                     <label>معرف المستخدم</label>
-                    <input type="text" id="extendUserId" readonly>
+                    <input type="text" id="addUserId" placeholder="مثال: 123456789">
                 </div>
                 <div class="form-group">
-                    <label>مدة التمديد *</label>
-                    <select id="extendDuration" required>
-                        <option value="3600">ساعة واحدة (3600 ثانية)</option>
-                        <option value="86400">يوم واحد (86400 ثانية)</option>
-                        <option value="604800">أسبوع (604800 ثانية)</option>
-                        <option value="2592000">شهر (2592000 ثانية)</option>
-                        <option value="31536000">سنة (31536000 ثانية)</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>سبب التمديد (اختياري)</label>
-                    <input type="text" id="extendReason" placeholder="مثال: مكافأة">
-                </div>
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-success">✅ تأكيد التمديد</button>
-                    <button type="button" class="btn btn-danger" onclick="closeModal('extendModal')">❌ إلغاء</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="blockUserModal" class="modal">
-        <div class="modal-content">
-            <h2>🚫 حظر مستخدم</h2>
-            <form id="blockUserForm" onsubmit="event.preventDefault(); confirmBlock();">
-                <div class="form-group">
-                    <label>معرف المستخدم</label>
-                    <input type="text" id="blockUserId" readonly>
-                </div>
-                <div class="form-group">
-                    <label>سبب الحظر *</label>
-                    <input type="text" id="blockReason" placeholder="مثال: مخالفة القوانين" required>
-                </div>
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-danger">🚫 تأكيد الحظر</button>
-                    <button type="button" class="btn btn-secondary" onclick="closeModal('blockUserModal')">❌ إلغاء</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="sendMessageModal" class="modal">
-        <div class="modal-content">
-            <h2>💬 إرسال رسالة خاصة</h2>
-            <form id="sendMessageForm" onsubmit="event.preventDefault(); sendPrivateMessage();">
-                <div class="form-group">
-                    <label>إلى المستخدم</label>
-                    <input type="text" id="messageUserId" readonly>
-                </div>
-                <div class="form-group">
-                    <label>عنوان الرسالة</label>
-                    <input type="text" id="messageTitle" placeholder="عنوان الرسالة" value="رسالة من الإدارة">
-                </div>
-                <div class="form-group">
-                    <label>نص الرسالة *</label>
-                    <textarea id="privateMessage" rows="5" placeholder="اكتب الرسالة هنا..." required></textarea>
-                </div>
-                <div class="modal-actions">
-                    <button type="submit" class="btn btn-primary">📨 إرسال</button>
-                    <button type="button" class="btn btn-danger" onclick="closeModal('sendMessageModal')">❌ إلغاء</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="changeSubscriptionModal" class="modal">
-        <div class="modal-content">
-            <h2>🔄 تغيير نوع الاشتراك</h2>
-            <form id="changeSubscriptionForm" onsubmit="event.preventDefault(); confirmChangeSubscription();">
-                <div class="form-group">
-                    <label>معرف المستخدم</label>
-                    <input type="text" id="changeUserId" readonly>
-                </div>
-                <div class="form-group">
-                    <label>نوع الاشتراك الجديد *</label>
-                    <select id="newSubscriptionType" required>
+                    <label>نوع الاشتراك</label>
+                    <select id="addSubType">
                         <option value="trial">تجريبي</option>
                         <option value="hourly">ساعة</option>
                         <option value="daily">يوم</option>
                         <option value="weekly">أسبوع</option>
                         <option value="monthly">شهر</option>
                         <option value="yearly">سنة</option>
-                        <option value="lifetime">مدى الحياة</option>
                     </select>
                 </div>
                 <div class="modal-actions">
-                    <button type="submit" class="btn btn-success">✅ تأكيد التغيير</button>
-                    <button type="button" class="btn btn-danger" onclick="closeModal('changeSubscriptionModal')">❌ إلغاء</button>
+                    <button class="btn btn-success" onclick="confirmAdd()">تأكيد</button>
+                    <button class="btn btn-danger" onclick="closeModal('addModal')">إلغاء</button>
                 </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="importDataModal" class="modal">
-        <div class="modal-content">
-            <h2>📤 استيراد بيانات</h2>
-            <div class="upload-area" onclick="document.getElementById('importFile').click()">
-                <i>📁</i>
-                <p>اختر ملف البيانات للاستيراد</p>
-                <input type="file" id="importFile" accept=".json,.csv,.db,.sqlite" style="display: none;" onchange="handleImportFile(event)">
-            </div>
-            <div class="form-group">
-                <label>خيارات الاستيراد</label>
-                <select id="importOption">
-                    <option value="merge">دمج مع البيانات الموجودة</option>
-                    <option value="replace">استبدال البيانات بالكامل</option>
-                </select>
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-success" onclick="confirmImport()">✅ تأكيد الاستيراد</button>
-                <button class="btn btn-danger" onclick="closeModal('importDataModal')">❌ إلغاء</button>
             </div>
         </div>
-    </div>
 
-    <div id="scheduleModal" class="modal">
-        <div class="modal-content">
-            <h2>⏰ جدولة إذاعة</h2>
-            <form id="scheduleForm" onsubmit="event.preventDefault(); confirmSchedule();">
+        <!-- Extend Modal -->
+        <div id="extendModal" class="modal">
+            <div class="modal-content">
+                <h2>⏱️ تمديد اشتراك</h2>
                 <div class="form-group">
-                    <label>تاريخ الإرسال</label>
-                    <input type="date" id="scheduleDate" required>
+                    <label>معرف المستخدم</label>
+                    <input type="text" id="extendUserId" readonly>
                 </div>
                 <div class="form-group">
-                    <label>وقت الإرسال</label>
-                    <input type="time" id="scheduleTime" required>
+                    <label>المدة</label>
+                    <select id="extendDuration">
+                        <option value="86400">يوم</option>
+                        <option value="604800">أسبوع</option>
+                        <option value="2592000">شهر</option>
+                    </select>
                 </div>
                 <div class="modal-actions">
-                    <button type="submit" class="btn btn-success">✅ تأكيد الجدولة</button>
-                    <button type="button" class="btn btn-danger" onclick="closeModal('scheduleModal')">❌ إلغاء</button>
+                    <button class="btn btn-success" onclick="confirmExtend()">تأكيد</button>
+                    <button class="btn btn-danger" onclick="closeModal('extendModal')">إلغاء</button>
                 </div>
-            </form>
-        </div>
-    </div>
-
-    <div id="previewModal" class="modal">
-        <div class="modal-content">
-            <h2>👁️ معاينة الرسالة</h2>
-            <div style="background: #f8f9ff; padding: 20px; border-radius: 15px; margin-bottom: 20px;">
-                <div id="previewTitle" style="font-size: 1.2em; font-weight: bold; margin-bottom: 10px;">📢 رسالة إدارية</div>
-                <div id="previewMessage" style="margin-bottom: 15px;">نص الرسالة هنا</div>
-            </div>
-            <div class="modal-actions">
-                <button class="btn btn-primary" onclick="closeModal('previewModal')">✅ موافق</button>
             </div>
         </div>
-    </div>
 
-    <div id="confirmModal" class="modal">
-        <div class="modal-content" style="max-width: 400px;">
-            <h2>⚠️ تأكيد العملية</h2>
-            <p id="confirmMessage" style="margin: 20px 0; font-size: 1.1em;">هل أنت متأكد؟</p>
-            <div class="modal-actions">
-                <button class="btn btn-success" onclick="executeConfirmed()">✅ نعم</button>
-                <button class="btn btn-danger" onclick="closeModal('confirmModal')">❌ لا</button>
+        <!-- Change Subscription Modal -->
+        <div id="changeModal" class="modal">
+            <div class="modal-content">
+                <h2>🔄 تغيير الاشتراك</h2>
+                <div class="form-group">
+                    <label>معرف المستخدم</label>
+                    <input type="text" id="changeUserId" readonly>
+                </div>
+                <div class="form-group">
+                    <label>النوع الجديد</label>
+                    <select id="newSubType">
+                        <option value="trial">تجريبي</option>
+                        <option value="hourly">ساعة</option>
+                        <option value="daily">يوم</option>
+                        <option value="weekly">أسبوع</option>
+                        <option value="monthly">شهر</option>
+                        <option value="yearly">سنة</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-success" onclick="confirmChange()">تأكيد</button>
+                    <button class="btn btn-danger" onclick="closeModal('changeModal')">إلغاء</button>
+                </div>
             </div>
         </div>
-    </div>
 
-    <!-- Loading Overlay -->
-    <div id="loadingOverlay" class="loading-overlay">
-        <div class="loading-spinner"></div>
-    </div>
-
-    <!-- Notification -->
-    <div id="notification" class="notification">
-        <div class="notification-icon" id="notificationIcon">✅</div>
-        <div class="notification-content">
-            <div class="notification-title" id="notificationTitle">نجاح</div>
-            <div class="notification-message" id="notificationMessage">تمت العملية بنجاح</div>
+        <!-- Block User Modal -->
+        <div id="blockModal" class="modal">
+            <div class="modal-content">
+                <h2>🚫 حظر مستخدم</h2>
+                <div class="form-group">
+                    <label>معرف المستخدم</label>
+                    <input type="text" id="blockUserId" readonly>
+                </div>
+                <div class="form-group">
+                    <label>السبب</label>
+                    <input type="text" id="blockReason" placeholder="سبب الحظر">
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-danger" onclick="confirmBlock()">حظر</button>
+                    <button class="btn btn-secondary" onclick="closeModal('blockModal')">إلغاء</button>
+                </div>
+            </div>
         </div>
-        <div class="notification-close" onclick="closeNotification()">✖</div>
+
+        <!-- Message Modal -->
+        <div id="messageModal" class="modal">
+            <div class="modal-content">
+                <h2>💬 إرسال رسالة</h2>
+                <div class="form-group">
+                    <label>إلى</label>
+                    <input type="text" id="messageUserId" readonly>
+                </div>
+                <div class="form-group">
+                    <label>الرسالة</label>
+                    <textarea id="messageText" rows="4" placeholder="اكتب رسالتك..."></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-primary" onclick="sendMessage()">إرسال</button>
+                    <button class="btn btn-danger" onclick="closeModal('messageModal')">إلغاء</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Broadcast Modal -->
+        <div id="broadcastModal" class="modal">
+            <div class="modal-content">
+                <h2>📢 إذاعة للمشتركين</h2>
+                <div class="form-group">
+                    <label>الرسالة</label>
+                    <textarea id="broadcastMessage" rows="4" placeholder="اكتب الرسالة..."></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-primary" onclick="sendBroadcast()">إرسال</button>
+                    <button class="btn btn-danger" onclick="closeModal('broadcastModal')">إلغاء</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notification -->
+        <div id="notification" class="notification"></div>
+    </div>
+
+    <div class="footer">
+        <p>Obeida Trading - نظام إدارة الاشتراكات</p>
     </div>
 
     <script>
-        // ==================== التهيئة ====================
-        document.addEventListener('DOMContentLoaded', function() {
-            initializeData();
-            setupEventListeners();
-            startAutoRefresh();
-        });
-
-        function initializeData() {
-            // حساب الأيام المتبقية لكل مستخدم
-            {% if users %}
-                {% for user in users %}
-                    {% if user.end_date and user.end_date != 'غير محدد' %}
-                        calculateAndDisplayDays('{{ user.id }}', '{{ user.end_date }}');
-                    {% endif %}
-                {% endfor %}
-            {% endif %}
-            
-            // تحديث الإحصائيات
-            updateStats();
-        }
-
-        function calculateAndDisplayDays(userId, endDate) {
-            try {
-                const end = new Date(endDate);
-                const now = new Date();
-                const days = Math.ceil((end - now) / (1000 * 60 * 60 * 24));
-                
-                let text = '';
-                let color = '';
-                
-                if (days > 0) {
-                    text = days + ' يوم';
-                    color = '#28a745';
-                } else if (days === 0) {
-                    text = 'ينتهي اليوم';
-                    color = '#ffc107';
-                } else {
-                    text = 'منتهي';
-                    color = '#dc3545';
-                }
-                
-                const cell = document.getElementById('days-' + userId);
-                if (cell) {
-                    cell.innerHTML = `<span style="color: ${color};">${text}</span>`;
-                }
-            } catch (e) {
-                console.error('خطأ في حساب الأيام:', e);
-            }
-        }
-
-        function setupEventListeners() {
-            window.onclick = function(event) {
-                if (event.target.classList.contains('modal')) {
-                    event.target.style.display = 'none';
-                }
-            };
-
-            document.addEventListener('keydown', function(e) {
-                if (e.key === 'Escape') {
-                    document.querySelectorAll('.modal').forEach(modal => {
-                        modal.style.display = 'none';
-                    });
-                }
-            });
-        }
-
-        function startAutoRefresh() {
-            setInterval(refreshData, 30000);
-        }
-
-        // ==================== إدارة النوافذ المنبثقة ====================
+        // ==================== المتغيرات العامة ====================
+        let currentUserId = '';
+        
+        // ==================== إظهار/إخفاء النوافذ ====================
         function openModal(modalId) {
             document.getElementById(modalId).style.display = 'flex';
-            const firstInput = document.querySelector(`#${modalId} input:not([readonly])`);
-            if (firstInput) firstInput.focus();
         }
-
+        
         function closeModal(modalId) {
             document.getElementById(modalId).style.display = 'none';
-            const form = document.querySelector(`#${modalId} form`);
-            if (form) form.reset();
         }
-
-        // ==================== إدارة الإشعارات ====================
-        function showNotification(message, type = 'success', title = '') {
-            const notification = document.getElementById('notification');
-            const icon = document.getElementById('notificationIcon');
-            const titleEl = document.getElementById('notificationTitle');
-            const messageEl = document.getElementById('notificationMessage');
-            
-            const icons = { 'success': '✅', 'error': '❌', 'warning': '⚠️', 'info': 'ℹ️' };
-            icon.textContent = icons[type] || '✅';
-            
-            const titles = { 'success': 'نجاح', 'error': 'خطأ', 'warning': 'تحذير', 'info': 'معلومة' };
-            titleEl.textContent = title || titles[type] || 'إشعار';
-            
-            messageEl.textContent = message;
-            notification.className = 'notification ' + (type === 'error' ? 'error' : type === 'warning' ? 'warning' : '');
-            notification.style.display = 'flex';
-            
-            setTimeout(closeNotification, 5000);
-        }
-
-        function closeNotification() {
-            document.getElementById('notification').style.display = 'none';
-        }
-
-        // ==================== إدارة التحميل ====================
-        function showLoading() {
-            document.getElementById('loadingOverlay').style.display = 'flex';
-        }
-
-        function hideLoading() {
-            document.getElementById('loadingOverlay').style.display = 'none';
-        }
-
-        // ==================== تأكيد العمليات ====================
-        let pendingAction = null;
         
-        function confirmAction(message, action) {
-            pendingAction = action;
-            document.getElementById('confirmMessage').textContent = message;
-            openModal('confirmModal');
+        // ==================== الإشعارات ====================
+        function showNotification(message, type = 'success') {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = 'notification ' + (type === 'error' ? 'error' : '');
+            notification.style.display = 'block';
+            
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
         }
-
-        function executeConfirmed() {
-            if (pendingAction) {
-                pendingAction();
-                pendingAction = null;
+        
+        // ==================== علامات التبويب ====================
+        function showTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            
+            if (tabName === 'users') {
+                document.getElementById('usersTab').classList.add('active');
+            } else if (tabName === 'subscriptions') {
+                document.getElementById('subscriptionsTab').classList.add('active');
+            } else if (tabName === 'backups') {
+                document.getElementById('backupsTab').classList.add('active');
             }
-            closeModal('confirmModal');
         }
-
-        // ==================== تصفية وبحث ====================
-        function filterUsers(filter) {
-            document.querySelectorAll('.filter-btn').forEach(btn => {
-                btn.classList.remove('active');
-                if (btn.getAttribute('data-filter') === filter) {
-                    btn.classList.add('active');
-                }
-            });
-            
-            const rows = document.querySelectorAll('#usersTable tbody tr');
-            rows.forEach(row => {
-                const statusCell = row.querySelector('td:nth-child(8) .status-badge');
-                if (!statusCell) return;
-                
-                const status = statusCell.textContent.trim();
-                let show = false;
-                
-                switch(filter) {
-                    case 'all': show = true; break;
-                    case 'active': show = status === 'نشط'; break;
-                    case 'expired': show = status === 'منتهي'; break;
-                    case 'blocked': show = status === 'محظور'; break;
-                    case 'trial': show = row.querySelector('td:nth-child(3) .status-badge').textContent.trim() === 'تجريبي'; break;
-                }
-                
-                row.style.display = show ? '' : 'none';
-            });
-            
-            updateUserCount();
-        }
-
+        
+        // ==================== بحث ====================
         function searchUsers() {
             const searchTerm = document.getElementById('searchInput').value.toLowerCase();
             const rows = document.querySelectorAll('#usersTable tbody tr');
@@ -6050,439 +5161,180 @@ ADMIN_PANEL_HTML = """
                 const name = row.children[1].textContent.toLowerCase();
                 row.style.display = (id.includes(searchTerm) || name.includes(searchTerm)) ? '' : 'none';
             });
-            
-            updateUserCount();
         }
-
-        function updateUserCount() {
-            const visibleRows = document.querySelectorAll('#usersTable tbody tr[style="display: none;"]').length;
-            const totalRows = document.querySelectorAll('#usersTable tbody tr').length;
-            document.getElementById('userCount').textContent = totalRows - visibleRows;
-        }
-
-        // ==================== علامات التبويب ====================
-        function showTab(tabName) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            
-            const tabs = document.querySelectorAll('.tab');
-            const tabIndex = ['users', 'subscriptions', 'stats', 'broadcast', 'backups'].indexOf(tabName);
-            if (tabIndex >= 0) {
-                tabs[tabIndex].classList.add('active');
-                document.getElementById(tabName + '-tab').classList.add('active');
-            }
-        }
-
-        // ==================== تحديث الإحصائيات ====================
-        function updateStats() {
+        
+        // ==================== تصفية ====================
+        function filterUsers(filter) {
             const rows = document.querySelectorAll('#usersTable tbody tr');
-            let active = 0, blocked = 0, expired = 0;
             
             rows.forEach(row => {
-                if (row.children.length < 8) return;
-                const statusCell = row.querySelector('td:nth-child(8) .status-badge');
-                if (!statusCell) return;
-                
+                if (row.children.length < 5) return;
+                const statusCell = row.children[4];
                 const status = statusCell.textContent.trim();
-                if (status === 'نشط') active++;
-                else if (status === 'محظور') blocked++;
-                else if (status === 'منتهي') expired++;
+                
+                if (filter === 'all') {
+                    row.style.display = '';
+                } else if (filter === 'active' && status === 'نشط') {
+                    row.style.display = '';
+                } else if (filter === 'blocked' && status === 'محظور') {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
             });
-            
-            document.getElementById('activeUsers').textContent = active;
-            document.getElementById('blockedUsers').textContent = blocked;
-            document.getElementById('expiredUsers').textContent = expired;
-            document.getElementById('footerActiveUsers').textContent = active;
-            document.getElementById('activeSubscribers').textContent = active;
         }
-
-        // ==================== إدارة الاشتراكات ====================
-        function openAddSubscriptionModal() {
-            document.getElementById('addUserId').value = '';
-            document.getElementById('addReason').value = '';
-            openModal('addSubscriptionModal');
-        }
-
-        function confirmAddSubscription() {
-            const userId = document.getElementById('addUserId').value.trim();
-            const subType = document.getElementById('addSubscriptionType').value;
+        
+        // ==================== إضافة اشتراك ====================
+        function confirmAdd() {
+            const userId = document.getElementById('addUserId').value;
+            const subType = document.getElementById('addSubType').value;
             
-            if (!userId || isNaN(userId)) {
-                showNotification('الرجاء إدخال معرف مستخدم صحيح', 'error');
+            if (!userId) {
+                showNotification('الرجاء إدخال معرف المستخدم', 'error');
                 return;
             }
             
-            showLoading();
-            
-            setTimeout(() => {
-                hideLoading();
-                showNotification(`✅ تم إضافة اشتراك ${subType} للمستخدم ${userId} بنجاح`);
-                closeModal('addSubscriptionModal');
-                refreshData();
-            }, 1500);
+            showNotification(`✅ تم إضافة اشتراك ${subType} للمستخدم ${userId}`);
+            closeModal('addModal');
+            document.getElementById('addUserId').value = '';
         }
-
-        function extendSubscription(userId) {
+        
+        // ==================== تمديد ====================
+        function extendUser(userId) {
             document.getElementById('extendUserId').value = userId;
             openModal('extendModal');
         }
-
+        
         function confirmExtend() {
             const userId = document.getElementById('extendUserId').value;
-            const duration = document.getElementById('extendDuration').value;
-            
-            showLoading();
-            
-            setTimeout(() => {
-                hideLoading();
-                showNotification(`✅ تم تمديد اشتراك المستخدم ${userId}`);
-                closeModal('extendModal');
-                refreshData();
-            }, 1500);
+            showNotification(`✅ تم تمديد اشتراك المستخدم ${userId}`);
+            closeModal('extendModal');
         }
-
-        function changeSubscription(userId) {
+        
+        // ==================== تغيير الاشتراك ====================
+        function changeUserSub(userId) {
             document.getElementById('changeUserId').value = userId;
-            openModal('changeSubscriptionModal');
+            openModal('changeModal');
         }
-
-        function confirmChangeSubscription() {
+        
+        function confirmChange() {
             const userId = document.getElementById('changeUserId').value;
-            const newType = document.getElementById('newSubscriptionType').value;
-            
-            showLoading();
-            
-            setTimeout(() => {
-                hideLoading();
-                showNotification(`✅ تم تغيير اشتراك المستخدم ${userId} إلى ${newType}`);
-                closeModal('changeSubscriptionModal');
-                refreshData();
-            }, 1500);
+            const newType = document.getElementById('newSubType').value;
+            showNotification(`✅ تم تغيير اشتراك المستخدم ${userId} إلى ${newType}`);
+            closeModal('changeModal');
         }
-
-        // ==================== إدارة الحظر ====================
+        
+        // ==================== حظر ====================
         function blockUser(userId) {
             document.getElementById('blockUserId').value = userId;
             document.getElementById('blockReason').value = '';
-            openModal('blockUserModal');
+            openModal('blockModal');
         }
-
+        
         function confirmBlock() {
             const userId = document.getElementById('blockUserId').value;
             const reason = document.getElementById('blockReason').value;
-            
-            if (!reason) {
-                showNotification('الرجاء إدخال سبب الحظر', 'warning');
-                return;
-            }
-            
-            showLoading();
-            
-            setTimeout(() => {
-                hideLoading();
-                showNotification(`✅ تم حظر المستخدم ${userId}`);
-                closeModal('blockUserModal');
-                refreshData();
-            }, 1500);
+            showNotification(`✅ تم حظر المستخدم ${userId} ${reason ? 'بسبب: ' + reason : ''}`);
+            closeModal('blockModal');
         }
-
+        
+        // ==================== إلغاء حظر ====================
         function unblockUser(userId) {
-            confirmAction(`هل أنت متأكد من إلغاء حظر المستخدم ${userId}؟`, function() {
-                showLoading();
-                setTimeout(() => {
-                    hideLoading();
-                    showNotification(`✅ تم إلغاء حظر المستخدم ${userId}`);
-                    refreshData();
-                }, 1000);
-            });
+            if (confirm(`هل أنت متأكد من إلغاء حظر المستخدم ${userId}؟`)) {
+                showNotification(`✅ تم إلغاء حظر المستخدم ${userId}`);
+            }
         }
-
-        // ==================== إدارة الرسائل ====================
-        function sendMessage(userId) {
+        
+        // ==================== رسالة ====================
+        function messageUser(userId) {
             document.getElementById('messageUserId').value = userId;
-            document.getElementById('privateMessage').value = '';
-            openModal('sendMessageModal');
+            document.getElementById('messageText').value = '';
+            openModal('messageModal');
         }
-
-        function sendPrivateMessage() {
+        
+        function sendMessage() {
             const userId = document.getElementById('messageUserId').value;
-            const message = document.getElementById('privateMessage').value;
+            const message = document.getElementById('messageText').value;
             
             if (!message) {
-                showNotification('الرجاء كتابة الرسالة', 'warning');
+                showNotification('الرجاء كتابة الرسالة', 'error');
                 return;
             }
             
-            showLoading();
-            
-            setTimeout(() => {
-                hideLoading();
-                showNotification(`✅ تم إرسال الرسالة إلى المستخدم ${userId}`);
-                closeModal('sendMessageModal');
-            }, 1000);
+            showNotification(`✅ تم إرسال الرسالة إلى المستخدم ${userId}`);
+            closeModal('messageModal');
         }
-
-        function editUser(userId) {
-            showNotification(`فتح نافذة تعديل المستخدم ${userId}`, 'info');
-        }
-
-        // ==================== الإذاعة ====================
-        function openBroadcastModal() {
-            showTab('broadcast');
-        }
-
-        function toggleBroadcastType() {
-            const type = document.getElementById('broadcastType').value;
-            document.getElementById('specificUserGroup').style.display = type === 'specific' ? 'block' : 'none';
-            document.getElementById('subscriptionTypeGroup').style.display = type === 'subscription' ? 'block' : 'none';
-        }
-
+        
+        // ==================== إذاعة ====================
         function sendBroadcast() {
             const message = document.getElementById('broadcastMessage').value;
             
             if (!message) {
-                showNotification('الرجاء كتابة الرسالة', 'warning');
+                showNotification('الرجاء كتابة الرسالة', 'error');
                 return;
             }
             
-            showLoading();
-            document.getElementById('sendBroadcastBtn').disabled = true;
-            
-            setTimeout(() => {
-                hideLoading();
-                document.getElementById('sendBroadcastBtn').disabled = false;
-                showNotification('✅ تم إرسال الإذاعة بنجاح');
-                document.getElementById('broadcastMessage').value = '';
-                
-                // إضافة إلى السجل
-                addToBroadcastHistory(message);
-            }, 2000);
+            showNotification('✅ تم إرسال الإذاعة لجميع المشتركين');
+            closeModal('broadcastModal');
+            document.getElementById('broadcastMessage').value = '';
         }
-
-        function addToBroadcastHistory(message) {
-            const tbody = document.getElementById('broadcastHistoryBody');
-            if (!tbody) return;
-            
-            const now = new Date().toLocaleString('ar-EG');
-            const row = document.createElement('tr');
-            row.innerHTML = `
-                <td>${now}</td>
-                <td>${message.substring(0, 50)}${message.length > 50 ? '...' : ''}</td>
-                <td>جميع المشتركين</td>
-                <td>${Math.floor(Math.random() * 50) + 10}</td>
-                <td>0</td>
-                <td><span class="status-badge status-active">تم الإرسال</span></td>
-            `;
-            
-            if (tbody.children[0] && tbody.children[0].colSpan === 6) {
-                tbody.innerHTML = '';
-            }
-            
-            tbody.insertBefore(row, tbody.firstChild);
-        }
-
-        function previewBroadcast() {
-            const message = document.getElementById('broadcastMessage').value;
-            if (!message) {
-                showNotification('الرجاء كتابة الرسالة أولاً', 'warning');
-                return;
-            }
-            document.getElementById('previewMessage').textContent = message;
-            openModal('previewModal');
-        }
-
-        function scheduleBroadcast() {
-            const message = document.getElementById('broadcastMessage').value;
-            if (!message) {
-                showNotification('الرجاء كتابة الرسالة أولاً', 'warning');
-                return;
-            }
-            
-            const tomorrow = new Date();
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            
-            document.getElementById('scheduleDate').value = tomorrow.toISOString().split('T')[0];
-            document.getElementById('scheduleTime').value = '10:00';
-            
-            openModal('scheduleModal');
-        }
-
-        function confirmSchedule() {
-            const date = document.getElementById('scheduleDate').value;
-            const time = document.getElementById('scheduleTime').value;
-            
-            showNotification(`✅ تم جدولة الإذاعة في ${date} ${time}`, 'success');
-            closeModal('scheduleModal');
-        }
-
-        // ==================== النسخ الاحتياطي ====================
+        
+        // ==================== نسخ احتياطي ====================
         function createBackup() {
-            showLoading();
+            showNotification('💾 جاري إنشاء نسخة احتياطية...');
             
             setTimeout(() => {
-                hideLoading();
-                showNotification('✅ تم إنشاء نسخة احتياطية جديدة بنجاح');
+                const now = new Date().toLocaleString('ar-EG');
+                const tableBody = document.getElementById('backupsList');
+                
+                const newRow = document.createElement('tr');
+                newRow.innerHTML = `
+                    <td>backup_${now.replace(/[\/\s:]/g, '_')}.db</td>
+                    <td>${now}</td>
+                    <td>${Math.floor(Math.random() * 5) + 1} MB</td>
+                    <td>
+                        <button class="btn btn-info btn-small" onclick="alert('جاري التحميل...')">📥</button>
+                    </td>
+                `;
+                
+                if (tableBody.children[0] && tableBody.children[0].children[0].colSpan === 4) {
+                    tableBody.innerHTML = '';
+                }
+                
+                tableBody.appendChild(newRow);
+                showNotification('✅ تم إنشاء النسخة الاحتياطية بنجاح');
             }, 2000);
         }
-
+        
         function uploadBackup() {
-            document.getElementById('backupFile').click();
-        }
-
-        function handleFileSelect(event) {
-            const file = event.target.files[0];
-            if (file) {
-                processUploadedFile(file);
-            }
-        }
-
-        function handleDragOver(event) {
-            event.preventDefault();
-            document.getElementById('uploadArea').classList.add('dragover');
-        }
-
-        function handleDragLeave(event) {
-            event.preventDefault();
-            document.getElementById('uploadArea').classList.remove('dragover');
-        }
-
-        function handleDrop(event) {
-            event.preventDefault();
-            document.getElementById('uploadArea').classList.remove('dragover');
-            
-            const file = event.dataTransfer.files[0];
-            if (file) {
-                processUploadedFile(file);
-            }
-        }
-
-        function processUploadedFile(file) {
-            document.getElementById('uploadFileName').textContent = file.name;
-            document.getElementById('uploadFileSize').textContent = formatFileSize(file.size);
-            document.getElementById('uploadProgress').style.display = 'block';
-            
-            let progress = 0;
-            const interval = setInterval(() => {
-                progress += 10;
-                document.getElementById('uploadProgressFill').style.width = progress + '%';
-                
-                if (progress >= 100) {
-                    clearInterval(interval);
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.db,.sqlite,.backup';
+            input.onchange = function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    showNotification(`📤 جاري رفع الملف: ${file.name}`);
                     setTimeout(() => {
                         showNotification('✅ تم رفع الملف بنجاح');
-                        document.getElementById('uploadProgress').style.display = 'none';
-                    }, 500);
+                    }, 2000);
                 }
-            }, 200);
+            };
+            input.click();
         }
-
-        function formatFileSize(bytes) {
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
-            return (bytes / 1048576).toFixed(1) + ' MB';
-        }
-
-        function downloadLatestBackup() {
-            showNotification('📥 جاري تحميل آخر نسخة احتياطية...', 'info');
-            setTimeout(() => showNotification('✅ تم التحميل بنجاح'), 2000);
-        }
-
-        function syncWithDevice() {
-            showNotification('🔄 جاري المزامنة...', 'info');
-            setTimeout(() => showNotification('✅ تمت المزامنة بنجاح'), 3000);
-        }
-
-        // ==================== استيراد وتصدير البيانات ====================
-        function exportData() {
-            showNotification('📥 جاري تجهيز البيانات...', 'info');
-            
-            setTimeout(() => {
-                const data = {
-                    users: [],
-                    date: new Date().toISOString(),
-                    version: '2.0.0'
-                };
-                
-                const rows = document.querySelectorAll('#usersTable tbody tr');
-                rows.forEach(row => {
-                    if (row.children.length < 2) return;
-                    data.users.push({
-                        id: row.children[0].textContent,
-                        name: row.children[1].textContent,
-                        subscription: row.children[2].textContent,
-                        status: row.children[7].textContent
-                    });
-                });
-                
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `obeida_backup_${new Date().toISOString().slice(0,19).replace(/:/g, '-')}.json`;
-                a.click();
-                
-                showNotification('✅ تم تصدير البيانات بنجاح');
-            }, 1000);
-        }
-
-        function importData() {
-            openModal('importDataModal');
-        }
-
-        function handleImportFile(event) {
-            const file = event.target.files[0];
-            if (file) {
-                showNotification(`تم اختيار الملف: ${file.name}`, 'info');
-            }
-        }
-
-        function confirmImport() {
-            showLoading();
-            
-            setTimeout(() => {
-                hideLoading();
-                showNotification('✅ تم استيراد البيانات بنجاح');
-                closeModal('importDataModal');
-                refreshData();
-            }, 2000);
-        }
-
-        function exportUsersCSV() {
-            let csv = 'ID,الاسم,نوع الاشتراك,تاريخ البدء,تاريخ الانتهاء,الحالة\n';
-            
-            const rows = document.querySelectorAll('#usersTable tbody tr');
-            rows.forEach(row => {
-                if (row.children.length < 8) return;
-                csv += `${row.children[0].textContent},${row.children[1].textContent},${row.children[2].textContent},${row.children[3].textContent},${row.children[4].textContent},${row.children[7].textContent}\n`;
-            });
-            
-            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `users_${new Date().toISOString().slice(0,10)}.csv`;
-            a.click();
-            
-            showNotification('✅ تم تصدير المستخدمين بنجاح');
-        }
-
-        // ==================== تحديث البيانات ====================
+        
+        // ==================== تحديث ====================
         function refreshData() {
-            showLoading();
-            
+            showNotification('🔄 جاري تحديث البيانات...');
             setTimeout(() => {
-                updateStats();
-                document.getElementById('lastUpdate').textContent = new Date().toLocaleString('ar-EG');
-                document.getElementById('systemStatus').innerHTML = '🌍 النظام متصل | آخر تحديث: ' + new Date().toLocaleTimeString('ar-EG');
-                hideLoading();
-                showNotification('✅ تم تحديث البيانات بنجاح', 'success', 'تحديث');
+                location.reload();
             }, 1000);
         }
-
-        // دوال إضافية
-        function filterBySubscription(type) {
-            showTab('users');
-            showNotification(`عرض المستخدمين بنوع الاشتراك: ${type}`, 'info');
+        
+        // ==================== إغلاق النوافذ بالضغط خارجها ====================
+        window.onclick = function(event) {
+            if (event.target.classList.contains('modal')) {
+                event.target.style.display = 'none';
+            }
         }
     </script>
 </body>
