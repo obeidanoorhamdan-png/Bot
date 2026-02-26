@@ -18,6 +18,7 @@ import random
 import string
 import uuid
 import secrets
+from flask import send_file
 from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
@@ -6085,6 +6086,166 @@ def main():
         fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
         allow_reentry=True
     )
+    
+@app.route('/admin')
+def admin_panel():
+    try:
+        stats = SubscriptionSystem.get_stats()
+        users = SubscriptionSystem.get_all_users()
+        
+        formatted_users = []
+        for u in users:
+            uid, username, first_name, created, last_active, is_blocked, sub_type, sub_name, start_date, end_date, is_active = u
+            
+            # حساب الأيام المتبقية
+            remaining_days = None
+            if end_date:
+                try:
+                    end = datetime.fromisoformat(end_date)
+                    remaining = end - datetime.now()
+                    remaining_days = remaining.days
+                except:
+                    pass
+            
+            # اسم العرض
+            display_name = first_name or username or str(uid)
+            
+            # تنسيق التواريخ
+            start_display = start_date[:10] if start_date else '-'
+            end_display = end_date[:10] if end_date else '-'
+            
+            formatted_users.append({
+                'id': uid,
+                'name': display_name,
+                'subscription_type': sub_name or 'غير مشترك',
+                'start_date': start_display,
+                'end_date': end_display,
+                'remaining_days': remaining_days,
+                'is_blocked': bool(is_blocked),
+                'is_active': bool(is_active and (not end_date or datetime.fromisoformat(end_date) > datetime.now()))
+            })
+        
+        # حساب الإيرادات المقدرة
+        estimated_revenue = 0
+        price_map = {
+            'hourly': 1,
+            'daily': 5,
+            'weekly': 15,
+            'monthly': 40,
+            'yearly': 300,
+            'lifetime': 500
+        }
+        if stats and stats.get('subscriptions_by_type'):
+            for sub_type, count in stats['subscriptions_by_type'].items():
+                if sub_type in price_map:
+                    estimated_revenue += price_map[sub_type] * count
+        
+        stats['estimated_revenue'] = estimated_revenue
+        
+        # آخر نسخة احتياطية
+        last_backup = "لا توجد"
+        if os.path.exists(BACKUP_DIR):
+            backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')], reverse=True)
+            if backups:
+                last_backup = backups[0].replace('_', ' ').replace('.db', '')
+        
+        return render_template_string(
+            ADMIN_PANEL_HTML,
+            stats=stats,
+            users=formatted_users,
+            data_version=DATA_VERSION,
+            last_backup=last_backup
+        )
+    except Exception as e:
+        return f"خطأ في تحميل لوحة التحكم: {str(e)}"
+
+@app.route('/admin/get_backups')
+def get_backups():
+    try:
+        backups = []
+        if os.path.exists(BACKUP_DIR):
+            for filename in os.listdir(BACKUP_DIR):
+                if filename.endswith('.db'):
+                    filepath = os.path.join(BACKUP_DIR, filename)
+                    stat = os.stat(filepath)
+                    size = f"{stat.st_size / 1024:.1f} KB"
+                    mtime = datetime.fromtimestamp(stat.st_mtime)
+                    
+                    backup_type = "رئيسية" if "main" in filename else "اشتراكات"
+                    
+                    backups.append({
+                        'name': filename,
+                        'date': mtime.strftime('%Y-%m-%d %H:%M:%S'),
+                        'size': size,
+                        'type': backup_type
+                    })
+        
+        backups.sort(key=lambda x: x['date'], reverse=True)
+        return jsonify({'success': True, 'backups': backups})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/create_backup', methods=['POST'])
+def create_backup():
+    try:
+        DataProtection.auto_backup()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/download_backup/<filename>')
+def download_backup(filename):
+    try:
+        filepath = os.path.join(BACKUP_DIR, filename)
+        if os.path.exists(filepath):
+            return send_file(filepath, as_attachment=True)
+        return "الملف غير موجود", 404
+    except Exception as e:
+        return str(e), 500
+
+@app.route('/admin/delete_backup/<filename>', methods=['DELETE'])
+def delete_backup(filename):
+    try:
+        filepath = os.path.join(BACKUP_DIR, filename)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+            return jsonify({'success': True})
+        return jsonify({'success': False, 'error': 'الملف غير موجود'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/get_db_size')
+def get_db_size():
+    try:
+        size = 0
+        if os.path.exists(DB_NAME):
+            size = os.path.getsize(DB_NAME) / 1024
+        return jsonify({'size': f"{size:.1f} KB"})
+    except:
+        return jsonify({'size': 'غير معروف'})
+
+@app.route('/admin/export_data')
+def export_data():
+    try:
+        export_type = request.args.get('type', 'users')
+        export_format = request.args.get('format', 'xlsx')
+        
+        # يمكن تنفيذ التصدير هنا
+        return "جاري التحميل..."
+    except Exception as e:
+        return str(e)
+
+@app.route('/admin/broadcast', methods=['POST'])
+def broadcast():
+    try:
+        data = request.json
+        target = data.get('target', 'all')
+        message = data.get('message', '')
+        
+        # سيتم تنفيذ الإذاعة هنا
+        return jsonify({'success': True, 'sent': 0})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
     
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("help", help_command))
