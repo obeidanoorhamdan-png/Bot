@@ -5998,95 +5998,6 @@ def health():
         "timestamp": time.time()
     }
 
-@app.route('/ping')
-def ping():
-    return "PONG"
-
-def main():
-    print("🤖 Starting Obeida Trading with Timezone Support ...")
-    
-    init_db_with_subscription()
-    
-    DataProtection.backup_database()
-    DataProtection.backup_codes_db()
-    
-    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
-    flask_thread.start()
-    
-    print("🧹 جاري تنظيف الملفات المؤقتة عند بدء التشغيل...")
-    try:
-        if os.path.exists(IMAGE_CACHE_DIR):
-            files = os.listdir(IMAGE_CACHE_DIR)
-            deleted_count = 0
-            for filename in files:
-                filepath = os.path.join(IMAGE_CACHE_DIR, filename)
-                if os.path.isfile(filepath):
-                    try:
-                        os.remove(filepath)
-                        deleted_count += 1
-                    except Exception as e:
-                        print(f"⚠️ فشل حذف {filename}: {e}")
-            print(f"✅ تم حذف {deleted_count} ملف مؤقت عند بدء التشغيل")
-        else:
-            os.makedirs(IMAGE_CACHE_DIR)
-            print(f"📁 تم إنشاء مجلد الصور المؤقتة: {IMAGE_CACHE_DIR}")
-    except Exception as e:
-        print(f"⚠️ خطأ في تنظيف الملفات عند بدء التشغيل: {e}")
-    
-    application = Application.builder().token(TOKEN).build()
-    
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            MAIN_MENU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)
-            ],
-            SETTINGS_CANDLE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_candle)
-            ],
-            SETTINGS_TIME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_time)
-            ],
-            CHAT_MODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat_message)
-            ],
-            ANALYZE_MODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode),
-                MessageHandler(filters.PHOTO, handle_photo_in_analyze_mode)
-            ],
-            RECOMMENDATION_MODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection),
-                MessageHandler(filters.PHOTO, handle_recommendation_photo)
-            ],
-            CATEGORY_SELECTION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection)
-            ],
-            ADMIN_MENU: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_menu)
-            ],
-            ADD_SUBSCRIPTION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_subscription)
-            ],
-            SELECT_DURATION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_duration)
-            ],
-            REMOVE_USER: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)
-            ],
-            SET_USER_DURATION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_set_duration)
-            ],
-            BROADCAST_MESSAGE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast)
-            ],
-            COUNTRY_SELECTION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_country_selection)
-            ]
-        },
-        fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
-        allow_reentry=True
-    )
-    
 @app.route('/admin')
 def admin_panel():
     try:
@@ -6246,6 +6157,95 @@ def broadcast():
         return jsonify({'success': True, 'sent': 0})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+        
+@app.route('/ping')
+def ping():
+    return "PONG"
+
+def main():
+    print("🤖 Starting Obeida Trading with Timezone Support ...")
+    
+    init_db_with_subscription()
+    
+    DataProtection.backup_database()
+    DataProtection.backup_codes_db()
+    
+    flask_thread = threading.Thread(target=run_flask_server, daemon=True)
+    flask_thread.start()
+    
+    print("🧹 جاري تنظيف الملفات المؤقتة عند بدء التشغيل...")
+    try:
+        if os.path.exists(IMAGE_CACHE_DIR):
+            files = os.listdir(IMAGE_CACHE_DIR)
+            deleted_count = 0
+            for filename in files:
+                filepath = os.path.join(IMAGE_CACHE_DIR, filename)
+                if os.path.isfile(filepath):
+                    try:
+                        os.remove(filepath)
+                        deleted_count += 1
+                    except Exception as e:
+                        print(f"⚠️ فشل حذف {filename}: {e}")
+            print(f"✅ تم حذف {deleted_count} ملف مؤقت عند بدء التشغيل")
+        else:
+            os.makedirs(IMAGE_CACHE_DIR)
+            print(f"📁 تم إنشاء مجلد الصور المؤقتة: {IMAGE_CACHE_DIR}")
+    except Exception as e:
+        print(f"⚠️ خطأ في تنظيف الملفات عند بدء التشغيل: {e}")
+    
+    application = Application.builder().token(TOKEN).build()
+    
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            MAIN_MENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)
+            ],
+            SETTINGS_CANDLE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_candle)
+            ],
+            SETTINGS_TIME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_time)
+            ],
+            CHAT_MODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_chat_message)
+            ],
+            ANALYZE_MODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode),
+                MessageHandler(filters.PHOTO, handle_photo_in_analyze_mode)
+            ],
+            RECOMMENDATION_MODE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection),
+                MessageHandler(filters.PHOTO, handle_recommendation_photo)
+            ],
+            CATEGORY_SELECTION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection)
+            ],
+            ADMIN_MENU: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_menu)
+            ],
+            ADD_SUBSCRIPTION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_subscription)
+            ],
+            SELECT_DURATION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_select_duration)
+            ],
+            REMOVE_USER: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)
+            ],
+            SET_USER_DURATION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_set_duration)
+            ],
+            BROADCAST_MESSAGE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast)
+            ],
+            COUNTRY_SELECTION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_country_selection)
+            ]
+        },
+        fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
+        allow_reentry=True
+    )
     
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("help", help_command))
