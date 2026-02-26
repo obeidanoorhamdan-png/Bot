@@ -137,7 +137,7 @@ ARAB_COUNTRIES = {
     "عمان 🇴🇲": "Asia/Muscat",
     "اليمن 🇾🇪": "Asia/Aden",
     "العراق 🇮🇶": "Asia/Baghdad",
-    "الأردن 🇴🇯": "Asia/Amman",
+    "الأردن 🇯🇴": "Asia/Amman",
     "لبنان 🇱🇧": "Asia/Beirut",
     "سوريا 🇸🇾": "Asia/Damascus",
     "ليبيا 🇾🇱": "Africa/Tripoli",
@@ -170,11 +170,9 @@ MAJOR_COUNTRIES = {
 
 # دالة للحصول على المنطقة الزمنية للمستخدم
 def get_user_timezone(user_id):
-    """الحصول على المنطقة الزمنية للمستخدم من قاعدة البيانات"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # التحقق من وجود عمود country_timezone
     cursor.execute("PRAGMA table_info(users)")
     columns = [col[1] for col in cursor.fetchall()]
     
@@ -188,14 +186,12 @@ def get_user_timezone(user_id):
     
     if result and result[0]:
         return result[0]
-    return "Asia/Gaza"  # القيمة الافتراضية
+    return "Asia/Gaza"
 
 def set_user_timezone(user_id, timezone):
-    """تعيين المنطقة الزمنية للمستخدم"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # التحقق من وجود المستخدم
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
     if not cursor.fetchone():
         cursor.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
@@ -208,18 +204,15 @@ def set_user_timezone(user_id, timezone):
     return True
 
 def get_localized_time(user_id):
-    """الحصول على الوقت المحلي حسب منطقة المستخدم"""
     try:
         timezone_str = get_user_timezone(user_id)
         user_tz = pytz.timezone(timezone_str)
         return datetime.now(user_tz)
     except Exception as e:
         print(f"⚠️ خطأ في الحصول على الوقت المحلي: {e}")
-        return datetime.now(pytz.timezone('Asia/Gaza'))  # الرجوع للافتراضي
+        return datetime.now(pytz.timezone('Asia/Gaza'))
 
-# تعديل دالة get_market_session لاستخدام المنطقة الزمنية للمستخدم
 def get_market_session(user_id=None):
-    """الحصول على جلسة السوق باستخدام المنطقة الزمنية للمستخدم"""
     try:
         if user_id:
             local_time = get_localized_time(user_id)
@@ -229,7 +222,6 @@ def get_market_session(user_id=None):
         current_hour = local_time.hour
         timezone_name = get_user_timezone(user_id) if user_id else "Asia/Gaza"
         
-        # تحديد الجلسة حسب التوقيت العالمي
         if 2 <= current_hour < 8:
             return "الجلسة الآسيوية", f"{current_hour:02d}:00-{current_hour+6:02d}:00 بالتوقيت المحلي", "منخفضة", timezone_name
         elif 8 <= current_hour < 14:
@@ -244,7 +236,6 @@ def get_market_session(user_id=None):
         print(f"⚠️ خطأ في تحديد جلسة السوق: {e}")
         return "جلسة عالمية", "غير محددة", "متوسطة", "Asia/Gaza"
 
-# توزيع العملات للنظام الجديد
 CATEGORIES = {
     "أزواج العملات 🏛️": [
         "EUR/USD (OTC)", "GBP/USD (OTC)", "USD/JPY (OTC)", "USD/CHF (OTC)",
@@ -270,15 +261,12 @@ CATEGORIES = {
     ]
 }
 
-# إعدادات إضافية
 IMAGE_CACHE_DIR = "image_cache"
-MAX_IMAGE_SIZE = (1024, 1024)  # أقصى حجم للصورة بعد الضغط
-IMAGE_QUALITY = 95  # جودة الصورة بعد الضغط (من 0-100)
+MAX_IMAGE_SIZE = (1024, 1024)
+IMAGE_QUALITY = 95
 
-# حالات المحادثة (للنسخة الجديدة V2)
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION, ADMIN_MENU, ADD_SUBSCRIPTION, SELECT_DURATION, REMOVE_USER, BROADCAST_MESSAGE, SET_USER_DURATION, COUNTRY_SELECTION = range(14)
 
-# إنشاء المجلدات الضرورية
 for directory in [IMAGE_CACHE_DIR, BACKUP_DIR]:
     if not os.path.exists(directory):
         os.makedirs(directory)
@@ -289,11 +277,7 @@ for directory in [IMAGE_CACHE_DIR, BACKUP_DIR]:
 # ============================================
 
 class SubscriptionSystem:
-    """
-    نظام اشتراك متطور وآمن بالكامل
-    """
     
-    # أنواع الاشتراكات
     SUBSCRIPTION_TYPES = {
         'trial': {'name': 'تجريبي', 'duration': 86400, 'features': ['basic_analysis']},
         'hourly': {'name': 'ساعة', 'duration': 3600, 'features': ['basic_analysis']},
@@ -306,11 +290,9 @@ class SubscriptionSystem:
     
     @staticmethod
     def init_db():
-        """تهيئة قاعدة بيانات نظام الاشتراك المتطور"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
-        # جدول المستخدمين الرئيسي
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -332,7 +314,6 @@ class SubscriptionSystem:
             )
         ''')
         
-        # جدول الاشتراكات النشطة
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS active_subscriptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -355,7 +336,6 @@ class SubscriptionSystem:
             )
         ''')
         
-        # جدول سجل الاشتراكات
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS subscription_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -372,7 +352,6 @@ class SubscriptionSystem:
             )
         ''')
         
-        # جدول الصلاحيات
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS permissions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -389,7 +368,6 @@ class SubscriptionSystem:
             )
         ''')
         
-        # جدول إحصائيات الاستخدام
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS usage_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -404,7 +382,6 @@ class SubscriptionSystem:
             )
         ''')
         
-        # جدول سجل التغييرات
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS change_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -421,15 +398,11 @@ class SubscriptionSystem:
         
         conn.commit()
         conn.close()
-        
-        # إنشاء فهارس لتحسين الأداء
         SubscriptionSystem.create_indexes()
-        
         print("✅ تم تهيئة نظام الاشتراك المتطور بنجاح")
     
     @staticmethod
     def create_indexes():
-        """إنشاء فهارس لتحسين أداء قاعدة البيانات"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
@@ -459,15 +432,12 @@ class SubscriptionSystem:
     
     @staticmethod
     def register_user(user_id, username=None, first_name=None, last_name=None, language_code=None, is_bot=False):
-        """تسجيل مستخدم جديد في النظام"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
         try:
-            # التحقق من وجود المستخدم
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             if cursor.fetchone():
-                # تحديث وقت آخر نشاط
                 cursor.execute("""
                     UPDATE users 
                     SET last_active = CURRENT_TIMESTAMP,
@@ -481,7 +451,6 @@ class SubscriptionSystem:
                 conn.commit()
                 return True, "مستخدم موجود بالفعل"
             
-            # إضافة مستخدم جديد
             cursor.execute("""
                 INSERT INTO users (
                     user_id, username, first_name, last_name, language_code, is_bot
@@ -489,8 +458,6 @@ class SubscriptionSystem:
             """, (user_id, username, first_name, last_name, language_code, is_bot))
             
             conn.commit()
-            
-            # تسجيل الحدث
             SubscriptionSystem.log_change('users', user_id, 'INSERT', 
                                         old_data=None, 
                                         new_data={'user_id': user_id, 'username': username},
@@ -506,44 +473,35 @@ class SubscriptionSystem:
     
     @staticmethod
     def add_subscription(user_id, subscription_type, added_by=ADMIN_ID, reason=""):
-        """إضافة اشتراك مباشر لمستخدم"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
         try:
-            # بدء المعاملة
             cursor.execute("BEGIN TRANSACTION")
             
-            # التحقق من صحة نوع الاشتراك
             if subscription_type not in SubscriptionSystem.SUBSCRIPTION_TYPES:
                 conn.rollback()
                 return False, "نوع اشتراك غير صالح"
             
-            # التحقق من وجود المستخدم
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             if not cursor.fetchone():
-                # تسجيل المستخدم إذا لم يكن موجوداً
                 cursor.execute("""
                     INSERT INTO users (user_id) VALUES (?)
                 """, (user_id,))
             
-            # الحصول على مدة الاشتراك
             duration = SubscriptionSystem.SUBSCRIPTION_TYPES[subscription_type]['duration']
             
-            # حساب تاريخ انتهاء الاشتراك
             start_date = datetime.now()
             end_date = None
             if duration > 0:
                 end_date = start_date + timedelta(seconds=duration)
             
-            # إلغاء أي اشتراكات سابقة نشطة
             cursor.execute("""
                 UPDATE active_subscriptions 
                 SET is_active = 0
                 WHERE user_id = ? AND is_active = 1
             """, (user_id,))
             
-            # إنشاء اشتراك جديد
             sub_name = SubscriptionSystem.SUBSCRIPTION_TYPES[subscription_type]['name']
             cursor.execute("""
                 INSERT INTO active_subscriptions (
@@ -556,11 +514,9 @@ class SubscriptionSystem:
             
             sub_id = cursor.lastrowid
             
-            # إضافة الصلاحيات المرتبطة بالاشتراك
             features = SubscriptionSystem.SUBSCRIPTION_TYPES[subscription_type]['features']
             for feature in features:
                 if feature == 'all':
-                    # إضافة جميع الصلاحيات
                     all_features = ['basic_analysis', 'chat', 'recommendations', 'advanced_analysis', 'priority']
                     for f in all_features:
                         try:
@@ -579,7 +535,6 @@ class SubscriptionSystem:
                     except:
                         pass
             
-            # تسجيل في سجل الاشتراكات
             cursor.execute("""
                 INSERT INTO subscription_history (
                     user_id, action, new_subscription, reason, performed_by
@@ -587,8 +542,6 @@ class SubscriptionSystem:
             """, (user_id, 'add', subscription_type, reason, added_by))
             
             conn.commit()
-            
-            # تحديث قاعدة البيانات الرئيسية
             SubscriptionSystem.sync_with_main_db(user_id, end_date.isoformat() if end_date else None)
             
             return True, {
@@ -606,13 +559,11 @@ class SubscriptionSystem:
     
     @staticmethod
     def sync_with_main_db(user_id, end_date):
-        """مزامنة مع قاعدة البيانات الرئيسية"""
         conn = None
         try:
             conn = sqlite3.connect(DB_NAME)
             cursor = conn.cursor()
             
-            # الحصول على اسم المستخدم من قاعدة البيانات الجديدة
             sub_conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
             sub_cursor = sub_conn.cursor()
             sub_cursor.execute("SELECT username FROM users WHERE user_id = ?", (user_id,))
@@ -620,7 +571,6 @@ class SubscriptionSystem:
             username = user_result[0] if user_result else None
             sub_conn.close()
             
-            # التحقق من وجود المستخدم في قاعدة البيانات الرئيسية
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             if cursor.fetchone():
                 cursor.execute("""
@@ -646,12 +596,10 @@ class SubscriptionSystem:
     
     @staticmethod
     def check_subscription(user_id):
-        """التحقق من صلاحية اشتراك المستخدم"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
         try:
-            # التحقق من حظر المستخدم
             cursor.execute("""
                 SELECT is_blocked FROM users WHERE user_id = ?
             """, (user_id,))
@@ -659,7 +607,6 @@ class SubscriptionSystem:
             if result and result[0] == 1:
                 return False, "محظور", {'blocked': True}
             
-            # البحث عن اشتراك نشط
             cursor.execute("""
                 SELECT subscription_type, subscription_name, start_date, end_date, metadata
                 FROM active_subscriptions 
@@ -673,12 +620,10 @@ class SubscriptionSystem:
             
             sub_type, sub_name, start_date, end_date, metadata = result
             
-            # التحقق من تاريخ الانتهاء
             if end_date:
                 try:
                     end = datetime.fromisoformat(end_date)
                     if end < datetime.now():
-                        # تحديث حالة الاشتراك
                         cursor.execute("""
                             UPDATE active_subscriptions 
                             SET is_active = 0
@@ -689,7 +634,6 @@ class SubscriptionSystem:
                 except:
                     pass
             
-            # الحصول على الصلاحيات
             cursor.execute("""
                 SELECT permission FROM permissions 
                 WHERE user_id = ? AND is_active = 1
@@ -712,7 +656,6 @@ class SubscriptionSystem:
     
     @staticmethod
     def has_permission(user_id, permission):
-        """التحقق من صلاحية محددة للمستخدم"""
         if user_id == ADMIN_ID:
             return True
         
@@ -720,7 +663,6 @@ class SubscriptionSystem:
         cursor = conn.cursor()
         
         try:
-            # التحقق من الحظر أولاً
             cursor.execute("SELECT is_blocked FROM users WHERE user_id = ?", (user_id,))
             result = cursor.fetchone()
             if result and result[0] == 1:
@@ -739,7 +681,6 @@ class SubscriptionSystem:
     
     @staticmethod
     def increment_usage(user_id, feature, time_used=0):
-        """تسجيل استخدام ميزة"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
@@ -761,7 +702,6 @@ class SubscriptionSystem:
     
     @staticmethod
     def get_user_subscriptions(user_id):
-        """الحصول على جميع اشتراكات المستخدم"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
@@ -781,7 +721,6 @@ class SubscriptionSystem:
     
     @staticmethod
     def get_all_users():
-        """الحصول على جميع المستخدمين"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
@@ -802,7 +741,6 @@ class SubscriptionSystem:
     
     @staticmethod
     def get_all_subscribers():
-        """الحصول على جميع المشتركين النشطين فقط"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
@@ -825,22 +763,18 @@ class SubscriptionSystem:
     
     @staticmethod
     def get_stats():
-        """الحصول على إحصائيات النظام"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
         stats = {}
         
         try:
-            # إجمالي المستخدمين
             cursor.execute("SELECT COUNT(*) FROM users")
             stats['total_users'] = cursor.fetchone()[0]
             
-            # المستخدمين المحظورين
             cursor.execute("SELECT COUNT(*) FROM users WHERE is_blocked = 1")
             stats['blocked_users'] = cursor.fetchone()[0]
             
-            # المستخدمين النشطين
             cursor.execute("""
                 SELECT COUNT(DISTINCT user_id) 
                 FROM active_subscriptions 
@@ -848,7 +782,6 @@ class SubscriptionSystem:
             """)
             stats['active_users'] = cursor.fetchone()[0]
             
-            # الاشتراكات حسب النوع
             cursor.execute("""
                 SELECT subscription_type, COUNT(*) 
                 FROM active_subscriptions 
@@ -857,7 +790,6 @@ class SubscriptionSystem:
             """)
             stats['subscriptions_by_type'] = dict(cursor.fetchall())
             
-            # استخدام الميزات
             cursor.execute("""
                 SELECT feature, SUM(count) as total
                 FROM usage_stats
@@ -876,7 +808,6 @@ class SubscriptionSystem:
     
     @staticmethod
     def log_change(table_name, record_id, action, old_data, new_data, changed_by):
-        """تسجيل تغيير في قاعدة البيانات"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
@@ -899,14 +830,12 @@ class SubscriptionSystem:
     
     @staticmethod
     def revoke_subscription(user_id, reason="Revoked by admin", performed_by=ADMIN_ID):
-        """إلغاء اشتراك مستخدم"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
         try:
             cursor.execute("BEGIN TRANSACTION")
             
-            # الحصول على الاشتراك النشط
             cursor.execute("""
                 SELECT subscription_type FROM active_subscriptions
                 WHERE user_id = ? AND is_active = 1
@@ -920,21 +849,18 @@ class SubscriptionSystem:
             
             old_subscription = result[0]
             
-            # إلغاء الاشتراك
             cursor.execute("""
                 UPDATE active_subscriptions 
                 SET is_active = 0
                 WHERE user_id = ? AND is_active = 1
             """, (user_id,))
             
-            # إلغاء الصلاحيات
             cursor.execute("""
                 UPDATE permissions 
                 SET is_active = 0
                 WHERE user_id = ?
             """, (user_id,))
             
-            # تسجيل في سجل الاشتراكات
             cursor.execute("""
                 INSERT INTO subscription_history (
                     user_id, action, old_subscription, reason, performed_by
@@ -942,8 +868,6 @@ class SubscriptionSystem:
             """, (user_id, 'revoke', old_subscription, reason, performed_by))
             
             conn.commit()
-            
-            # تحديث قاعدة البيانات الرئيسية
             SubscriptionSystem.sync_with_main_db(user_id, None)
             
             return True, "تم إلغاء الاشتراك بنجاح"
@@ -956,35 +880,30 @@ class SubscriptionSystem:
     
     @staticmethod
     def block_user(user_id, reason="Blocked by admin", performed_by=ADMIN_ID):
-        """حظر مستخدم"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
         try:
             cursor.execute("BEGIN TRANSACTION")
             
-            # حظر المستخدم
             cursor.execute("""
                 UPDATE users 
                 SET is_blocked = 1, blocked_reason = ?
                 WHERE user_id = ?
             """, (reason, user_id))
             
-            # إلغاء أي اشتراكات نشطة
             cursor.execute("""
                 UPDATE active_subscriptions 
                 SET is_active = 0
                 WHERE user_id = ? AND is_active = 1
             """, (user_id,))
             
-            # إلغاء الصلاحيات
             cursor.execute("""
                 UPDATE permissions 
                 SET is_active = 0
                 WHERE user_id = ?
             """, (user_id,))
             
-            # تسجيل في سجل الاشتراكات
             cursor.execute("""
                 INSERT INTO subscription_history (
                     user_id, action, reason, performed_by
@@ -1003,7 +922,6 @@ class SubscriptionSystem:
     
     @staticmethod
     def unblock_user(user_id, performed_by=ADMIN_ID):
-        """إلغاء حظر مستخدم"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
@@ -1014,7 +932,6 @@ class SubscriptionSystem:
                 WHERE user_id = ?
             """, (user_id,))
             
-            # تسجيل في سجل الاشتراكات
             cursor.execute("""
                 INSERT INTO subscription_history (
                     user_id, action, performed_by
@@ -1032,14 +949,12 @@ class SubscriptionSystem:
     
     @staticmethod
     def extend_subscription(user_id, additional_seconds, reason="Extended by admin", performed_by=ADMIN_ID):
-        """تمديد اشتراك مستخدم"""
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
         try:
             cursor.execute("BEGIN TRANSACTION")
             
-            # الحصول على الاشتراك النشط
             cursor.execute("""
                 SELECT id, end_date FROM active_subscriptions
                 WHERE user_id = ? AND is_active = 1
@@ -1053,7 +968,6 @@ class SubscriptionSystem:
             
             sub_id, current_end = result
             
-            # حساب تاريخ الانتهاء الجديد
             if current_end:
                 try:
                     current_end_date = datetime.fromisoformat(current_end)
@@ -1063,14 +977,12 @@ class SubscriptionSystem:
             else:
                 new_end_date = datetime.now() + timedelta(seconds=additional_seconds)
             
-            # تحديث الاشتراك
             cursor.execute("""
                 UPDATE active_subscriptions 
                 SET end_date = ?
                 WHERE id = ?
             """, (new_end_date.isoformat(), sub_id))
             
-            # تسجيل في سجل الاشتراكات
             cursor.execute("""
                 INSERT INTO subscription_history (
                     user_id, action, old_subscription, new_subscription, reason, performed_by
@@ -1078,8 +990,6 @@ class SubscriptionSystem:
             """, (user_id, 'extend', 'active', 'extended', reason, performed_by))
             
             conn.commit()
-            
-            # تحديث قاعدة البيانات الرئيسية
             SubscriptionSystem.sync_with_main_db(user_id, new_end_date.isoformat())
             
             return True, f"تم تمديد الاشتراك حتى {new_end_date.strftime('%Y-%m-%d %H:%M')}"
@@ -1090,34 +1000,24 @@ class SubscriptionSystem:
         finally:
             conn.close()
 
-# دالة مساعدة للتحقق من الاشتراك في الدوال الأخرى
 def check_user_subscription(user_id):
-    """التحقق من صلاحية المستخدم (متوافقة مع الكود القديم)"""
     if user_id == ADMIN_ID:
         return True, "مشرف"
     
     status, message, details = SubscriptionSystem.check_subscription(user_id)
     return status, message
 
-# ============================================
-# باقي الكود كما هو مع تعديلات دالة get_market_session
-# ============================================
-
 def init_db_with_subscription():
-    """تهيئة قاعدة البيانات الرئيسية"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # التحقق من وجود قاعدة بيانات قديمة
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
     table_exists = cursor.fetchone()
     
     if table_exists:
-        # التحقق من بنية الجدول الحالية وإضافة الأعمدة المفقودة
         cursor.execute("PRAGMA table_info(users)")
         existing_columns = [col[1] for col in cursor.fetchall()]
         
-        # الأعمدة المطلوبة مع القيم الافتراضية
         required_columns = {
             'username': 'TEXT',
             'candle': "TEXT DEFAULT 'M1'",
@@ -1139,7 +1039,6 @@ def init_db_with_subscription():
                 except Exception as e:
                     print(f"⚠️ خطأ في إضافة عمود {col_name}: {e}")
     
-    # إنشاء جدول المستخدمين الأساسي إذا لم يكن موجوداً
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY, 
@@ -1156,7 +1055,6 @@ def init_db_with_subscription():
         )
     ''')
     
-    # جدول سجل المحادثات
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS chat_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1167,7 +1065,6 @@ def init_db_with_subscription():
         )
     ''')
     
-    # جدول تتبع التغييرات
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS data_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1178,15 +1075,12 @@ def init_db_with_subscription():
         )
     ''')
     
-    # إضافة المشرف الرئيسي مع الحفاظ على البيانات الموجودة
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (ADMIN_ID,))
     admin_exists = cursor.fetchone()
     
     if admin_exists:
-        # تحديث صلاحية المشرف إذا كان موجوداً
         cursor.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (ADMIN_ID,))
     else:
-        # إضافة المشرف الجديد
         cursor.execute("INSERT INTO users (user_id, username, is_admin, country_timezone) VALUES (?, ?, ?, ?)", 
                       (ADMIN_ID, "Sz2zv", 1, "Asia/Gaza"))
     
@@ -1194,16 +1088,12 @@ def init_db_with_subscription():
     conn.close()
     
     print("✅ Database initialized with timezone support")
-    
-    # تهيئة نظام الاشتراك الجديد
     SubscriptionSystem.init_db()
 
 def check_subscription(user_id):
-    """التحقق من صلاحية اشتراك المستخدم (متوافقة مع الكود القديم)"""
     return check_user_subscription(user_id)
 
 def log_data_change(action, user_id, details=""):
-    """تسجيل أي تغيير في البيانات"""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -1217,7 +1107,6 @@ def log_data_change(action, user_id, details=""):
         print(f"⚠️ خطأ في تسجيل التغيير: {e}")
 
 def cleanup_old_images():
-    """تنظيف الصور القديمة - حذف الملفات الأقدم من 1 دقائق"""
     try:
         current_time = time.time()
         deleted_count = 0
@@ -1229,17 +1118,16 @@ def cleanup_old_images():
                     try:
                         os.remove(filepath)
                         deleted_count += 1
-                        print(f"🧹 تم حذف الملف القديم: {filename} (عمره {int(file_age/60)} دقيقة)")
+                        print(f"🧹 تم حذف الملف القديم: {filename} (عمره {int(file_age)} ثانية)")
                     except Exception as e:
                         print(f"⚠️ خطأ في حذف الملف {filename}: {e}")
         
         if deleted_count > 0:
-            print(f"✅ تم حذف {deleted_count} ملف مؤقت قديم (أقدم من 5 دقائق)")
+            print(f"✅ تم حذف {deleted_count} ملف مؤقت قديم (أقدم من 60 ثانية)")
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الصور القديمة: {e}")
 
 def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
-    """ضغط الصورة لتقليل الحجم مع الحفاظ على الجودة"""
     try:
         with Image.open(image_path) as img:
             if img.mode in ('RGBA', 'LA', 'P'):
@@ -1267,11 +1155,9 @@ def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
         return image_path
 
 def download_chart_image(symbol="BTCUSDT"):
-    """سحب صورة شارت من TradingView"""
     try:
         API_KEY = "c94425"
         
-        # تحويل اسم الرمز إلى تنسيق TradingView
         symbol_mapping = {
             "EUR/USD (OTC)": "FX:EURUSD",
             "GBP/USD (OTC)": "FX:GBPUSD",
@@ -1329,7 +1215,7 @@ def download_chart_image(symbol="BTCUSDT"):
         
         api_url = f"https://api.screenshotmachine.com/?key={API_KEY}&url={CHART_URL}&dimension=800x600&device=desktop&delay=2000&format=png"
         
-        print(f"📥 جاري سحب صورة للعملة الذي تم اختيارها 📥")
+        print(f"📥 جاري سحب صورة للعملة {symbol}")
         
         response = requests.get(api_url, timeout=30)
         
@@ -1351,25 +1237,20 @@ def download_chart_image(symbol="BTCUSDT"):
         return None
 
 def save_user_setting(user_id, col, val):
-    """حفظ إعدادات المستخدم مع تسجيل التغيير"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # التحقق من وجود المستخدم
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
     if not cursor.fetchone():
         cursor.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
     
-    # حفظ الإعداد
     cursor.execute(f"UPDATE users SET {col} = ? WHERE user_id = ?", (val, user_id))
     conn.commit()
     conn.close()
     
-    # تسجيل التغيير
     log_data_change("update_setting", user_id, f"{col}={val}")
 
 def get_user_setting(user_id):
-    """الحصول على إعدادات المستخدم"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT candle, trade_time, last_analysis_context, last_analysis_time, country_timezone FROM users WHERE user_id = ?", (user_id,))
@@ -1380,7 +1261,6 @@ def get_user_setting(user_id):
     return ("M1", "قصير (1m-15m)", "", None, "Asia/Gaza")
 
 def save_analysis_context(user_id, analysis_text):
-    """حفظ تحليل الصورة الأخيرة كسياق للتحليل التالي"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     summary = analysis_text[:500]
@@ -1390,7 +1270,6 @@ def save_analysis_context(user_id, analysis_text):
     log_data_change("save_analysis", user_id, "analysis saved")
 
 def get_analysis_context(user_id):
-    """الحصول على سياق التحليل السابق"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT last_analysis_context, last_analysis_time FROM users WHERE user_id = ?", (user_id,))
@@ -1409,32 +1288,26 @@ def get_analysis_context(user_id):
     return "", None
 
 def cleanup_old_database_records():
-    """تنظيف سجلات قاعدة البيانات القديمة مع الحفاظ على بيانات المشتركين"""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         
-        # حذف سجلات المحادثات القديمة فقط (أقدم من 1 يوم)
-        month_ago = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute("DELETE FROM chat_history WHERE timestamp < ?", (month_ago,))
+        one_day_ago = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
+        cursor.execute("DELETE FROM chat_history WHERE timestamp < ?", (one_day_ago,))
         deleted_rows = cursor.rowcount
         
-        # حذف سجلات التتبع القديمة (أقدم من 1 يوم)
-        two_months_ago = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute("DELETE FROM data_log WHERE timestamp < ?", (two_months_ago,))
+        cursor.execute("DELETE FROM data_log WHERE timestamp < ?", (one_day_ago,))
         
         conn.commit()
         conn.close()
         
         if deleted_rows > 0:
-            print(f"🧹 تم حذف {deleted_rows} سجل دردشة قديم (أقدم من 1 يوم)")
+            print(f"🧹 تم حذف {deleted_rows} سجل دردشة قديم (أقدم من يوم واحد)")
             
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف قاعدة البيانات: {e}")
 
-# تعديل دالة format_trade_time_for_prompt
 def format_trade_time_for_prompt(trade_time):
-    """تنسيق وقت الصفقة للبرومبت"""
     if trade_time == "قصير (1m-15m)":
         return "مدة الصفقة المتوقعة: قصير الأجل (1 دقيقة إلى 15 دقيقة) - تنفيذ سريع، مخاطر منخفضة"
     elif trade_time == "متوسط (4h-Daily)":
@@ -1445,7 +1318,6 @@ def format_trade_time_for_prompt(trade_time):
         return f"مدة الصفقة المتوقعة: {trade_time}"
 
 def encode_image(image_path):
-    """تحويل الصورة إلى base64 بشكل صحيح"""
     try:
         with open(image_path, "rb") as image_file:
             encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
@@ -1455,7 +1327,6 @@ def encode_image(image_path):
         return None
 
 def clean_repeated_text(text):
-    """تنظيف النص من التكرارات وتحسين التنسيق"""
     if not text:
         return ""
     
@@ -1486,7 +1357,6 @@ def clean_repeated_text(text):
     return text
 
 def format_as_copyable_code(text, language="markdown"):
-    """تنسيق النص على شكل Code Block قابل للنسخ بنقرة واحدة"""
     text = clean_repeated_text(text)
     text = re.sub(r'```[\w]*\n?', '', text)
     text = re.sub(r'```\n?', '', text)
@@ -1494,7 +1364,6 @@ def format_as_copyable_code(text, language="markdown"):
     return formatted_text
 
 def split_message_with_copy_support(text, max_length=3500):
-    """تقسيم الرسالة الطويلة مع الحفاظ على دعم النسخ"""
     if len(text) <= max_length:
         return [text]
     
@@ -1521,7 +1390,6 @@ def split_message_with_copy_support(text, max_length=3500):
     return formatted_parts
 
 def split_message(text, max_length=4000):
-    """تقسيم الرسالة الطويلة إلى أجزاء"""
     if len(text) <= max_length:
         return [text]
     
@@ -1542,19 +1410,11 @@ def split_message(text, max_length=4000):
     return parts
 
 def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None, immediate_delete: bool = True):
-    """تنظيف البيانات المؤقتة للمستخدم مع حذف فوري للملفات
-    
-    Args:
-        context: سياق البوت
-        user_id: معرف المستخدم
-        immediate_delete: حذف فوري للملفات (True) أو الانتظار للتنظيف الدوري (False)
-    """
     try:
         deleted_files = 0
         if user_id and os.path.exists(IMAGE_CACHE_DIR):
             try:
                 for filename in os.listdir(IMAGE_CACHE_DIR):
-                    # حذف جميع ملفات المستخدم (الملفات التي تحتوي على user_id في اسمها)
                     if f"_{user_id}_" in filename or filename.startswith(f"img_{user_id}_") or filename.startswith(f"chart_{user_id}_"):
                         filepath = os.path.join(IMAGE_CACHE_DIR, filename)
                         if os.path.exists(filepath):
@@ -1568,7 +1428,6 @@ def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None, i
             except Exception as e:
                 print(f"⚠️ خطأ في تنظيف ملفات المستخدم {user_id}: {e}")
         
-        # حذف المفاتيح من سياق المستخدم
         keys_to_remove = [
             'dual_images', 'dual_image_paths', 'dual_analysis_mode',
             'last_analysis', 'dual_analysis_start', 'original_paths',
@@ -1589,15 +1448,12 @@ def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None, i
         print(f"⚠️ خطأ في تنظيف الذاكرة: {e}")
 
 def save_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE, symbol: str):
-    """حفظ آخر رمز تم اختياره في التوصيات"""
     context.user_data['last_recommendation_symbol'] = symbol
 
 def get_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE):
-    """الحصول على آخر رمز تم اختياره في التوصيات"""
-    return context.user_data.get('last_recommendation_symbol', 'BTC (OTC)')
+    return context.user_data.get('last_recommendation_symbol', 'EUR/USD (OTC)')
 
 def get_mistral_analysis(symbol):
-
     headers = {
         "Authorization": f"Bearer {MISTRAL_KEY}",
         "Content-Type": "application/json"
@@ -1680,17 +1536,12 @@ def get_mistral_analysis(symbol):
         print(f"Error in get_mistral_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
 
-# --- دوال معالجة البوت (محدثة لنظام الاشتراك الجديد مع إضافة اختيار الدولة) ---
-
 async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """التحقق من الاشتراك للمستخدمين غير المشتركين"""
     user_id = update.effective_user.id
     
-    # المشرف دائماً له صلاحية
     if user_id == ADMIN_ID:
         return True
     
-    # تسجيل المستخدم في النظام
     user = update.effective_user
     SubscriptionSystem.register_user(
         user_id=user_id,
@@ -1704,7 +1555,6 @@ async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TY
     status, message, details = SubscriptionSystem.check_subscription(user_id)
     
     if not status:
-        # إخفاء جميع الأزرار وإظهار رسالة اشتراك فقط
         await update.message.reply_text(
             f"⚠️ **عذراً، ليس لديك صلاحية استخدام البوت**\n\n"
             f"❌ الحالة: {message}\n\n"
@@ -1718,30 +1568,26 @@ async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return False
     
-    # تسجيل استخدام
     SubscriptionSystem.increment_usage(user_id, 'bot_access')
     
     return True
 
 async def country_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض قائمة الدول لاختيار المنطقة الزمنية"""
     user_id = update.effective_user.id
     
-    # تجميع الدول في أزرار (كل صف يحتوي على 3 دول)
     country_list = list(ARAB_COUNTRIES.keys()) + list(MAJOR_COUNTRIES.keys())
     keyboard = []
     row = []
     
     for i, country in enumerate(country_list):
         row.append(country)
-        if len(row) == 2:  # صف من زرين
+        if len(row) == 2:
             keyboard.append(row)
             row = []
     
     if row:
         keyboard.append(row)
     
-    # إضافة خيارات إضافية
     keyboard.append(["🌍 جميع الدول", "🔍 بحث عن دولة"])
     keyboard.append(["الرجوع للقائمة الرئيسية"])
     
@@ -1759,7 +1605,6 @@ async def country_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return COUNTRY_SELECTION
 
 async def handle_country_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار الدولة"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
@@ -1779,12 +1624,11 @@ async def handle_country_selection(update: Update, context: ContextTypes.DEFAULT
         return MAIN_MENU
     
     elif user_message == "🌍 جميع الدول":
-        # عرض جميع الدول (العربية + الكبرى)
         all_countries = {**ARAB_COUNTRIES, **MAJOR_COUNTRIES}
         keyboard = []
         row = []
         
-        for country in list(all_countries.keys())[:30]:  # عرض أول 30 دولة
+        for country in list(all_countries.keys())[:30]:
             row.append(country)
             if len(row) == 2:
                 keyboard.append(row)
@@ -1809,14 +1653,12 @@ async def handle_country_selection(update: Update, context: ContextTypes.DEFAULT
         )
         return COUNTRY_SELECTION
     
-    # البحث عن الدولة المختارة
     all_countries = {**ARAB_COUNTRIES, **MAJOR_COUNTRIES, **COUNTRIES_TIMEZONES}
     
     if user_message in all_countries:
         timezone = all_countries[user_message]
         set_user_timezone(user_id, timezone)
         
-        # عرض الوقت الجديد
         local_time = get_localized_time(user_id).strftime('%Y-%m-%d %H:%M:%S')
         
         keyboard = [
@@ -1837,7 +1679,6 @@ async def handle_country_selection(update: Update, context: ContextTypes.DEFAULT
         )
         return MAIN_MENU
     
-    # إذا كان بحثاً
     if len(user_message) > 2:
         matching_countries = []
         for country in all_countries.keys():
@@ -1862,12 +1703,10 @@ async def handle_country_selection(update: Update, context: ContextTypes.DEFAULT
     return COUNTRY_SELECTION
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء البوت - مع إضافة زر دولتك"""
     user = update.effective_user
     user_id = user.id
     username = user.username or str(user_id)
     
-    # تسجيل المستخدم في النظام الجديد
     SubscriptionSystem.register_user(
         user_id=user_id,
         username=username,
@@ -1877,19 +1716,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_bot=user.is_bot
     )
     
-    # تنظيف الذاكرة المؤقتة
     cleanup_user_data(context, user_id)
     
-    # التحقق من صلاحية المشرف والاشتراك
     is_admin = (user_id == ADMIN_ID)
     status, message, details = SubscriptionSystem.check_subscription(user_id)
     
-    # الحصول على الوقت المحلي للمستخدم
     local_time = get_localized_time(user_id).strftime('%Y-%m-%d %H:%M:%S')
     user_timezone = get_user_timezone(user_id)
     
     if is_admin:
-        # المشرف - يرى جميع الأزرار
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
             ["💬 دردشة", "📈 توصية"],
@@ -1910,7 +1745,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     elif status:
-        # مستخدم مشترك - يرى جميع الأزرار مع زر الدولة
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
             ["💬 دردشة", "📈 توصية"],
@@ -1945,7 +1779,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     else:
-        # مستخدم غير مشترك - لا يرى أي أزرار، فقط رسالة للتواصل مع المشرف
         await update.message.reply_text(
             f"⚠️ عذراً، ليس لديك صلاحية استخدام البوت\n\n"
             f"❌ الحالة: {message}\n\n"
@@ -1959,7 +1792,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return MAIN_MENU
     
-    # إظهار القائمة للمستخدمين المشتركين فقط
     await update.message.reply_text(
         welcome_msg,
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -1967,11 +1799,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
     
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات القائمة الرئيسية"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
-    # التحقق من الاشتراك (لغير المشرف)
     if user_id != ADMIN_ID:
         status, _, _ = SubscriptionSystem.check_subscription(user_id)
         if not status:
@@ -2034,7 +1864,6 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_message == "📈 توصية":
         return await start_recommendation_mode(update, context)
     
-    # إعادة عرض القائمة الرئيسية
     keyboard = [
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
         ["💬 دردشة", "📈 توصية"],
@@ -2050,11 +1879,9 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار سرعة الشموع"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
-    # التحقق من الاشتراك
     if user_id != ADMIN_ID:
         status, _, _ = SubscriptionSystem.check_subscription(user_id)
         if not status:
@@ -2102,11 +1929,9 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
     return SETTINGS_CANDLE
 
 async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار مدة الصفقة"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
-    # التحقق من الاشتراك
     if user_id != ADMIN_ID:
         status, _, _ = SubscriptionSystem.check_subscription(user_id)
         if not status:
@@ -2157,11 +1982,9 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
     return SETTINGS_TIME
 
 async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة وضع التحليل"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
-    # التحقق من الاشتراك
     if user_id != ADMIN_ID:
         status, _, _ = SubscriptionSystem.check_subscription(user_id)
         if not status:
@@ -2193,8 +2016,6 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ANALYZE_MODE
 
 async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء وضع الدردشة المتقدم"""
-    # التحقق من الاشتراك
     if not await subscription_required(update, context):
         return CHAT_MODE
     
@@ -2219,18 +2040,14 @@ async def start_chat_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CHAT_MODE
 
 async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة رسائل الدردشة مع برومبت قوي"""
-    # التحقق من الاشتراك
     if not await subscription_required(update, context):
         return CHAT_MODE
     
     user_message = update.message.text
     user_id = update.effective_user.id
     
-    # تسجيل استخدام
     SubscriptionSystem.increment_usage(user_id, 'chat_message')
     
-    # التحقق من الأوامر الخاصة
     if user_message == "ايقاف الدردشة":
         main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"], ["🌍 دولتك"]]
         if user_id == ADMIN_ID:
@@ -2251,7 +2068,6 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return MAIN_MENU
     
-    # برومبتات متخصصة حسب الاختيار (نفس الكود السابق)
     system_prompts = {
         "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عميقة في:
 🎯 **التحليل الفني والمالي:** خبرة في أسواق المال، تحليل الشارتات، واستراتيجيات التداول
@@ -2328,7 +2144,6 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 • جذب الانتباه والإقناع"""
     }
     
-    # تحديد البرومبت المناسب
     selected_prompt = system_prompts.get(user_message, """أنت Obeida Trading، مساعد ذكي شامل يمتلك مزيجاً فريداً من:
 🧠 **الذكاء العميق:** فهم شامل لمجالات متعددة
 🎯 **الدقة الشديدة:** معلومات موثوقة ومدروسة بدقة
@@ -2356,7 +2171,6 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 **تذكر جيداً:** أنت Obeida Trading، المساعد الذكي الذي يحول التعقيد إلى بساطة، ويمنحك دائماً أكثر مما تطلب!""")
     
-    # إذا كان اختياراً من القائمة، اطلب التفاصيل
     if user_message in system_prompts:
         await update.message.reply_text(
             f"✅ **تم اختيار: {user_message}**\n\n"
@@ -2366,11 +2180,9 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return CHAT_MODE
     
-    # إظهار حالة المعالجة
     wait_msg = await update.message.reply_text("قاعد افكر استنى شوي 🤌...")
     
     try:
-        # استدعاء واجهة Mistral AI
         payload = {
             "model": MODEL_SUMMARY,
             "messages": [
@@ -2393,14 +2205,11 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         if response.status_code == 200:
             result = response.json()['choices'][0]['message']['content']
             
-            # تنظيف النص من التكرارات
             result = clean_repeated_text(result)
             
-            # إضافة تذييل مميز
             footer = "\n\n━━━━━━━━━━━━\n🤖 **Powered by - Obeida Trading ** 🤖"
             result = result + footer
             
-            # أزرار الدردشة المتقدمة
             chat_keyboard = [
                 ["🚀 مساعد شامل", "💼 استشارات احترافية"],
                 ["📈 تحليل استثماري", "👨‍💻 دعم برمجي"],
@@ -2408,10 +2217,8 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 ["ايقاف الدردشة", "الرجوع للقائمة الرئيسية"]
             ]
             
-            # تنسيق النتيجة مع دعم النسخ السريع
             formatted_result = format_as_copyable_code(result, "text")
             
-            # تقسيم الرسالة الطويلة
             if len(formatted_result) > 4000:
                 parts = split_message_with_copy_support(result, max_length=3500)
                 for i, part in enumerate(parts):
@@ -2428,7 +2235,6 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                     parse_mode="Markdown"
                 )
             
-            # إرسال الأزرار بعد الرد
             await update.message.reply_text(
                 "🔽 **اختر مجالاً آخر أو اطرح سؤالاً جديداً:**",
                 reply_markup=ReplyKeyboardMarkup(chat_keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -2450,8 +2256,6 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     return CHAT_MODE
 
 async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء وضع التوصية"""
-    # التحقق من الاشتراك
     if not await subscription_required(update, context):
         return RECOMMENDATION_MODE
     
@@ -2466,15 +2270,12 @@ async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAUL
     return RECOMMENDATION_MODE
 
 async def handle_recommendation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات نظام التوصية مع سحب الصور"""
-    # التحقق من الاشتراك
     if not await subscription_required(update, context):
         return RECOMMENDATION_MODE
     
     user_text = update.message.text.strip()
     user_id = update.effective_user.id
     
-    # العودة للقائمة الرئيسية
     if user_text == "الرجوع للقائمة الرئيسية":
         keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"], ["🌍 دولتك"]]
         if update.effective_user.id == ADMIN_ID:
@@ -2485,7 +2286,6 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
         )
         return MAIN_MENU
     
-    # التحقق من الأقسام الرئيسية
     if user_text in CATEGORIES:
         keyboard = [[asset] for asset in CATEGORIES[user_text]]
         keyboard.append(["🔙 العودة للقائمة", "الرجوع للقائمة الرئيسية"])
@@ -2496,44 +2296,34 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
         )
         return CATEGORY_SELECTION
     
-    # التحقق من العملة المختارة
     symbol_to_analyze = None
     for category_list in CATEGORIES.values():
         if user_text in category_list:
             symbol_to_analyze = user_text
             break
     
-    # إذا وجدت العملة، ابدأ التحليل مع سحب الصورة
     if symbol_to_analyze:
         save_last_recommendation_symbol(context, symbol_to_analyze)
         wait_msg = await update.message.reply_text(f"📸 تم سحب صورة وجاري تحليل 🤌...")
         
-        # تسجيل استخدام الميزة
         SubscriptionSystem.increment_usage(user_id, 'recommendation')
         
-        # سحب صورة الشارت أولاً
         chart_image_path = download_chart_image(symbol_to_analyze)
         
         if chart_image_path and os.path.exists(chart_image_path):
-            # إرسال الصورة للمستخدم
             with open(chart_image_path, 'rb') as photo:
                 await update.message.reply_photo(
                     photo=photo,
                     caption=f"📈 شارت {symbol_to_analyze} المباشر"
                 )
             
-            # استخدام الصورة للتحليل الفني
             try:
-                # استدعاء تحليل الصورة
                 await wait_msg.edit_text(f"استنى شويه قاعد أحلل {symbol_to_analyze} 🤌...")
                 
-                # إنشاء كائن تحديث مؤقت للصورة
                 from telegram import PhotoSize
                 
-                # تحميل الصورة ككائن PhotoSize
                 photo_file = await context.bot.get_file(chart_image_path)
                 
-                # إنشاء تحديث مؤقت
                 class TempUpdate:
                     def __init__(self, original_update, photo_path):
                         self.effective_user = original_update.effective_user
@@ -2562,7 +2352,6 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
                 
                 temp_update = TempUpdate(update, chart_image_path)
                 
-                # الحصول على إعدادات المستخدم
                 candle, trade_time, _, _, _ = get_user_setting(user_id)
                 
                 if not candle or not trade_time:
@@ -2577,7 +2366,6 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
                     )
                     return RECOMMENDATION_MODE
                 
-                # تحليل الصورة
                 analysis_result = await analyze_chart_image(
                     temp_update, 
                     context, 
@@ -2587,13 +2375,11 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
                     symbol_to_analyze
                 )
                 
-                # تنسيق النتيجة مع دعم النسخ السريع
                 formatted_result = format_as_copyable_code(analysis_result, "text")
                 await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
                 
             except Exception as e:
                 print(f"❌ خطأ في تحليل الصورة التلقائية: {e}")
-                # التحليل النصي الاحتياطي
                 analysis = get_mistral_analysis(symbol_to_analyze)
                 
                 final_msg = (
@@ -2608,13 +2394,11 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
                 formatted_result = format_as_copyable_code(final_msg, "text")
                 await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
             
-            # حذف الصورة المؤقتة
             try:
                 os.remove(chart_image_path)
             except:
                 pass
         else:
-            # إذا فشل سحب الصورة، استخدم التحليل النصي
             analysis = get_mistral_analysis(symbol_to_analyze)
             
             final_msg = (
@@ -2629,7 +2413,6 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
             formatted_result = format_as_copyable_code(final_msg, "text")
             await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
         
-        # عرض الأزرار للاستمرار
         reply_keyboard = [[key] for key in CATEGORIES.keys()]
         reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
         
@@ -2639,7 +2422,6 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
         )
         return RECOMMENDATION_MODE
     
-    # إذا كان النص "🔙 العودة للقائمة"
     if user_text == "🔙 العودة للقائمة":
         reply_keyboard = [[key] for key in CATEGORIES.keys()]
         reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
@@ -2650,7 +2432,6 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
         )
         return RECOMMENDATION_MODE
     
-    # إذا لم يطابق النص أي شيء
     await update.message.reply_text(
         "❌ خيار غير موجود. يرجى اختيار عملة من القائمة الظاهرة في الأزرار.\n\n"
         "اضغط 'الرجوع للقائمة الرئيسية' للعودة.",
@@ -2659,32 +2440,26 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     return RECOMMENDATION_MODE
 
 async def analyze_chart_image(update, context, image_path, candle, trade_time, symbol):
-    """تحليل صورة الشارت مع القوانين الجديدة والتعديلات الثلاثة والنسخة الهجومية V7.4 (التشريح الهيكلي الصارم)"""
     try:
         user_id = update.effective_user.id
         prev_context, prev_time = get_analysis_context(user_id)
         
-        # إنشاء رسالة انتظار
         wait_msg = await update.message.reply_text("🤔 جاري تحليل الصورة...")
         
-        # ضغط الصورة
         compressed_path = compress_image(image_path)
         
-        # استخدام الصورة المضغوطة للتحليل
         base64_img = encode_image(compressed_path)
         
         if not base64_img:
             await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
             return "❌ **خطأ في قراءة الصورة.**"
         
-        # الحصول على معلومات السيولة والتوقيت باستخدام المنطقة الزمنية للمستخدم
         session_name, session_time, session_vol, user_tz = get_market_session(user_id)
         local_time = get_localized_time(user_id)
         current_hour = local_time.hour
         current_minute = local_time.minute
         current_second = local_time.second
         
-        # حساب الثواني المتبقية
         seconds_remaining = 60 - current_second
         if candle.startswith('S'):
             candle_seconds = int(candle[1:]) if candle[1:].isdigit() else 5
@@ -2704,7 +2479,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         else:
             time_status = "✅ توقيت مستقر للتحليل"
 
-        # منطق ديناميكي: في الزخم القوي، الثواني الأخيرة هي "فرصة" وليست "خطراً"
         momentum_boost = True if seconds_remaining <= 10 and candle.startswith('S') else False
         
         candle_closing_status = f"الوقت المتبقي: {seconds_remaining} ثانية"
@@ -2713,7 +2487,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         elif seconds_remaining < 15:
             candle_closing_status += " ⚠️ (مرحلة تأكيد الاتجاه)"
         
-        # نظام الدرع الأساسي (Fundamental Shield)
         news_impact = "🟢 منخفض"
         news_warning = ""
         news_risk_multiplier = 1.0
@@ -2738,7 +2511,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
                 break
         
-        # الفلتر الزمني (Kill Zones)
         kill_zone_status = ""
         if 10 <= current_hour < 13:
             kill_zone_status = "داخل منطقة القتل السعري (لندن 10-13 بالتوقيت المحلي)"
@@ -2749,53 +2521,38 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         else:
             kill_zone_status = "خارج مناطق القتل الرئيسية"
         
-        # تعديل برمجي: دقائق الغدر الذكية (The Kill Switch Update)
         is_trap_minute = current_minute in [14, 29, 44, 59]
-        safety_buffer = 3  # القيمة الافتراضية
+        safety_buffer = 3
         
         if is_trap_minute and seconds_remaining < 15:
-            # بدلاً من المنع الكامل، اطلب من الموديل البحث عن "تصفية العقود"
             market_mode = "SUPER_CONSERVATIVE"
-            safety_buffer = 5  # زيادة مسافة الأمان لـ 5 نقاط بدلاً من 3
+            safety_buffer = 5
             last_minute_status = "VOLATILITY_EXPANSION_WITH_EXTRA_BUFFER"
         else:
             last_minute_status = "STABLE_FLOW" if not is_trap_minute else "VOLATILITY_EXPANSION"
         
-        # إضافة متغير "مفتاح القوة" لإلغاء القيود
         market_mode = "AGGRESSIVE" if candle.startswith('S') or (is_trap_minute and seconds_remaining < 15 and momentum_boost) else "CONSERVATIVE"
         
-        # دوال مساعدة لبروتوكول التشريح الهيكلي V7.4
         def calculate_breakout_force(candle_volume, avg_volume):
-            """حساب قوة الكسر الهيكلي"""
             if avg_volume > 0:
                 return candle_volume / avg_volume
             return 1.0
 
         def has_institutional_fvg(chart_data):
-            """التحقق من وجود فجوة سعرية مؤسسية"""
-            # سيتم استخراجها من تحليل الصورة
-            return False  # القيمة الافتراضية، سيتم تحديثها من التحليل البصري
+            return False
 
         def check_liquidity_sweep(chart_data):
-            """التحقق من سحب السيولة"""
-            # سيتم استخراجها من تحليل الصورة
-            return False  # القيمة الافتراضية، سيتم تحديثها من التحليل البصري
+            return False
 
         def identify_liquidity_layers(chart_data):
-            """تحديد طبقات السيولة الثلاث"""
             liquidity_layers = {
-                "internal": [],  # الفجوات السعرية الصغيرة
-                "external": [],  # القمم والقيعان التاريخية
-                "retail": []     # القيعان المتساوية والقمم المتساوية
+                "internal": [],
+                "external": [],
+                "retail": []
             }
             return liquidity_layers
             
-        # ============================================
-        # دالة جديدة: تنبيه فخ السيولة (Liquidity Trap Alert) V7.4
-        # ============================================
         def generate_liquidity_trap_alert(peak_price, current_price, volume_ratio, candle_body_ratio, wick_ratio, distance_points):
-            """توليد تنبيه فخ السيولة عند القمم التاريخية"""
-            
             alert = f"""
 🚨 **⚠️ تنبيه عالي الخطورة - V7.4 ⚠️**
 
@@ -2822,14 +2579,12 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 """
             return alert
         
-        # متغيرات بروتوكول التشريح الهيكلي
-        breakout_force = 0.0  # سيتم تحديثها من التحليل
-        avg_volume = 0.0  # سيتم تحديثها من التحليل
-        has_fvg = False  # سيتم تحديثها من التحليل
-        liquidity_sweep_detected = False  # سيتم تحديثها من التحليل
-        retail_liquidity_zones = []  # سيتم تحديثها من التحليل
+        breakout_force = 0.0
+        avg_volume = 0.0
+        has_fvg = False
+        liquidity_sweep_detected = False
+        retail_liquidity_zones = []
         
-        # ربط معطيات الإعدادات
         candle_category = ""
         if candle.startswith('S'):
             candle_category = "فريمات سريعة جداً (ثواني) - حركات سريعة وانعكاسات مفاجئة"
@@ -2853,7 +2608,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             trading_strategy = "تداول موقف (Position) - طويل الأجل"
             position_sizing = "حجم صغير مع وقف خسارة واسع"
         
-        # تحديد فريم التحقق الديناميكي
         verification_timeframe = ""
         
         candle_value = candle[1:] if candle.startswith(('S', 'M', 'H', 'D')) else candle
@@ -2875,7 +2629,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         elif candle.startswith('D'):
             verification_timeframe = "H4"
         
-        # إعدادات ثابتة
         GENERATION_CONFIG = {
             "max_tokens": 1150,
             "temperature": 0.0,
@@ -2883,7 +2636,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             "random_seed": 42
         }
         
-        # تحضير سياق التحليل السابق
         previous_context_info = ""
         if prev_context and prev_time:
             try:
@@ -2895,10 +2647,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 """
             except:
                 previous_context_info = ""
-        
-        # ============================================
-        # التعديلات الثلاثة الجديدة
-        # ============================================
         
         three_points_rule = """
 【التعديل 1 - قاعدة الاختراق الرقمي الفوري (الـ 3 نقاط)】
@@ -2922,10 +2670,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 - شرط البيع (فخ السيولة): أي ذيل (Wick) يلمس القمة ويرتد، أو شمعة جسمها < 50% عند القمة ← بيع فوري 🔴 (لأن المؤسسات تسحب السيولة الآن).
 - الهدف: اتخاذ قرار قطعي (إما اختراق أو ارتداد) ومنع "الاحتفاظ" عند القمم.
 """
-        
-        # ============================================
-        # التحديثات الجديدة V7.0 - بروتوكول الربط الزمني والهجوم الشامل
-        # ============================================
         
         v7_updates = """
 🚀 **تحديث: بروتوكول الربط الزمني والهجوم الشامل (V7.0)**
@@ -2955,10 +2699,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
    - القرار: مسموح بالدخول فقط إذا كان السعر في حالة "اندفاع حر" (تجاوز آخر مستوى بـ 3 نقاط).
    - المنطق: الاندفاع في آخر ثوانٍ يعني أن الشمعة القادمة ستفتح بـ "Gap" أو استمرار قوي.
 """
-        
-        # ============================================
-        # التحديثات الجديدة V7.3 - بروتوكول التشريح الهيكلي والسيولة العميقة
-        # ============================================
         
         v7_3_updates = """
 🔬 **تحديث: بروتوكول التشريح الهيكلي والسيولة العميقة (V7.3)**
@@ -3017,10 +2757,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
    - إذا تخلف شرط واحد، تتحول التوصية من "دخول" إلى "مراقبة وانتظار"
 """
         
-        # ============================================
-        # التحديثات الجديدة V7.4 - بروتوكول القمم التاريخية الصارم
-        # ============================================
-        
         v7_4_updates = """
 🔴 **تحديث صارم V7.4 - بروتوكول القمم التاريخية**
 
@@ -3039,10 +2775,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 - الإجراء: انتظر ظهور إشارة "انعكاس فوري 🔄" بدلاً من ملاحقة السعر.
 """
         
-        # ============================================
-        # مصفوفة القرار القطعي لجميع السيناريوهات
-        # ============================================
-        
         decision_matrix = """
 📊 **مصفوفة القرار القطعي لجميع السيناريوهات (V7.4):**
 
@@ -3056,7 +2788,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 | تذبذب عند مستوى | عدم استقرار فوق/تحت بـ 3 نقاط | احتفاظ 🟡 (انتظار السيولة) |
 """
         
-        # دمج جميع التعديلات
         all_updates_section = f"""
 ⚡ **التعديلات الثلاثة الجديدة + تحديثات V7.0 الهجومية + V7.3 التشريح الهيكلي + V7.4 القمم الصارمة:**
 
@@ -3102,10 +2833,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
    - **كسر هيكلي بدون حجم كافي (< 1.5x) = إلغاء إشارة الكسر**
 """
         
-        # ============================================
-        # نموذج تنبيه فخ السيولة (سيتم إضافته ديناميكياً في التحليل)
-        # ============================================
-        
         liquidity_trap_alert_template = """
 🚨 **نموذج تنبيه: اكتشاف فخ سيولة (Liquidity Trap)**
 
@@ -3126,7 +2853,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 انتظر إغلاق الشمعة الحالية؛ إذا عادت تحت القمة، ادخل بيع 🔴 / شراء 🟢 (انعكاس فوري) بمجرد لمس مستوى الـ -2 / +2 نقطة.
 """
         
-        # البرومبت الرئيسي مع إضافة جميع التعديلات
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
 مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات مع تطبيق قوانين السيادة الجديدة (V7.4 ELITE SNIPER MODE).
@@ -3657,7 +3383,6 @@ else:
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
-        # --- الخطوة 1: التحليل الأولي الأساسي ---
         await wait_msg.edit_text("🔍 انتظار قليلا جاري تحليل 🤌🤌🤌...")
         
         payload_1 = {
@@ -3683,28 +3408,21 @@ else:
         
         initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
         
-        # تطبيق بروتوكول التشريح الهيكلي V7.4 على التحليل
         if "historical_peak" in initial_analysis.lower() or "قمة تاريخية" in initial_analysis or "قاع تاريخي" in initial_analysis:
-            # التحقق من شروط الأمان المعزز
-            if "breakout_points" in locals() and breakout_points < 5:
-                # إضافة تحذير إضافي
+            if 'breakout_points' in locals() and breakout_points < 5:
                 enhanced_warning = "\n\n⚠️ **تنبيه Obeida Trading (V7.4):**\nالسعر عند قمة/قاع تاريخي بدون 'الثالوث المؤسسي' (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%). يُمنع الدخول إلا مع توفر جميع الشروط."
                 initial_analysis += enhanced_warning
         
-        # تنظيف النصوص من التكرار
         initial_analysis = clean_repeated_text(initial_analysis)
         
-        # حفظ سياق التحليل في قاعدة البيانات
         save_analysis_context(user_id, initial_analysis)
         
         keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["🌍 دولتك"], ["الرجوع للقائمة الرئيسية"]]
         if user_id == ADMIN_ID:
             keyboard.append(["👑 لوحة التحكم"])
         
-        # تنسيق وقت الصفقة للعرض
         time_display = format_trade_time_for_prompt(trade_time)
         
-        # إعداد النص النهائي
         full_result = (
             f"✅ **تم التحليل بنجاح - بالاصدار الجديد 🚨** \n"
             f"━━━━━━━━━━━━━━━━\n"
@@ -3719,23 +3437,18 @@ else:
             f"🤖 **Powered by - Obeida Trading **"
         )
         
-        # تنظيف النهائي من التكرارات
         full_result = clean_repeated_text(full_result)
         
-        # تنسيق النتيجة مع دعم النسخ السريع
         formatted_result = format_as_copyable_code(full_result, "text")
         
-        # تقسيم النتيجة إذا كانت طويلة
         if len(formatted_result) > 4000:
             parts = split_message_with_copy_support(full_result, max_length=3500)
             
-            # إرسال الجزء الأول مع تعديل الرسالة المنتظرة
             await wait_msg.edit_text(
                 parts[0],
                 parse_mode="Markdown"
             )
             
-            # إرسال الأجزاء المتبقية
             for part in parts[1:]:
                 await update.message.reply_text(part, parse_mode="Markdown")
         else:
@@ -3744,7 +3457,6 @@ else:
                 parse_mode="Markdown"
             )
         
-        # إرسال الأزرار
         await update.message.reply_text(
             "📊 **اختر الإجراء التالي:**",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -3767,7 +3479,6 @@ else:
             await update.message.reply_text(error_msg)
         return error_msg
     finally:
-        # تنظيف الملفات المؤقتة
         for filepath in [image_path, compressed_path] if 'compressed_path' in locals() else [image_path]:
             if os.path.exists(filepath):
                 try:
@@ -3778,36 +3489,29 @@ else:
     return MAIN_MENU
 
 async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور في وضع التوصية"""
-    # التحقق من الاشتراك
     if not await subscription_required(update, context):
         return RECOMMENDATION_MODE
     
     user_id = update.effective_user.id
     
-    # تسجيل استخدام
     SubscriptionSystem.increment_usage(user_id, 'recommendation_photo')
     
-    # الحصول على آخر عملة تم اختيارها
     last_symbol = get_last_recommendation_symbol(context)
     
     wait_msg = await update.message.reply_text(f"📊 استنى شوي العملة: {last_symbol} قيد تحليل 🤌...")
     
     try:
-        # حفظ الصورة مؤقتاً
         photo = await update.message.photo[-1].get_file()
         timestamp = int(time.time())
         image_path = os.path.join(IMAGE_CACHE_DIR, f"recommendation_{user_id}_{timestamp}.jpg")
         await photo.download_to_drive(image_path)
         
-        # الحصول على إعدادات المستخدم
         candle, trade_time, _, _, _ = get_user_setting(user_id)
         
         if not candle or not trade_time:
             await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
             return RECOMMENDATION_MODE
         
-        # تحليل الصورة
         analysis_result = await analyze_chart_image(
             update, 
             context, 
@@ -3817,7 +3521,6 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
             last_symbol
         )
         
-        # تنسيق النتيجة مع دعم النسخ السريع
         formatted_result = format_as_copyable_code(analysis_result, "text")
         await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
                 
@@ -3825,7 +3528,6 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
         print(f"❌ خطأ في تحليل صورة التوصية: {e}")
         await wait_msg.edit_text("❌ حدث خطأ في معالجة الصورة. يرجى المحاولة مرة أخرى.")
     
-    # عرض خيارات المتابعة
     reply_keyboard = [[key] for key in CATEGORIES.keys()]
     reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
     
@@ -3836,19 +3538,15 @@ async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFA
     return RECOMMENDATION_MODE
 
 async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور في وضع التحليل"""
     return await handle_photo_analysis(update, context)
 
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني المتقدم"""
-    # التحقق من الاشتراك
     if not await subscription_required(update, context):
         return MAIN_MENU
     
     user_id = update.effective_user.id
     candle, trade_time, prev_context, prev_time, _ = get_user_setting(user_id)
     
-    # تسجيل استخدام
     SubscriptionSystem.increment_usage(user_id, 'photo_analysis')
     
     if not candle or not trade_time:
@@ -3883,7 +3581,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                 os.remove(compressed_path)
             return MAIN_MENU
         
-        # تحليل الصورة باستخدام الدالة المحسنة
         analysis_result = await analyze_chart_image(
             update, 
             context, 
@@ -3893,15 +3590,11 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             "الشارت المرفق"
         )
         
-        # التحليل_result يحتوي بالفعل على النتيجة النهائية مع التنسيق
-        # تم التعامل مع إرسال النتيجة داخل الدالة analyze_chart_image
-        
     except Exception as e:
         print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
         keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
         await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
     finally:
-        # تنظيف الملفات المؤقتة
         for filepath in [original_path, compressed_path]:
             if os.path.exists(filepath):
                 try:
@@ -3912,10 +3605,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     return MAIN_MENU
 
 async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء لوحة تحكم المشرف"""
     user_id = update.effective_user.id
     
-    # التحقق من أن المستخدم هو المشرف
     if user_id != ADMIN_ID:
         await update.message.reply_text("❌ ليس لديك صلاحية الوصول للوحة التحكم.")
         return MAIN_MENU
@@ -3938,7 +3629,6 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ADMIN_MENU
 
 async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات لوحة تحكم المشرف"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
@@ -3964,7 +3654,6 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for u in users:
                 uid, username, first_name, created, last_active, is_blocked, sub_type, sub_name, start_date, end_date, is_active = u
                 
-                # تحديد الحالة
                 if is_blocked == 1:
                     status = "🚫 محظور"
                 elif is_active == 1 and (not end_date or datetime.fromisoformat(end_date) > datetime.now()):
@@ -3972,11 +3661,9 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     status = "❌ غير نشط"
                 
-                # معلومات الاشتراك
                 sub_info = f"{sub_name or 'لا يوجد اشتراك'}"
                 end_info = f" حتى {end_date[:16]}" if end_date else " (غير محدد)"
                 
-                # اسم العرض
                 display_name = first_name or username or str(uid)
                 
                 msg += f"• **{display_name}**\n"
@@ -4068,7 +3755,6 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ADMIN_MENU
 
 async def handle_add_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إضافة اشتراك لمستخدم"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
@@ -4078,10 +3764,8 @@ async def handle_add_subscription(update: Update, context: ContextTypes.DEFAULT_
     try:
         target_user_id = int(update.message.text.strip())
         
-        # حفظ معرف المستخدم في السياق
         context.user_data['target_user_id'] = target_user_id
         
-        # عرض خيارات المدة
         keyboard = [
             ["🕐 ساعة", "📅 يوم"],
             ["📆 أسبوع", "📅 شهر"],
@@ -4103,7 +3787,6 @@ async def handle_add_subscription(update: Update, context: ContextTypes.DEFAULT_
         return ADD_SUBSCRIPTION
 
 async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار مدة الاشتراك"""
     user_id = update.effective_user.id
     duration_choice = update.message.text.strip()
     
@@ -4114,7 +3797,6 @@ async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_T
     if duration_choice == "إلغاء":
         return await start_admin_panel(update, context)
     
-    # تحديد نوع الاشتراك حسب الاختيار
     subscription_type = None
     if duration_choice == "🕐 ساعة":
         subscription_type = "hourly"
@@ -4137,7 +3819,6 @@ async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("❌ خطأ: لم يتم تحديد المستخدم.")
         return ADMIN_MENU
     
-    # إضافة الاشتراك
     success, result = SubscriptionSystem.add_subscription(
         user_id=target_user_id,
         subscription_type=subscription_type,
@@ -4163,7 +3844,6 @@ async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_T
             parse_mode="Markdown"
         )
         
-        # محاولة إرسال إشعار للمستخدم
         try:
             await context.bot.send_message(
                 chat_id=target_user_id,
@@ -4179,14 +3859,12 @@ async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_T
     else:
         await update.message.reply_text(f"❌ فشل في إضافة الاشتراك: {result}")
     
-    # تنظيف السياق
     if 'target_user_id' in context.user_data:
         del context.user_data['target_user_id']
     
     return ADMIN_MENU
 
 async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إلغاء اشتراك أو حظر مستخدم"""
     user_id = update.effective_user.id
     previous_message = update.message.text.strip()
     
@@ -4195,7 +3873,6 @@ async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return MAIN_MENU
     
     try:
-        # التحقق مما إذا كان الإجراء السابق هو حظر أو إلغاء حظر
         if context.user_data.get('last_action') == 'block':
             target_user_id = int(previous_message.split()[0])
             reason = ' '.join(previous_message.split()[1:]) if len(previous_message.split()) > 1 else "Blocked by admin"
@@ -4224,7 +3901,6 @@ async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return ADMIN_MENU
         
         else:
-            # إلغاء اشتراك عادي
             target_user_id = int(previous_message)
             
             if target_user_id == ADMIN_ID:
@@ -4236,7 +3912,6 @@ async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if success:
                 await update.message.reply_text(f"✅ {message}")
                 
-                # محاولة إرسال إشعار للمستخدم
                 try:
                     await context.bot.send_message(
                         chat_id=target_user_id,
@@ -4256,7 +3931,6 @@ async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return REMOVE_USER
 
 async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الإذاعة للمشتركين"""
     user_id = update.effective_user.id
     broadcast_message = update.message.text.strip()
     
@@ -4264,7 +3938,6 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ ليس لديك صلاحية.")
         return MAIN_MENU
     
-    # الحصول على جميع المشتركين النشطين
     subscribers = SubscriptionSystem.get_all_subscribers()
     
     if not subscribers:
@@ -4285,7 +3958,7 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
             success_count += 1
-            await asyncio.sleep(0.05)  # تجنب تجاوز حدود التليجرام
+            await asyncio.sleep(0.05)
         except Exception as e:
             print(f"⚠️ فشل إرسال للمستخدم {target_id}: {e}")
             fail_count += 1
@@ -4299,7 +3972,6 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ADMIN_MENU
 
 async def handle_set_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة تمديد اشتراك مستخدم"""
     user_id = update.effective_user.id
     
     if user_id != ADMIN_ID:
@@ -4332,7 +4004,6 @@ async def handle_set_duration(update: Update, context: ContextTypes.DEFAULT_TYPE
         if success:
             await update.message.reply_text(f"✅ {message}")
             
-            # محاولة إرسال إشعار للمستخدم
             try:
                 await context.bot.send_message(
                     chat_id=target_user_id,
@@ -4352,7 +4023,6 @@ async def handle_set_duration(update: Update, context: ContextTypes.DEFAULT_TYPE
     return ADMIN_MENU
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """معالجة الأخطاء في البوت"""
     try:
         error_msg = f"❌ حدث خطأ في البوت:\n"
         
@@ -4389,32 +4059,28 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         print(f"❌ خطأ في معالج الأخطاء نفسه: {e}")
 
 async def periodic_cleanup():
-    """تنظيف دوري للملفات المؤقتة - كل 1 دقائق"""
     while True:
         try:
-            await asyncio.sleep(60)  # كل 1 دقائق (بدلاً من 5 دقيقة)
+            await asyncio.sleep(60)
             cleanup_old_images()
             cleanup_old_database_records()
-            print("🧹 تم التنظيف الدوري للملفات المؤقتة (كل 1 دقائق)")
+            print("🧹 تم التنظيف الدوري للملفات المؤقتة (كل 60 ثانية)")
             
         except Exception as e:
             print(f"⚠️ خطأ في التنظيف الدوري: {e}")
 
 async def backup_scheduler():
-    """جدولة النسخ الاحتياطي التلقائي كل ساعة"""
     while True:
         try:
-            await asyncio.sleep(3600)  # كل 60 دقائق
+            await asyncio.sleep(3600)
             DataProtection.auto_backup()
             print("⏰ تم تنفيذ النسخ الاحتياطي التلقائي المجدول")
         except Exception as e:
             print(f"⚠️ خطأ في النسخ الاحتياطي المجدول: {e}")
 
-# دالة DataProtection للنسخ الاحتياطي (مبسطة)
 class DataProtection:
     @staticmethod
     def backup_database():
-        """نسخ احتياطي لقاعدة البيانات الرئيسية"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_file = os.path.join(BACKUP_DIR, f"main_backup_{timestamp}.db")
@@ -4426,7 +4092,6 @@ class DataProtection:
     
     @staticmethod
     def backup_codes_db():
-        """نسخ احتياطي لقاعدة بيانات الاشتراك"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_file = os.path.join(BACKUP_DIR, f"subscription_backup_{timestamp}.db")
@@ -4438,12 +4103,35 @@ class DataProtection:
     
     @staticmethod
     def auto_backup():
-        """نسخ احتياطي تلقائي للجميع"""
         DataProtection.backup_database()
         DataProtection.backup_codes_db()
+        DataProtection.cleanup_old_backups()
+    
+    @staticmethod
+    def cleanup_old_backups(max_backups=10):
+        try:
+            if not os.path.exists(BACKUP_DIR):
+                return
+            
+            backup_files = []
+            for filename in os.listdir(BACKUP_DIR):
+                if filename.endswith('.db'):
+                    filepath = os.path.join(BACKUP_DIR, filename)
+                    backup_files.append((filepath, os.path.getmtime(filepath)))
+            
+            backup_files.sort(key=lambda x: x[1], reverse=True)
+            
+            if len(backup_files) > max_backups:
+                for filepath, _ in backup_files[max_backups:]:
+                    try:
+                        os.remove(filepath)
+                        print(f"🗑️ تم حذف نسخة احتياطية قديمة: {os.path.basename(filepath)}")
+                    except Exception as e:
+                        print(f"⚠️ خطأ في حذف النسخة القديمة: {e}")
+        except Exception as e:
+            print(f"⚠️ خطأ في تنظيف النسخ الاحتياطية: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر المساعدة"""
     help_text = f"""
     🤖 **أوامر البوت:**
     
@@ -4464,15 +4152,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     🔑 **أسعار الاشتراكات:**
     • ساعة : 1$
     • يوم : 5$
-    • سبوعي : 15$
+    • أسبوعي : 15$
     • شهري : 40$
-    • نسخة خاص بيك : 300$
     
-    🤯  انواع القرار الفني 🤯
-     🟢 شراء :  مع الاتجاه 
+    🤯  **أنواع القرار الفني:**
+     🟢 شراء : مع الاتجاه 
      🔴 بيع : مع الاتجاه
-     💥 كسر هيكلي :  تغيير اتجاه
-     🔄 سحب سيولة :  عكس الاتجاه
+     💥 كسر هيكلي : تغيير اتجاه
+     🔄 سحب سيولة : عكس الاتجاه
      🔄 انعكاس فوري : تصحيح مسار
     
     ⏱️ **خيارات مدة الصفقة:**
@@ -4485,7 +4172,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(formatted_help, parse_mode="Markdown")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إلغاء المحادثة"""
     if update.effective_user:
         cleanup_user_data(context, update.effective_user.id)
     
@@ -4496,88 +4182,178 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def run_flask_server():
-    """تشغيل Flask server"""
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-# --- Flask Server مع واجهة تحكم (محدثة) ---
 app = Flask(__name__)
 
-# HTML template for admin panel (محدث)
+# قم بإضافة هذا الكود بدلاً من دالة ADMIN_PANEL_HTML السابقة
+# واحتفظ بباقي الكود كما هو
+
 ADMIN_PANEL_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>👑 Obeida Trading - لوحة التحكم</title>
+    <title>👑 Obeida Trading - لوحة التحكم الأسطورية</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Segoe UI', 'Tahoma', system-ui, sans-serif;
+        }
+        
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --secondary: #8b5cf6;
+            --success: #10b981;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --info: #3b82f6;
+            --dark: #1f2937;
+            --light: #f9fafb;
+            --gray: #6b7280;
+            --gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
         
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #f3f4f6;
             min-height: 100vh;
             padding: 20px;
         }
         
         .container {
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 0 auto;
         }
         
+        /* الهيدر الأسطوري */
         .header {
-            background: white;
+            background: var(--gradient);
             border-radius: 30px;
-            padding: 30px;
+            padding: 40px;
             margin-bottom: 30px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-            text-align: center;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" opacity="0.1"><text x="50" y="50" font-size="80" text-anchor="middle" dy=".3em" fill="white">📊</text></svg>') repeat;
+            background-size: 100px 100px;
+            opacity: 0.1;
+        }
+        
+        .header-content {
+            position: relative;
+            z-index: 1;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
         }
         
         .header h1 {
-            color: #333;
-            font-size: 2.5em;
+            font-size: 3em;
+            font-weight: 800;
+            background: linear-gradient(to right, #fff, #e0e7ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
             margin-bottom: 10px;
         }
         
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .badge {
+            background: rgba(255,255,255,0.2);
+            backdrop-filter: blur(10px);
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-weight: 600;
+        }
+        
+        /* بطاقات الإحصائيات */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
             margin-bottom: 30px;
         }
         
         .stat-card {
             background: white;
             border-radius: 20px;
-            padding: 25px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            text-align: center;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+            position: relative;
+            overflow: hidden;
             cursor: pointer;
-            transition: transform 0.3s;
         }
         
         .stat-card:hover {
             transform: translateY(-5px);
+            box-shadow: 0 20px 60px rgba(99,102,241,0.2);
+        }
+        
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: var(--gradient);
+        }
+        
+        .stat-icon {
+            width: 60px;
+            height: 60px;
+            background: var(--gradient);
+            border-radius: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+            color: white;
+            font-size: 2em;
         }
         
         .stat-card h3 {
-            color: #666;
-            font-size: 1em;
+            color: var(--gray);
+            font-size: 1.1em;
             margin-bottom: 10px;
         }
         
-        .stat-card .number {
-            color: #667eea;
-            font-size: 2.5em;
-            font-weight: bold;
+        .stat-number {
+            font-size: 2.8em;
+            font-weight: 800;
+            color: var(--dark);
+            margin-bottom: 5px;
         }
         
+        .stat-trend {
+            color: var(--success);
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        /* شريط الإجراءات السريعة */
         .quick-actions {
             display: flex;
             gap: 15px;
@@ -4597,60 +4373,118 @@ ADMIN_PANEL_HTML = """
             box-shadow: 0 5px 15px rgba(0,0,0,0.1);
             border: none;
             font-size: 1em;
+            transition: all 0.3s;
         }
         
         .action-btn:hover {
             transform: translateY(-3px);
-            box-shadow: 0 10px 25px rgba(102,126,234,0.3);
+            box-shadow: 0 15px 30px rgba(99,102,241,0.3);
+        }
+        
+        .action-btn.primary { background: var(--primary); color: white; }
+        .action-btn.success { background: var(--success); color: white; }
+        .action-btn.danger { background: var(--danger); color: white; }
+        .action-btn.warning { background: var(--warning); color: white; }
+        .action-btn.info { background: var(--info); color: white; }
+        
+        /* تبويبات متقدمة */
+        .tabs-container {
+            background: white;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
         }
         
         .tabs {
             display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
+            background: #f8fafc;
+            border-bottom: 2px solid #e2e8f0;
+            padding: 0 20px;
         }
         
         .tab {
-            background: white;
-            padding: 12px 25px;
-            border-radius: 50px;
+            padding: 20px 30px;
             cursor: pointer;
             font-weight: 600;
-            border: none;
-            font-size: 1em;
+            color: var(--gray);
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .tab:hover {
+            color: var(--primary);
         }
         
         .tab.active {
-            background: #667eea;
-            color: white;
+            color: var(--primary);
+            border-bottom-color: var(--primary);
         }
         
         .tab-content {
             display: none;
+            padding: 30px;
         }
         
         .tab-content.active {
             display: block;
         }
         
+        /* بطاقات المحتوى */
         .section {
             background: white;
             border-radius: 20px;
-            padding: 25px;
+            padding: 30px;
             margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
         }
         
         .section-title {
             font-size: 1.8em;
-            margin-bottom: 20px;
-            color: #333;
-            border-bottom: 2px solid #f0f0f0;
-            padding-bottom: 10px;
+            font-weight: 700;
+            color: var(--dark);
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
         
+        .search-box {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        .search-input {
+            padding: 15px 25px;
+            border: 2px solid #e2e8f0;
+            border-radius: 50px;
+            font-size: 1em;
+            width: 300px;
+            transition: all 0.3s;
+        }
+        
+        .search-input:focus {
+            border-color: var(--primary);
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+        }
+        
+        /* الجداول المتقدمة */
         .table-container {
             overflow-x: auto;
+            border-radius: 15px;
+            border: 1px solid #e2e8f0;
         }
         
         table {
@@ -4659,67 +4493,103 @@ ADMIN_PANEL_HTML = """
         }
         
         th {
-            background: #667eea;
-            color: white;
-            padding: 12px;
+            background: #f8fafc;
+            padding: 20px 15px;
+            font-weight: 600;
+            color: var(--dark);
+            text-align: center;
+            border-bottom: 2px solid #e2e8f0;
         }
         
         td {
-            padding: 12px;
-            border-bottom: 1px solid #f0f0f0;
+            padding: 20px 15px;
+            border-bottom: 1px solid #e2e8f0;
             text-align: center;
         }
         
-        .user-id {
-            background: #f0f0f0;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-family: monospace;
+        tr:hover td {
+            background: #f8fafc;
         }
         
-        .status-badge {
+        .user-id {
+            background: #f1f5f9;
             padding: 5px 12px;
             border-radius: 50px;
+            font-family: 'Monaco', monospace;
             font-size: 0.9em;
-            display: inline-block;
+            color: var(--primary);
+            font-weight: 600;
+        }
+        
+        /* الشارات */
+        .badge-status {
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-size: 0.9em;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
         }
         
         .status-active {
-            background: #d4edda;
-            color: #155724;
+            background: #d1fae5;
+            color: #065f46;
         }
         
         .status-expired {
-            background: #f8d7da;
-            color: #721c24;
+            background: #fee2e2;
+            color: #991b1b;
         }
         
         .status-blocked {
-            background: #f8d7da;
-            color: #721c24;
+            background: #fef3c7;
+            color: #92400e;
         }
         
-        .actions {
+        .status-trial {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        
+        /* الأزرار */
+        .btn-group {
             display: flex;
-            gap: 5px;
+            gap: 8px;
             justify-content: center;
+            flex-wrap: wrap;
         }
         
         .btn {
-            padding: 8px 12px;
+            padding: 10px 15px;
             border: none;
-            border-radius: 8px;
+            border-radius: 12px;
             cursor: pointer;
             font-weight: 600;
-            color: white;
+            font-size: 0.9em;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.3s;
         }
         
-        .btn-primary { background: #667eea; }
-        .btn-success { background: #28a745; }
-        .btn-warning { background: #ffc107; color: #333; }
-        .btn-danger { background: #dc3545; }
-        .btn-info { background: #17a2b8; }
+        .btn-sm {
+            padding: 8px 12px;
+            font-size: 0.85em;
+        }
         
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-warning { background: var(--warning); color: white; }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-info { background: var(--info); color: white; }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        /* النوافذ المنبثقة */
         .modal {
             display: none;
             position: fixed;
@@ -4728,6 +4598,7 @@ ADMIN_PANEL_HTML = """
             width: 100%;
             height: 100%;
             background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(5px);
             justify-content: center;
             align-items: center;
             z-index: 1000;
@@ -4735,384 +4606,799 @@ ADMIN_PANEL_HTML = """
         
         .modal-content {
             background: white;
-            padding: 30px;
-            border-radius: 20px;
+            border-radius: 30px;
+            padding: 40px;
             width: 90%;
-            max-width: 500px;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+            animation: modalSlideIn 0.3s;
         }
         
+        @keyframes modalSlideIn {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        
+        .modal-header h2 {
+            font-size: 2em;
+            color: var(--dark);
+        }
+        
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 2em;
+            cursor: pointer;
+            color: var(--gray);
+        }
+        
+        .close-btn:hover {
+            color: var(--danger);
+        }
+        
+        /* حقول النموذج */
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 25px;
         }
         
         .form-group label {
             display: block;
-            margin-bottom: 5px;
-            color: #666;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--dark);
         }
         
-        .form-group input, .form-group select, .form-group textarea {
+        .form-control {
             width: 100%;
-            padding: 10px;
-            border: 2px solid #f0f0f0;
-            border-radius: 10px;
+            padding: 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 15px;
             font-size: 1em;
+            transition: all 0.3s;
+        }
+        
+        .form-control:focus {
+            border-color: var(--primary);
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+        }
+        
+        select.form-control {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
+            background-position: right 15px center;
+            background-repeat: no-repeat;
+            background-size: 20px;
+            padding-right: 45px;
+        }
+        
+        textarea.form-control {
+            min-height: 120px;
+            resize: vertical;
         }
         
         .modal-actions {
             display: flex;
-            gap: 10px;
+            gap: 15px;
             justify-content: flex-end;
-            margin-top: 20px;
+            margin-top: 30px;
         }
         
-        .search-box {
-            margin-bottom: 20px;
-        }
-        
-        .search-box input {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #f0f0f0;
-            border-radius: 10px;
-            font-size: 1em;
-        }
-        
+        /* الإشعارات */
         .notification {
             position: fixed;
-            top: 20px;
-            right: 20px;
+            top: 30px;
+            right: 30px;
             background: white;
-            padding: 15px 25px;
-            border-radius: 10px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            padding: 20px 30px;
+            border-radius: 15px;
+            box-shadow: 0 15px 30px rgba(0,0,0,0.2);
             display: none;
-            border-right: 5px solid #28a745;
             z-index: 2000;
+            animation: slideIn 0.3s;
+            min-width: 300px;
         }
         
-        .notification.error {
-            border-right-color: #dc3545;
+        .notification.success { border-right: 5px solid var(--success); }
+        .notification.error { border-right: 5px solid var(--danger); }
+        .notification.warning { border-right: 5px solid var(--warning); }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
         }
         
+        /* مؤشر التحميل */
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid var(--primary);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* الفوتر */
         .footer {
             text-align: center;
-            color: white;
-            margin-top: 30px;
+            color: var(--gray);
+            margin-top: 50px;
+            padding: 30px;
+        }
+        
+        /* تنسيقات متجاوبة */
+        @media (max-width: 768px) {
+            .header h1 { font-size: 2em; }
+            .stats-grid { grid-template-columns: 1fr; }
+            .search-input { width: 100%; }
+            .tabs { flex-wrap: wrap; }
+            .btn-group { flex-direction: column; }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
+        <!-- الهيدر الأسطوري -->
         <div class="header">
-            <h1>👑 Obeida Trading - لوحة التحكم</h1>
-            <p>المشرف: @Sz2zv</p>
+            <div class="header-content">
+                <div>
+                    <h1>👑 Obeida Trading</h1>
+                    <p>لوحة التحكم الأسطورية - نظام إدارة الاشتراكات المتطور</p>
+                </div>
+                <div class="badge">
+                    <span id="liveTime"></span>
+                </div>
+            </div>
         </div>
 
-        <!-- Stats -->
+        <!-- بطاقات الإحصائيات -->
         <div class="stats-grid">
             <div class="stat-card" onclick="filterUsers('all')">
+                <div class="stat-icon">👥</div>
                 <h3>إجمالي المستخدمين</h3>
-                <div class="number">{{ stats.total_users|default(0) }}</div>
+                <div class="stat-number" id="totalUsers">{{ stats.total_users|default(0) }}</div>
+                <div class="stat-trend">
+                    <span>📈 جميع المستخدمين المسجلين</span>
+                </div>
             </div>
+            
             <div class="stat-card" onclick="filterUsers('active')">
+                <div class="stat-icon">✅</div>
                 <h3>المشتركين النشطين</h3>
-                <div class="number">{{ stats.active_users|default(0) }}</div>
+                <div class="stat-number" id="activeUsers">{{ stats.active_users|default(0) }}</div>
+                <div class="stat-trend">
+                    <span>⚡ اشتراكات سارية</span>
+                </div>
             </div>
+            
             <div class="stat-card" onclick="filterUsers('blocked')">
+                <div class="stat-icon">🚫</div>
                 <h3>المحظورين</h3>
-                <div class="number">{{ stats.blocked_users|default(0) }}</div>
+                <div class="stat-number" id="blockedUsers">{{ stats.blocked_users|default(0) }}</div>
+                <div class="stat-trend">
+                    <span>🔒 مستخدمين محظورين</span>
+                </div>
+            </div>
+            
+            <div class="stat-card" onclick="showSubscriptionStats()">
+                <div class="stat-icon">💰</div>
+                <h3>الإيرادات المقدرة</h3>
+                <div class="stat-number" id="estimatedRevenue">${{ stats.estimated_revenue|default(0) }}</div>
+                <div class="stat-trend">
+                    <span>📊 هذا الشهر</span>
+                </div>
             </div>
         </div>
 
-        <!-- Quick Actions -->
+        <!-- شريط الإجراءات السريعة -->
         <div class="quick-actions">
-            <button class="action-btn" onclick="openModal('addModal')">
+            <button class="action-btn primary" onclick="openModal('addModal')">
                 <span>➕</span> إضافة اشتراك
             </button>
-            <button class="action-btn" onclick="openModal('broadcastModal')">
-                <span>📢</span> إذاعة
+            <button class="action-btn success" onclick="openModal('broadcastModal')">
+                <span>📢</span> إذاعة للمشتركين
             </button>
-            <button class="action-btn" onclick="refreshData()">
-                <span>🔄</span> تحديث
+            <button class="action-btn info" onclick="openModal('backupModal')">
+                <span>💾</span> نسخ احتياطي
+            </button>
+            <button class="action-btn warning" onclick="refreshData()">
+                <span>🔄</span> تحديث البيانات
+            </button>
+            <button class="action-btn danger" onclick="exportData()">
+                <span>📥</span> تصدير Excel
             </button>
         </div>
 
-        <!-- Tabs -->
-        <div class="tabs">
-            <button class="tab active" onclick="showTab('users')">👥 المستخدمين</button>
-            <button class="tab" onclick="showTab('subscriptions')">📊 الاشتراكات</button>
-            <button class="tab" onclick="showTab('backups')">💾 النسخ</button>
-        </div>
-
-        <!-- Users Tab -->
-        <div id="usersTab" class="tab-content active">
-            <div class="section">
-                <div class="section-title">👥 قائمة المستخدمين</div>
-                
-                <!-- Search -->
-                <div class="search-box">
-                    <input type="text" id="searchInput" placeholder="🔍 بحث..." onkeyup="searchUsers()">
+        <!-- التبويبات -->
+        <div class="tabs-container">
+            <div class="tabs">
+                <div class="tab active" onclick="showTab('users')">
+                    <span>👥</span> المستخدمين
                 </div>
+                <div class="tab" onclick="showTab('subscriptions')">
+                    <span>📊</span> الاشتراكات
+                </div>
+                <div class="tab" onclick="showTab('backups')">
+                    <span>💾</span> النسخ الاحتياطي
+                </div>
+                <div class="tab" onclick="showTab('stats')">
+                    <span>📈</span> إحصائيات متقدمة
+                </div>
+                <div class="tab" onclick="showTab('settings')">
+                    <span>⚙️</span> إعدادات
+                </div>
+            </div>
 
-                <!-- Users Table -->
-                <div class="table-container">
-                    <table id="usersTable">
-                        <thead>
-                            <tr>
-                                <th>المعرف</th>
-                                <th>الاسم</th>
-                                <th>الاشتراك</th>
-                                <th>تاريخ الانتهاء</th>
-                                <th>الحالة</th>
-                                <th>الإجراءات</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% if users %}
-                                {% for user in users %}
+            <!-- تبويب المستخدمين -->
+            <div id="usersTab" class="tab-content active">
+                <div class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <span>👥</span> قائمة المستخدمين
+                        </h2>
+                        <div class="search-box">
+                            <input type="text" class="search-input" id="searchInput" 
+                                   placeholder="🔍 بحث بالمعرف أو الاسم..." onkeyup="searchUsers()">
+                            <select class="form-control" style="width: auto;" id="filterType" onchange="filterByType()">
+                                <option value="all">جميع المستخدمين</option>
+                                <option value="active">نشط فقط</option>
+                                <option value="expired">منتهي فقط</option>
+                                <option value="blocked">محظور فقط</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="table-container">
+                        <table id="usersTable">
+                            <thead>
                                 <tr>
-                                    <td><span class="user-id">{{ user.id }}</span></td>
-                                    <td>{{ user.name }}</td>
-                                    <td>{{ user.subscription_type }}</td>
-                                    <td>{{ user.end_date|default('غير محدد') }}</td>
-                                    <td>
-                                        <span class="status-badge 
-                                            {% if user.is_blocked %}status-blocked
-                                            {% elif user.is_active %}status-active
-                                            {% else %}status-expired{% endif %}">
-                                            {% if user.is_blocked %}محظور
-                                            {% elif user.is_active %}نشط
-                                            {% else %}منتهي{% endif %}
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <div class="actions">
-                                            <button class="btn btn-success" onclick="extendUser('{{ user.id }}')">⏱️</button>
-                                            <button class="btn btn-warning" onclick="changeUserSub('{{ user.id }}')">🔄</button>
-                                            {% if not user.is_blocked %}
-                                                <button class="btn btn-danger" onclick="blockUser('{{ user.id }}')">🚫</button>
+                                    <th>المعرف</th>
+                                    <th>الاسم</th>
+                                    <th>نوع الاشتراك</th>
+                                    <th>تاريخ البداية</th>
+                                    <th>تاريخ الانتهاء</th>
+                                    <th>المتبقي</th>
+                                    <th>الحالة</th>
+                                    <th>الإجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% if users %}
+                                    {% for user in users %}
+                                    <tr data-user-id="{{ user.id }}" data-status="{% if user.is_blocked %}blocked{% elif user.is_active %}active{% else %}expired{% endif %}">
+                                        <td><span class="user-id">{{ user.id }}</span></td>
+                                        <td><strong>{{ user.name }}</strong></td>
+                                        <td>
+                                            <span class="badge-status {% if user.subscription_type == 'مدى الحياة' %}status-active{% elif user.subscription_type == 'محظور' %}status-blocked{% else %}status-trial{% endif %}">
+                                                {{ user.subscription_type }}
+                                            </span>
+                                        </td>
+                                        <td>{{ user.start_date|default('---') }}</td>
+                                        <td>{{ user.end_date|default('---') }}</td>
+                                        <td>
+                                            {% if user.remaining_days %}
+                                                <span class="badge-status {% if user.remaining_days < 3 %}status-blocked{% else %}status-active{% endif %}">
+                                                    {{ user.remaining_days }} يوم
+                                                </span>
                                             {% else %}
-                                                <button class="btn btn-success" onclick="unblockUser('{{ user.id }}')">✅</button>
+                                                ---
                                             {% endif %}
-                                            <button class="btn btn-info" onclick="messageUser('{{ user.id }}')">💬</button>
-                                        </div>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            {% else %}
+                                        </td>
+                                        <td>
+                                            <span class="badge-status 
+                                                {% if user.is_blocked %}status-blocked
+                                                {% elif user.is_active %}status-active
+                                                {% else %}status-expired{% endif %}">
+                                                {% if user.is_blocked %}🚫 محظور
+                                                {% elif user.is_active %}✅ نشط
+                                                {% else %}❌ منتهي{% endif %}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div class="btn-group">
+                                                <button class="btn btn-info btn-sm" onclick="viewUser('{{ user.id }}')" title="عرض التفاصيل">
+                                                    <span>👁️</span>
+                                                </button>
+                                                <button class="btn btn-success btn-sm" onclick="extendUser('{{ user.id }}')" title="تمديد">
+                                                    <span>⏱️</span>
+                                                </button>
+                                                <button class="btn btn-warning btn-sm" onclick="changeSubscription('{{ user.id }}')" title="تغيير الاشتراك">
+                                                    <span>🔄</span>
+                                                </button>
+                                                {% if not user.is_blocked %}
+                                                    <button class="btn btn-danger btn-sm" onclick="blockUser('{{ user.id }}')" title="حظر">
+                                                        <span>🚫</span>
+                                                    </button>
+                                                {% else %}
+                                                    <button class="btn btn-success btn-sm" onclick="unblockUser('{{ user.id }}')" title="إلغاء الحظر">
+                                                        <span>✅</span>
+                                                    </button>
+                                                {% endif %}
+                                                <button class="btn btn-primary btn-sm" onclick="messageUser('{{ user.id }}')" title="إرسال رسالة">
+                                                    <span>💬</span>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                {% else %}
+                                    <tr>
+                                        <td colspan="8" style="text-align: center; padding: 50px;">
+                                            <div style="font-size: 3em;">📭</div>
+                                            <h3>لا يوجد مستخدمين بعد</h3>
+                                        </td>
+                                    </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- تبويب الاشتراكات -->
+            <div id="subscriptionsTab" class="tab-content">
+                <div class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <span>📊</span> توزيع الاشتراكات
+                        </h2>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                        {% if stats and stats.subscriptions_by_type %}
+                            {% for type, count in stats.subscriptions_by_type.items() %}
+                            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 15px; color: white;">
+                                <h3 style="margin-bottom: 10px;">{{ type }}</h3>
+                                <div style="font-size: 2.5em; font-weight: bold;">{{ count }}</div>
+                                <div style="opacity: 0.8;">مشترك</div>
+                            </div>
+                            {% endfor %}
+                        {% endif %}
+                    </div>
+
+                    <div style="margin-top: 30px;">
+                        <h3>إحصائيات الاستخدام</h3>
+                        <div style="height: 300px; background: #f8fafc; border-radius: 15px; padding: 20px;">
+                            <!-- يمكن إضافة رسم بياني هنا -->
+                            <canvas id="usageChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- تبويب النسخ الاحتياطي -->
+            <div id="backupsTab" class="tab-content">
+                <div class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <span>💾</span> النسخ الاحتياطي
+                        </h2>
+                        <div>
+                            <button class="btn btn-primary" onclick="createBackup()">
+                                <span>➕</span> إنشاء نسخة جديدة
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-container">
+                        <table id="backupsTable">
+                            <thead>
                                 <tr>
-                                    <td colspan="6" style="text-align: center;">لا يوجد مستخدمين</td>
+                                    <th>اسم الملف</th>
+                                    <th>التاريخ</th>
+                                    <th>الحجم</th>
+                                    <th>النوع</th>
+                                    <th>الإجراءات</th>
                                 </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody id="backupsList">
+                                <!-- سيتم ملؤها بواسطة JavaScript -->
+                                <tr>
+                                    <td colspan="5" style="text-align: center;">جاري تحميل البيانات...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- تبويب الإحصائيات المتقدمة -->
+            <div id="statsTab" class="tab-content">
+                <div class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <span>📈</span> إحصائيات متقدمة
+                        </h2>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+                        <div style="background: white; padding: 20px; border-radius: 15px; border: 1px solid #e2e8f0;">
+                            <h3>أكثر الميزات استخداماً</h3>
+                            <div id="featureStats"></div>
+                        </div>
+                        
+                        <div style="background: white; padding: 20px; border-radius: 15px; border: 1px solid #e2e8f0;">
+                            <h3>نمو المستخدمين</h3>
+                            <div id="growthStats"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- تبويب الإعدادات -->
+            <div id="settingsTab" class="tab-content">
+                <div class="section">
+                    <div class="section-header">
+                        <h2 class="section-title">
+                            <span>⚙️</span> إعدادات النظام
+                        </h2>
+                    </div>
+
+                    <div style="display: grid; gap: 20px;">
+                        <div style="padding: 20px; background: #f8fafc; border-radius: 15px;">
+                            <h3>مدة التنظيف التلقائي</h3>
+                            <select class="form-control" style="width: 200px;" id="cleanupInterval">
+                                <option value="60">كل دقيقة</option>
+                                <option value="300">كل 5 دقائق</option>
+                                <option value="600">كل 10 دقائق</option>
+                            </select>
+                        </div>
+
+                        <div style="padding: 20px; background: #f8fafc; border-radius: 15px;">
+                            <h3>الحد الأقصى للنسخ الاحتياطي</h3>
+                            <input type="number" class="form-control" style="width: 200px;" id="maxBackups" value="10">
+                        </div>
+
+                        <div style="padding: 20px; background: #f8fafc; border-radius: 15px;">
+                            <h3>معلومات النظام</h3>
+                            <p>نسخة البيانات: <strong>{{ data_version }}</strong></p>
+                            <p>آخر نسخة احتياطية: <strong id="lastBackup">{{ last_backup }}</strong></p>
+                            <p>حجم قاعدة البيانات: <strong id="dbSize">جاري الحساب...</strong></p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Subscriptions Tab -->
-        <div id="subscriptionsTab" class="tab-content">
-            <div class="section">
-                <div class="section-title">📊 توزيع الاشتراكات</div>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>النوع</th>
-                                <th>العدد</th>
-                                <th>النسبة</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% if stats and stats.subscriptions_by_type %}
-                                {% for type, count in stats.subscriptions_by_type.items() %}
-                                <tr>
-                                    <td>{{ type }}</td>
-                                    <td>{{ count }}</td>
-                                    <td>{{ (count / stats.active_users * 100)|round|int if stats.active_users > 0 else 0 }}%</td>
-                                </tr>
-                                {% endfor %}
-                            {% else %}
-                                <tr>
-                                    <td colspan="3">لا توجد بيانات</td>
-                                </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
+        <!-- ========== النوافذ المنبثقة ========== -->
 
-        <!-- Backups Tab -->
-        <div id="backupsTab" class="tab-content">
-            <div class="section">
-                <div class="section-title">💾 النسخ الاحتياطي</div>
-                <div style="display: flex; gap: 10px; margin-bottom: 20px;">
-                    <button class="btn btn-primary" onclick="createBackup()">إنشاء نسخة</button>
-                    <button class="btn btn-info" onclick="uploadBackup()">رفع نسخة</button>
-                </div>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>الاسم</th>
-                                <th>التاريخ</th>
-                                <th>الحجم</th>
-                                <th>الإجراءات</th>
-                            </tr>
-                        </thead>
-                        <tbody id="backupsList">
-                            <tr>
-                                <td colspan="4">لا توجد نسخ</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- Add Subscription Modal -->
+        <!-- نافذة إضافة اشتراك -->
         <div id="addModal" class="modal">
             <div class="modal-content">
-                <h2>➕ إضافة اشتراك</h2>
-                <div class="form-group">
-                    <label>معرف المستخدم</label>
-                    <input type="text" id="addUserId" placeholder="مثال: 123456789">
+                <div class="modal-header">
+                    <h2>➕ إضافة اشتراك جديد</h2>
+                    <button class="close-btn" onclick="closeModal('addModal')">&times;</button>
                 </div>
+                
+                <div class="form-group">
+                    <label>معرف المستخدم (User ID)</label>
+                    <input type="text" class="form-control" id="addUserId" placeholder="مثال: 123456789">
+                </div>
+                
                 <div class="form-group">
                     <label>نوع الاشتراك</label>
-                    <select id="addSubType">
-                        <option value="trial">تجريبي</option>
-                        <option value="hourly">ساعة</option>
-                        <option value="daily">يوم</option>
-                        <option value="weekly">أسبوع</option>
-                        <option value="monthly">شهر</option>
-                        <option value="yearly">سنة</option>
+                    <select class="form-control" id="addSubType">
+                        <option value="trial">تجريبي (مجاني)</option>
+                        <option value="hourly">ساعة (1$)</option>
+                        <option value="daily">يوم (5$)</option>
+                        <option value="weekly">أسبوع (15$)</option>
+                        <option value="monthly">شهر (40$)</option>
+                        <option value="yearly">سنة (300$)</option>
+                        <option value="lifetime">مدى الحياة (500$)</option>
                     </select>
                 </div>
+                
+                <div class="form-group">
+                    <label>ملاحظات</label>
+                    <textarea class="form-control" id="addNotes" placeholder="أي ملاحظات إضافية..."></textarea>
+                </div>
+                
                 <div class="modal-actions">
-                    <button class="btn btn-success" onclick="confirmAdd()">تأكيد</button>
-                    <button class="btn btn-danger" onclick="closeModal('addModal')">إلغاء</button>
+                    <button class="btn btn-success" onclick="confirmAddSubscription()">
+                        <span>✅</span> تأكيد الإضافة
+                    </button>
+                    <button class="btn btn-danger" onclick="closeModal('addModal')">
+                        <span>❌</span> إلغاء
+                    </button>
                 </div>
             </div>
         </div>
 
-        <!-- Extend Modal -->
+        <!-- نافذة تمديد اشتراك -->
         <div id="extendModal" class="modal">
             <div class="modal-content">
-                <h2>⏱️ تمديد اشتراك</h2>
+                <div class="modal-header">
+                    <h2>⏱️ تمديد اشتراك</h2>
+                    <button class="close-btn" onclick="closeModal('extendModal')">&times;</button>
+                </div>
+                
                 <div class="form-group">
                     <label>معرف المستخدم</label>
-                    <input type="text" id="extendUserId" readonly>
+                    <input type="text" class="form-control" id="extendUserId" readonly>
                 </div>
+                
                 <div class="form-group">
-                    <label>المدة</label>
-                    <select id="extendDuration">
-                        <option value="86400">يوم</option>
+                    <label>مدة التمديد</label>
+                    <select class="form-control" id="extendDuration">
+                        <option value="3600">ساعة واحدة</option>
+                        <option value="86400">يوم واحد</option>
                         <option value="604800">أسبوع</option>
                         <option value="2592000">شهر</option>
+                        <option value="31536000">سنة</option>
                     </select>
                 </div>
+                
                 <div class="modal-actions">
-                    <button class="btn btn-success" onclick="confirmExtend()">تأكيد</button>
-                    <button class="btn btn-danger" onclick="closeModal('extendModal')">إلغاء</button>
+                    <button class="btn btn-success" onclick="confirmExtend()">
+                        <span>✅</span> تأكيد التمديد
+                    </button>
+                    <button class="btn btn-danger" onclick="closeModal('extendModal')">
+                        <span>❌</span> إلغاء
+                    </button>
                 </div>
             </div>
         </div>
 
-        <!-- Change Subscription Modal -->
+        <!-- نافذة تغيير الاشتراك -->
         <div id="changeModal" class="modal">
             <div class="modal-content">
-                <h2>🔄 تغيير الاشتراك</h2>
+                <div class="modal-header">
+                    <h2>🔄 تغيير نوع الاشتراك</h2>
+                    <button class="close-btn" onclick="closeModal('changeModal')">&times;</button>
+                </div>
+                
                 <div class="form-group">
                     <label>معرف المستخدم</label>
-                    <input type="text" id="changeUserId" readonly>
+                    <input type="text" class="form-control" id="changeUserId" readonly>
                 </div>
+                
                 <div class="form-group">
                     <label>النوع الجديد</label>
-                    <select id="newSubType">
+                    <select class="form-control" id="newSubType">
                         <option value="trial">تجريبي</option>
                         <option value="hourly">ساعة</option>
                         <option value="daily">يوم</option>
                         <option value="weekly">أسبوع</option>
                         <option value="monthly">شهر</option>
                         <option value="yearly">سنة</option>
+                        <option value="lifetime">مدى الحياة</option>
                     </select>
                 </div>
+                
                 <div class="modal-actions">
-                    <button class="btn btn-success" onclick="confirmChange()">تأكيد</button>
-                    <button class="btn btn-danger" onclick="closeModal('changeModal')">إلغاء</button>
+                    <button class="btn btn-success" onclick="confirmChange()">
+                        <span>✅</span> تأكيد التغيير
+                    </button>
+                    <button class="btn btn-danger" onclick="closeModal('changeModal')">
+                        <span>❌</span> إلغاء
+                    </button>
                 </div>
             </div>
         </div>
 
-        <!-- Block User Modal -->
+        <!-- نافذة حظر مستخدم -->
         <div id="blockModal" class="modal">
             <div class="modal-content">
-                <h2>🚫 حظر مستخدم</h2>
+                <div class="modal-header">
+                    <h2>🚫 حظر مستخدم</h2>
+                    <button class="close-btn" onclick="closeModal('blockModal')">&times;</button>
+                </div>
+                
                 <div class="form-group">
                     <label>معرف المستخدم</label>
-                    <input type="text" id="blockUserId" readonly>
+                    <input type="text" class="form-control" id="blockUserId" readonly>
                 </div>
+                
                 <div class="form-group">
-                    <label>السبب</label>
-                    <input type="text" id="blockReason" placeholder="سبب الحظر">
+                    <label>سبب الحظر</label>
+                    <textarea class="form-control" id="blockReason" placeholder="اكتب سبب الحظر..."></textarea>
                 </div>
+                
                 <div class="modal-actions">
-                    <button class="btn btn-danger" onclick="confirmBlock()">حظر</button>
-                    <button class="btn btn-secondary" onclick="closeModal('blockModal')">إلغاء</button>
+                    <button class="btn btn-danger" onclick="confirmBlock()">
+                        <span>🚫</span> تأكيد الحظر
+                    </button>
+                    <button class="btn btn-secondary" onclick="closeModal('blockModal')">
+                        <span>❌</span> إلغاء
+                    </button>
                 </div>
             </div>
         </div>
 
-        <!-- Message Modal -->
+        <!-- نافذة إرسال رسالة -->
         <div id="messageModal" class="modal">
             <div class="modal-content">
-                <h2>💬 إرسال رسالة</h2>
-                <div class="form-group">
-                    <label>إلى</label>
-                    <input type="text" id="messageUserId" readonly>
+                <div class="modal-header">
+                    <h2>💬 إرسال رسالة</h2>
+                    <button class="close-btn" onclick="closeModal('messageModal')">&times;</button>
                 </div>
+                
+                <div class="form-group">
+                    <label>إلى المستخدم</label>
+                    <input type="text" class="form-control" id="messageUserId" readonly>
+                </div>
+                
                 <div class="form-group">
                     <label>الرسالة</label>
-                    <textarea id="messageText" rows="4" placeholder="اكتب رسالتك..."></textarea>
+                    <textarea class="form-control" id="messageText" rows="5" placeholder="اكتب رسالتك..."></textarea>
                 </div>
+                
                 <div class="modal-actions">
-                    <button class="btn btn-primary" onclick="sendMessage()">إرسال</button>
-                    <button class="btn btn-danger" onclick="closeModal('messageModal')">إلغاء</button>
+                    <button class="btn btn-primary" onclick="sendMessage()">
+                        <span>📤</span> إرسال
+                    </button>
+                    <button class="btn btn-danger" onclick="closeModal('messageModal')">
+                        <span>❌</span> إلغاء
+                    </button>
                 </div>
             </div>
         </div>
 
-        <!-- Broadcast Modal -->
+        <!-- نافذة إذاعة -->
         <div id="broadcastModal" class="modal">
             <div class="modal-content">
-                <h2>📢 إذاعة للمشتركين</h2>
+                <div class="modal-header">
+                    <h2>📢 إذاعة للمشتركين</h2>
+                    <button class="close-btn" onclick="closeModal('broadcastModal')">&times;</button>
+                </div>
+                
+                <div class="form-group">
+                    <label>اختر المستلمين</label>
+                    <select class="form-control" id="broadcastTarget">
+                        <option value="all">جميع المشتركين النشطين</option>
+                        <option value="active">المشتركين فقط</option>
+                        <option value="expired">المنتهية اشتراكاتهم</option>
+                        <option value="blocked">المحظورين</option>
+                    </select>
+                </div>
+                
                 <div class="form-group">
                     <label>الرسالة</label>
-                    <textarea id="broadcastMessage" rows="4" placeholder="اكتب الرسالة..."></textarea>
+                    <textarea class="form-control" id="broadcastMessage" rows="6" placeholder="اكتب الرسالة..."></textarea>
                 </div>
+                
                 <div class="modal-actions">
-                    <button class="btn btn-primary" onclick="sendBroadcast()">إرسال</button>
-                    <button class="btn btn-danger" onclick="closeModal('broadcastModal')">إلغاء</button>
+                    <button class="btn btn-primary" onclick="sendBroadcast()">
+                        <span>📢</span> إرسال الإذاعة
+                    </button>
+                    <button class="btn btn-danger" onclick="closeModal('broadcastModal')">
+                        <span>❌</span> إلغاء
+                    </button>
                 </div>
             </div>
         </div>
 
-        <!-- Notification -->
+        <!-- نافذة عرض تفاصيل المستخدم -->
+        <div id="userDetailsModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>👤 تفاصيل المستخدم</h2>
+                    <button class="close-btn" onclick="closeModal('userDetailsModal')">&times;</button>
+                </div>
+                
+                <div id="userDetailsContent" style="text-align: center;">
+                    <div class="loader"></div>
+                    <p>جاري تحميل البيانات...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- نافذة النسخ الاحتياطي -->
+        <div id="backupModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>💾 النسخ الاحتياطي</h2>
+                    <button class="close-btn" onclick="closeModal('backupModal')">&times;</button>
+                </div>
+                
+                <div style="text-align: center; padding: 20px;">
+                    <div class="loader"></div>
+                    <h3>جاري إنشاء نسخة احتياطية...</h3>
+                </div>
+            </div>
+        </div>
+
+        <!-- نافذة تصدير Excel -->
+        <div id="exportModal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>📥 تصدير البيانات</h2>
+                    <button class="close-btn" onclick="closeModal('exportModal')">&times;</button>
+                </div>
+                
+                <div style="padding: 20px;">
+                    <div class="form-group">
+                        <label>اختر البيانات للتصدير</label>
+                        <select class="form-control" id="exportType">
+                            <option value="users">جميع المستخدمين</option>
+                            <option value="active">المشتركين النشطين فقط</option>
+                            <option value="subscriptions">سجل الاشتراكات</option>
+                            <option value="stats">الإحصائيات</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>تنسيق الملف</label>
+                        <select class="form-control" id="exportFormat">
+                            <option value="xlsx">Excel (XLSX)</option>
+                            <option value="csv">CSV</option>
+                            <option value="json">JSON</option>
+                        </select>
+                    </div>
+                    
+                    <div class="modal-actions">
+                        <button class="btn btn-success" onclick="confirmExport()">
+                            <span>📥</span> تصدير
+                        </button>
+                        <button class="btn btn-danger" onclick="closeModal('exportModal')">
+                            <span>❌</span> إلغاء
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- نافذة الإشعارات -->
         <div id="notification" class="notification"></div>
     </div>
 
     <div class="footer">
-        <p>Obeida Trading - نظام إدارة الاشتراكات</p>
+        <p>Obeida Trading - نظام إدارة الاشتراكات الأسطوري v2.0</p>
+        <p style="font-size: 0.9em; margin-top: 10px;">جميع الحقوق محفوظة © 2024</p>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
         // ==================== المتغيرات العامة ====================
         let currentUserId = '';
+        let backups = [];
+        let usersData = {{ users|tojson|safe }};
         
+        // ==================== الوقت المباشر ====================
+        function updateLiveTime() {
+            const now = new Date();
+            const options = {
+                timeZone: 'Asia/Gaza',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            };
+            document.getElementById('liveTime').textContent = now.toLocaleString('ar-EG', options);
+        }
+        setInterval(updateLiveTime, 1000);
+        updateLiveTime();
+
         // ==================== إظهار/إخفاء النوافذ ====================
         function openModal(modalId) {
             document.getElementById(modalId).style.display = 'flex';
@@ -5121,85 +5407,127 @@ ADMIN_PANEL_HTML = """
         function closeModal(modalId) {
             document.getElementById(modalId).style.display = 'none';
         }
-        
-        // ==================== الإشعارات ====================
-        function showNotification(message, type = 'success') {
-            const notification = document.getElementById('notification');
-            notification.textContent = message;
-            notification.className = 'notification ' + (type === 'error' ? 'error' : '');
-            notification.style.display = 'block';
-            
-            setTimeout(() => {
-                notification.style.display = 'none';
-            }, 3000);
-        }
-        
-        // ==================== علامات التبويب ====================
+
+        // ==================== التبويبات ====================
         function showTab(tabName) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             
             event.target.classList.add('active');
             
-            if (tabName === 'users') {
-                document.getElementById('usersTab').classList.add('active');
-            } else if (tabName === 'subscriptions') {
-                document.getElementById('subscriptionsTab').classList.add('active');
-            } else if (tabName === 'backups') {
-                document.getElementById('backupsTab').classList.add('active');
+            const tabMap = {
+                'users': 'usersTab',
+                'subscriptions': 'subscriptionsTab',
+                'backups': 'backupsTab',
+                'stats': 'statsTab',
+                'settings': 'settingsTab'
+            };
+            
+            document.getElementById(tabMap[tabName]).classList.add('active');
+            
+            if (tabName === 'backups') {
+                loadBackups();
+            } else if (tabName === 'stats') {
+                loadStats();
             }
         }
-        
-        // ==================== بحث ====================
+
+        // ==================== البحث والتصفية ====================
         function searchUsers() {
             const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const filterType = document.getElementById('filterType').value;
             const rows = document.querySelectorAll('#usersTable tbody tr');
             
             rows.forEach(row => {
                 if (row.children.length < 2) return;
-                const id = row.children[0].textContent.toLowerCase();
-                const name = row.children[1].textContent.toLowerCase();
-                row.style.display = (id.includes(searchTerm) || name.includes(searchTerm)) ? '' : 'none';
-            });
-        }
-        
-        // ==================== تصفية ====================
-        function filterUsers(filter) {
-            const rows = document.querySelectorAll('#usersTable tbody tr');
-            
-            rows.forEach(row => {
-                if (row.children.length < 5) return;
-                const statusCell = row.children[4];
-                const status = statusCell.textContent.trim();
                 
-                if (filter === 'all') {
-                    row.style.display = '';
-                } else if (filter === 'active' && status === 'نشط') {
-                    row.style.display = '';
-                } else if (filter === 'blocked' && status === 'محظور') {
-                    row.style.display = '';
-                } else {
-                    row.style.display = 'none';
-                }
+                const id = row.cells[0].textContent.toLowerCase();
+                const name = row.cells[1].textContent.toLowerCase();
+                const status = row.dataset.status;
+                
+                const matchesSearch = id.includes(searchTerm) || name.includes(searchTerm);
+                const matchesFilter = filterType === 'all' || status === filterType;
+                
+                row.style.display = (matchesSearch && matchesFilter) ? '' : 'none';
             });
         }
-        
+
+        function filterByType() {
+            searchUsers();
+        }
+
+        function filterUsers(filter) {
+            document.getElementById('filterType').value = filter;
+            searchUsers();
+        }
+
+        // ==================== إشعارات ====================
+        function showNotification(message, type = 'success', duration = 3000) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = 'notification ' + type;
+            notification.style.display = 'block';
+            
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, duration);
+        }
+
+        // ==================== تحديث البيانات ====================
+        function refreshData() {
+            showNotification('🔄 جاري تحديث البيانات...', 'info');
+            setTimeout(() => {
+                location.reload();
+            }, 1500);
+        }
+
         // ==================== إضافة اشتراك ====================
-        function confirmAdd() {
+        function confirmAddSubscription() {
             const userId = document.getElementById('addUserId').value;
             const subType = document.getElementById('addSubType').value;
+            const notes = document.getElementById('addNotes').value;
             
             if (!userId) {
-                showNotification('الرجاء إدخال معرف المستخدم', 'error');
+                showNotification('❌ الرجاء إدخال معرف المستخدم', 'error');
                 return;
             }
             
-            showNotification(`✅ تم إضافة اشتراك ${subType} للمستخدم ${userId}`);
-            closeModal('addModal');
-            document.getElementById('addUserId').value = '';
+            if (!/^\d+$/.test(userId)) {
+                showNotification('❌ معرف المستخدم يجب أن يكون أرقام فقط', 'error');
+                return;
+            }
+            
+            // إرسال الطلب للخادم
+            fetch('/admin/add_subscription_v2', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: parseInt(userId),
+                    subscription_type: subType,
+                    notes: notes
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`✅ تم إضافة اشتراك ${subType} للمستخدم ${userId} بنجاح`, 'success');
+                    closeModal('addModal');
+                    document.getElementById('addUserId').value = '';
+                    document.getElementById('addNotes').value = '';
+                    setTimeout(() => refreshData(), 1500);
+                } else {
+                    showNotification(`❌ خطأ: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ في الاتصال بالخادم', 'error');
+                console.error('Error:', error);
+            });
         }
-        
-        // ==================== تمديد ====================
+
+        // ==================== تمديد اشتراك ====================
         function extendUser(userId) {
             document.getElementById('extendUserId').value = userId;
             openModal('extendModal');
@@ -5207,12 +5535,35 @@ ADMIN_PANEL_HTML = """
         
         function confirmExtend() {
             const userId = document.getElementById('extendUserId').value;
-            showNotification(`✅ تم تمديد اشتراك المستخدم ${userId}`);
-            closeModal('extendModal');
+            const duration = parseInt(document.getElementById('extendDuration').value);
+            
+            fetch('/admin/extend_subscription_v2', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: parseInt(userId),
+                    additional_seconds: duration
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`✅ تم تمديد اشتراك المستخدم ${userId} بنجاح`, 'success');
+                    closeModal('extendModal');
+                    setTimeout(() => refreshData(), 1500);
+                } else {
+                    showNotification(`❌ خطأ: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ في الاتصال بالخادم', 'error');
+            });
         }
-        
+
         // ==================== تغيير الاشتراك ====================
-        function changeUserSub(userId) {
+        function changeSubscription(userId) {
             document.getElementById('changeUserId').value = userId;
             openModal('changeModal');
         }
@@ -5220,11 +5571,46 @@ ADMIN_PANEL_HTML = """
         function confirmChange() {
             const userId = document.getElementById('changeUserId').value;
             const newType = document.getElementById('newSubType').value;
-            showNotification(`✅ تم تغيير اشتراك المستخدم ${userId} إلى ${newType}`);
-            closeModal('changeModal');
+            
+            // أولاً إلغاء الاشتراك الحالي
+            fetch('/admin/revoke_subscription_v2', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: parseInt(userId)
+                })
+            })
+            .then(() => {
+                // ثم إضافة الاشتراك الجديد
+                return fetch('/admin/add_subscription_v2', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: parseInt(userId),
+                        subscription_type: newType
+                    })
+                });
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`✅ تم تغيير اشتراك المستخدم ${userId} إلى ${newType}`, 'success');
+                    closeModal('changeModal');
+                    setTimeout(() => refreshData(), 1500);
+                } else {
+                    showNotification(`❌ خطأ: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ في الاتصال بالخادم', 'error');
+            });
         }
-        
-        // ==================== حظر ====================
+
+        // ==================== حظر مستخدم ====================
         function blockUser(userId) {
             document.getElementById('blockUserId').value = userId;
             document.getElementById('blockReason').value = '';
@@ -5234,18 +5620,60 @@ ADMIN_PANEL_HTML = """
         function confirmBlock() {
             const userId = document.getElementById('blockUserId').value;
             const reason = document.getElementById('blockReason').value;
-            showNotification(`✅ تم حظر المستخدم ${userId} ${reason ? 'بسبب: ' + reason : ''}`);
-            closeModal('blockModal');
+            
+            fetch('/admin/block_user_v2', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: parseInt(userId),
+                    reason: reason || 'Blocked by admin'
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`✅ تم حظر المستخدم ${userId}`, 'warning');
+                    closeModal('blockModal');
+                    setTimeout(() => refreshData(), 1500);
+                } else {
+                    showNotification(`❌ خطأ: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ في الاتصال بالخادم', 'error');
+            });
         }
-        
+
         // ==================== إلغاء حظر ====================
         function unblockUser(userId) {
-            if (confirm(`هل أنت متأكد من إلغاء حظر المستخدم ${userId}؟`)) {
-                showNotification(`✅ تم إلغاء حظر المستخدم ${userId}`);
-            }
+            if (!confirm(`هل أنت متأكد من إلغاء حظر المستخدم ${userId}؟`)) return;
+            
+            fetch('/admin/unblock_user_v2', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: parseInt(userId)
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`✅ تم إلغاء حظر المستخدم ${userId}`, 'success');
+                    setTimeout(() => refreshData(), 1500);
+                } else {
+                    showNotification(`❌ خطأ: ${data.error}`, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ في الاتصال بالخادم', 'error');
+            });
         }
-        
-        // ==================== رسالة ====================
+
+        // ==================== إرسال رسالة ====================
         function messageUser(userId) {
             document.getElementById('messageUserId').value = userId;
             document.getElementById('messageText').value = '';
@@ -5257,85 +5685,276 @@ ADMIN_PANEL_HTML = """
             const message = document.getElementById('messageText').value;
             
             if (!message) {
-                showNotification('الرجاء كتابة الرسالة', 'error');
+                showNotification('❌ الرجاء كتابة الرسالة', 'error');
                 return;
             }
             
-            showNotification(`✅ تم إرسال الرسالة إلى المستخدم ${userId}`);
+            // هنا يمكن إرسال الرسالة عبر البوت
+            showNotification(`✅ تم إرسال الرسالة إلى المستخدم ${userId}`, 'success');
             closeModal('messageModal');
         }
-        
+
+        // ==================== عرض تفاصيل المستخدم ====================
+        function viewUser(userId) {
+            openModal('userDetailsModal');
+            
+            // البحث عن بيانات المستخدم
+            const user = usersData.find(u => u.id == userId);
+            
+            if (user) {
+                let html = `
+                    <div style="text-align: center;">
+                        <div style="font-size: 5em; margin-bottom: 20px;">👤</div>
+                        <h2>${user.name}</h2>
+                        <p style="color: #666;">معرف: ${user.id}</p>
+                    </div>
+                    
+                    <div style="margin-top: 30px;">
+                        <table style="width: 100%;">
+                            <tr>
+                                <td><strong>نوع الاشتراك:</strong></td>
+                                <td>${user.subscription_type}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>تاريخ البداية:</strong></td>
+                                <td>${user.start_date || 'غير محدد'}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>تاريخ الانتهاء:</strong></td>
+                                <td>${user.end_date || 'غير محدد'}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>الحالة:</strong></td>
+                                <td>
+                                    <span class="badge-status ${user.is_blocked ? 'status-blocked' : (user.is_active ? 'status-active' : 'status-expired')}">
+                                        ${user.is_blocked ? '🚫 محظور' : (user.is_active ? '✅ نشط' : '❌ منتهي')}
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                `;
+                document.getElementById('userDetailsContent').innerHTML = html;
+            } else {
+                document.getElementById('userDetailsContent').innerHTML = '<p>لم يتم العثور على المستخدم</p>';
+            }
+        }
+
         // ==================== إذاعة ====================
         function sendBroadcast() {
+            const target = document.getElementById('broadcastTarget').value;
             const message = document.getElementById('broadcastMessage').value;
             
             if (!message) {
-                showNotification('الرجاء كتابة الرسالة', 'error');
+                showNotification('❌ الرجاء كتابة الرسالة', 'error');
                 return;
             }
             
-            showNotification('✅ تم إرسال الإذاعة لجميع المشتركين');
-            closeModal('broadcastModal');
-            document.getElementById('broadcastMessage').value = '';
-        }
-        
-        // ==================== نسخ احتياطي ====================
-        function createBackup() {
-            showNotification('💾 جاري إنشاء نسخة احتياطية...');
+            showNotification('📢 جاري إرسال الإذاعة...', 'info');
             
-            setTimeout(() => {
-                const now = new Date().toLocaleString('ar-EG');
-                const tableBody = document.getElementById('backupsList');
-                
-                const newRow = document.createElement('tr');
-                newRow.innerHTML = `
-                    <td>backup_${now.replace(/[\/\s:]/g, '_')}.db</td>
-                    <td>${now}</td>
-                    <td>${Math.floor(Math.random() * 5) + 1} MB</td>
-                    <td>
-                        <button class="btn btn-info btn-small" onclick="alert('جاري التحميل...')">📥</button>
-                    </td>
-                `;
-                
-                if (tableBody.children[0] && tableBody.children[0].children[0].colSpan === 4) {
-                    tableBody.innerHTML = '';
+            fetch('/admin/broadcast', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    target: target,
+                    message: message
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`✅ تم إرسال الإذاعة لـ ${data.sent} مستخدم`, 'success');
+                    closeModal('broadcastModal');
+                    document.getElementById('broadcastMessage').value = '';
+                } else {
+                    showNotification(`❌ خطأ: ${data.error}`, 'error');
                 }
-                
-                tableBody.appendChild(newRow);
-                showNotification('✅ تم إنشاء النسخة الاحتياطية بنجاح');
-            }, 2000);
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ في الاتصال بالخادم', 'error');
+            });
         }
-        
-        function uploadBackup() {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.db,.sqlite,.backup';
-            input.onchange = function(e) {
-                const file = e.target.files[0];
-                if (file) {
-                    showNotification(`📤 جاري رفع الملف: ${file.name}`);
-                    setTimeout(() => {
-                        showNotification('✅ تم رفع الملف بنجاح');
-                    }, 2000);
+
+        // ==================== النسخ الاحتياطي ====================
+        function loadBackups() {
+            const tbody = document.getElementById('backupsList');
+            
+            fetch('/admin/get_backups')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.backups && data.backups.length > 0) {
+                        let html = '';
+                        data.backups.forEach(backup => {
+                            html += `
+                                <tr>
+                                    <td>${backup.name}</td>
+                                    <td>${backup.date}</td>
+                                    <td>${backup.size}</td>
+                                    <td>${backup.type}</td>
+                                    <td>
+                                        <div class="btn-group">
+                                            <button class="btn btn-info btn-sm" onclick="downloadBackup('${backup.name}')">
+                                                <span>📥</span> تحميل
+                                            </button>
+                                            <button class="btn btn-danger btn-sm" onclick="deleteBackup('${backup.name}')">
+                                                <span>🗑️</span> حذف
+                                            </button>
+                                            <button class="btn btn-success btn-sm" onclick="restoreBackup('${backup.name}')">
+                                                <span>🔄</span> استعادة
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `;
+                        });
+                        tbody.innerHTML = html;
+                    } else {
+                        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">لا توجد نسخ احتياطية</td></tr>';
+                    }
+                })
+                .catch(error => {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center;">خطأ في تحميل البيانات</td></tr>';
+                });
+        }
+
+        function createBackup() {
+            openModal('backupModal');
+            
+            fetch('/admin/create_backup', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                closeModal('backupModal');
+                if (data.success) {
+                    showNotification('✅ تم إنشاء النسخة الاحتياطية بنجاح', 'success');
+                    loadBackups();
+                } else {
+                    showNotification('❌ فشل إنشاء النسخة الاحتياطية', 'error');
+                }
+            })
+            .catch(error => {
+                closeModal('backupModal');
+                showNotification('❌ حدث خطأ في الاتصال بالخادم', 'error');
+            });
+        }
+
+        function downloadBackup(filename) {
+            window.location.href = `/admin/download_backup/${filename}`;
+        }
+
+        function deleteBackup(filename) {
+            if (!confirm(`هل أنت متأكد من حذف النسخة ${filename}؟`)) return;
+            
+            fetch(`/admin/delete_backup/${filename}`, {
+                method: 'DELETE'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('✅ تم حذف النسخة بنجاح', 'success');
+                    loadBackups();
+                } else {
+                    showNotification('❌ فشل حذف النسخة', 'error');
+                }
+            });
+        }
+
+        function restoreBackup(filename) {
+            if (!confirm(`هل أنت متأكد من استعادة النسخة ${filename}؟\nسيتم فقدان البيانات الحالية!`)) return;
+            
+            fetch(`/admin/restore_backup/${filename}`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('✅ تم استعادة النسخة بنجاح', 'success');
+                    setTimeout(() => refreshData(), 2000);
+                } else {
+                    showNotification('❌ فشل استعادة النسخة', 'error');
+                }
+            });
+        }
+
+        // ==================== الإحصائيات ====================
+        function showSubscriptionStats() {
+            showTab('subscriptions');
+        }
+
+        function loadStats() {
+            fetch('/admin/get_stats_v2')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // تحديث إحصائيات الميزات
+                        let featureHtml = '<ul style="list-style: none; padding: 0;">';
+                        for (const [feature, count] of Object.entries(data.stats.feature_usage || {})) {
+                            featureHtml += `
+                                <li style="padding: 10px; border-bottom: 1px solid #e2e8f0;">
+                                    <div style="display: flex; justify-content: space-between;">
+                                        <span>${feature}</span>
+                                        <span style="font-weight: bold;">${count} مرة</span>
+                                    </div>
+                                </li>
+                            `;
+                        }
+                        featureHtml += '</ul>';
+                        document.getElementById('featureStats').innerHTML = featureHtml;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading stats:', error);
+                });
+        }
+
+        // ==================== تصدير البيانات ====================
+        function exportData() {
+            openModal('exportModal');
+        }
+
+        function confirmExport() {
+            const type = document.getElementById('exportType').value;
+            const format = document.getElementById('exportFormat').value;
+            
+            window.location.href = `/admin/export_data?type=${type}&format=${format}`;
+            closeModal('exportModal');
+        }
+
+        // ==================== إحصائيات قاعدة البيانات ====================
+        function getDatabaseSize() {
+            fetch('/admin/get_db_size')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('dbSize').textContent = data.size;
+                })
+                .catch(() => {
+                    document.getElementById('dbSize').textContent = 'غير معروف';
+                });
+        }
+
+        // ==================== تهيئة الصفحة ====================
+        document.addEventListener('DOMContentLoaded', function() {
+            getDatabaseSize();
+            
+            // إغلاق النوافذ عند الضغط خارجها
+            window.onclick = function(event) {
+                if (event.target.classList.contains('modal')) {
+                    event.target.style.display = 'none';
                 }
             };
-            input.click();
-        }
-        
-        // ==================== تحديث ====================
-        function refreshData() {
-            showNotification('🔄 جاري تحديث البيانات...');
-            setTimeout(() => {
-                location.reload();
-            }, 1000);
-        }
-        
-        // ==================== إغلاق النوافذ بالضغط خارجها ====================
-        window.onclick = function(event) {
-            if (event.target.classList.contains('modal')) {
-                event.target.style.display = 'none';
-            }
-        }
+            
+            // معالجة الضغط على ESC
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') {
+                    document.querySelectorAll('.modal').forEach(modal => {
+                        modal.style.display = 'none';
+                    });
+                }
+            });
+        });
     </script>
 </body>
 </html>
@@ -5352,7 +5971,6 @@ def home():
             body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
             h1 { font-size: 3em; margin-bottom: 20px; }
             .status { background: rgba(255,255,255,0.2); padding: 20px 40px; border-radius: 10px; display: inline-block; margin: 20px; }
-            .admin-link { background: #28a745; color: white; padding: 15px 30px; border-radius: 5px; text-decoration: none; display: inline-block; margin: 20px; }
         </style>
     </head>
     <body>
@@ -5360,7 +5978,6 @@ def home():
         <p>Chat & Technical Analysis Bot with Advanced Subscription System</p>
         <div class="status">🌍 نظام المناطق الزمنية للمستخدمين نشط ✅</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <a href="/admin" class="admin-link">🔐 عرض بيانات المشرف</a>
     </body>
     </html>
     """
@@ -5380,181 +5997,21 @@ def health():
         "timestamp": time.time()
     }
 
-@app.route('/admin')
-def admin_panel():
-    """لوحة تحكم المشرف المحدثة"""
-    try:
-        stats = SubscriptionSystem.get_stats()
-        users = SubscriptionSystem.get_all_users()
-        
-        # تنسيق بيانات المستخدمين
-        formatted_users = []
-        for u in users:
-            uid, username, first_name, created, last_active, is_blocked, sub_type, sub_name, start_date, end_date, is_active = u
-            
-            # تحديد الحالة
-            if is_blocked == 1:
-                status = "محظور"
-            elif is_active == 1 and (not end_date or datetime.fromisoformat(end_date) > datetime.now()):
-                status = "نشط"
-            else:
-                status = "منتهي"
-            
-            # اسم العرض
-            display_name = first_name or username or str(uid)
-            
-            # تنسيق تاريخ الانتهاء
-            end_display = end_date[:16] if end_date else "غير محدد"
-            if end_date and datetime.fromisoformat(end_date) < datetime.now():
-                end_display += " (منتهي)"
-            
-            formatted_users.append({
-                'id': uid,
-                'name': display_name,
-                'subscription_type': sub_name or 'غير مشترك',
-                'end_date': end_display,
-                'status': status,
-                'last_active': last_active[:16] if last_active else '-'
-            })
-        
-        # معلومات النسخ الاحتياطي
-        last_backup = "لا توجد نسخ"
-        if os.path.exists(BACKUP_DIR):
-            backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')])
-            if backups:
-                last_backup = backups[-1].replace('backup_', '').replace('.db', '')
-        
-        return render_template_string(
-            ADMIN_PANEL_HTML,
-            stats=stats,
-            users=formatted_users,
-            data_version=DATA_VERSION,
-            last_backup=last_backup
-        )
-    except Exception as e:
-        return f"خطأ في تحميل لوحة التحكم: {str(e)}"
-
-@app.route('/admin/add_subscription_v2', methods=['POST'])
-def add_subscription_v2():
-    """إضافة اشتراك لمستخدم"""
-    try:
-        data = request.json
-        user_id = data.get('user_id')
-        subscription_type = data.get('subscription_type', 'monthly')
-        
-        success, result = SubscriptionSystem.add_subscription(
-            user_id=user_id,
-            subscription_type=subscription_type,
-            added_by=ADMIN_ID,
-            reason="Added via web panel"
-        )
-        
-        if success:
-            DataProtection.backup_database()
-            return jsonify({'success': True, 'subscription': result})
-        else:
-            return jsonify({'success': False, 'error': result})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/admin/revoke_subscription_v2', methods=['POST'])
-def revoke_subscription_v2():
-    """إلغاء اشتراك مستخدم"""
-    try:
-        data = request.json
-        user_id = data.get('user_id')
-        
-        success, message = SubscriptionSystem.revoke_subscription(user_id, performed_by=ADMIN_ID)
-        
-        if success:
-            DataProtection.backup_database()
-            return jsonify({'success': True, 'message': message})
-        else:
-            return jsonify({'success': False, 'error': message})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/admin/extend_subscription_v2', methods=['POST'])
-def extend_subscription_v2():
-    """تمديد اشتراك مستخدم"""
-    try:
-        data = request.json
-        user_id = data.get('user_id')
-        additional_seconds = data.get('additional_seconds', 86400)
-        
-        success, message = SubscriptionSystem.extend_subscription(
-            user_id, 
-            additional_seconds, 
-            performed_by=ADMIN_ID
-        )
-        
-        if success:
-            DataProtection.backup_database()
-            return jsonify({'success': True, 'message': message})
-        else:
-            return jsonify({'success': False, 'error': message})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/admin/block_user_v2', methods=['POST'])
-def block_user_v2():
-    """حظر مستخدم"""
-    try:
-        data = request.json
-        user_id = data.get('user_id')
-        reason = data.get('reason', 'Blocked by admin')
-        
-        success, message = SubscriptionSystem.block_user(user_id, reason, performed_by=ADMIN_ID)
-        
-        if success:
-            return jsonify({'success': True, 'message': message})
-        else:
-            return jsonify({'success': False, 'error': message})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/admin/unblock_user_v2', methods=['POST'])
-def unblock_user_v2():
-    """إلغاء حظر مستخدم"""
-    try:
-        data = request.json
-        user_id = data.get('user_id')
-        
-        success, message = SubscriptionSystem.unblock_user(user_id, performed_by=ADMIN_ID)
-        
-        if success:
-            return jsonify({'success': True, 'message': message})
-        else:
-            return jsonify({'success': False, 'error': message})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/admin/get_stats_v2')
-def get_stats_v2():
-    """الحصول على الإحصائيات"""
-    stats = SubscriptionSystem.get_stats()
-    return jsonify({'success': True, 'stats': stats})
-
 @app.route('/ping')
 def ping():
     return "PONG"
 
 def main():
-    """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية"""
     print("🤖 Starting Obeida Trading with Timezone Support ...")
     
-    # تهيئة قاعدة البيانات الرئيسية
     init_db_with_subscription()
     
-    # إنشاء نسخة احتياطية أولية
     DataProtection.backup_database()
     DataProtection.backup_codes_db()
     
-    # تشغيل Flask
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
-        # تنظيف جميع الملفات المؤقتة عند بدء التشغيل
     print("🧹 جاري تنظيف الملفات المؤقتة عند بدء التشغيل...")
     try:
         if os.path.exists(IMAGE_CACHE_DIR):
@@ -5575,10 +6032,8 @@ def main():
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الملفات عند بدء التشغيل: {e}")
     
-    # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
     
-    # معالج المحادثة
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
@@ -5635,10 +6090,8 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("cancel", cancel))
     
-    # إضافة معالج للأخطاء
     application.add_error_handler(error_handler)
     
-    # تشغيل المهام الدورية
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.create_task(periodic_cleanup())
@@ -5646,9 +6099,7 @@ def main():
     
     print("✅ Telegram Bot with Timezone Support ready ...")
     
-    # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
-
