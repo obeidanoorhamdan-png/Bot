@@ -47,260 +47,6 @@ CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15"
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
 
 # ============================================
-# دوال مساعدة للتحليل الزمني المتقدم V7.4
-# ============================================
-
-def calculate_time_metrics(current_time, target_distance, candle, historical_speed=None):
-    """حساب المقاييس الزمنية المتقدمة"""
-    metrics = {}
-    
-    # تحويل الفريم إلى ثواني
-    frame_seconds_map = {
-        'S5': 5, 'S10': 10, 'S15': 15, 'S30': 30,
-        'M1': 60, 'M5': 300, 'M15': 900, 'M30': 1800,
-        'H1': 3600, 'H4': 14400, 'D1': 86400
-    }
-    
-    # استخراج الفريم الأساسي
-    base_frame = candle
-    if candle.startswith(('S', 'M', 'H', 'D')):
-        base_frame = candle
-    else:
-        base_frame = 'M5'  # افتراضي
-    
-    frame_seconds = frame_seconds_map.get(base_frame, 60)
-    metrics['frame_seconds'] = frame_seconds
-    
-    # السرعة المطلوبة لتحقيق 5 نقاط
-    required_speed_5_points = 5 / frame_seconds if frame_seconds > 0 else 0.1
-    metrics['required_speed_5_points'] = round(required_speed_5_points, 3)
-    
-    # حساب الوقت اللازم للوصول
-    if historical_speed and historical_speed > 0:
-        time_to_target = target_distance / historical_speed if historical_speed > 0 else 0
-        metrics['time_to_target'] = round(time_to_target, 1)
-        
-        # احتمالية الوصول قبل الإغلاق
-        second_in_candle = (current_time.minute * 60 + current_time.second) % frame_seconds
-        remaining_time = frame_seconds - second_in_candle
-        
-        if remaining_time > 0 and time_to_target > 0:
-            if time_to_target <= remaining_time:
-                probability = 100
-            else:
-                achievable_distance = historical_speed * remaining_time
-                probability = min(100, (achievable_distance / target_distance) * 100)
-        else:
-            probability = 0
-            
-        metrics['arrival_probability'] = round(probability, 1)
-        
-        # عدد الشموع المتوقعة للوصول
-        expected_candles = time_to_target / frame_seconds if frame_seconds > 0 else 0
-        metrics['expected_candles'] = round(expected_candles, 1)
-    else:
-        metrics['time_to_target'] = 0
-        metrics['arrival_probability'] = 0
-        metrics['expected_candles'] = 0
-    
-    # تحليل مرحلة الشمعة
-    second_in_candle = (current_time.minute * 60 + current_time.second) % frame_seconds
-    progress_percent = (second_in_candle / frame_seconds) * 100 if frame_seconds > 0 else 0
-    
-    if progress_percent < 10:
-        phase = "🟢 بداية انطلاق"
-        phase_desc = "مرحلة التكون الأولى - فرصة للدخول المبكر"
-    elif progress_percent < 30:
-        phase = "🔵 تشكل وزخم"
-        phase_desc = "مرحلة بناء الزخم - وقت مثالي للتأكيد"
-    elif progress_percent < 50:
-        phase = "🟡 منتصف الشمعة"
-        phase_desc = "مرحلة استقرار - انتظار تأكيد"
-    elif progress_percent < 70:
-        phase = "🟠 تذبذب"
-        phase_desc = "مرحلة تذبذب - توخ الحذر"
-    elif progress_percent < 90:
-        phase = "🔴 نهاية الشمعة"
-        phase_desc = "مرحلة حاسمة - احتمالية انعكاس"
-    else:
-        phase = "⚫ ثواني أخيرة"
-        phase_desc = "مرحلة الخطر - انتظر الشمعة الجديدة"
-    
-    metrics['candle_phase'] = {
-        'phase': phase,
-        'description': phase_desc,
-        'progress': round(progress_percent, 1),
-        'seconds_elapsed': second_in_candle,
-        'seconds_remaining': frame_seconds - second_in_candle
-    }
-    
-    return metrics
-
-def calculate_time_momentum_index(current_speed, max_speed_history):
-    """حساب مؤشر الزخم الزمني"""
-    if not max_speed_history or max_speed_history <= 0:
-        return 0
-    
-    tmi = (current_speed / max_speed_history) * 100
-    tmi = min(100, max(0, round(tmi, 1)))
-    
-    return tmi
-
-def analyze_time_quality(current_minute, current_second, distance_to_target, frame_seconds, momentum_boost=False):
-    """تحليل جودة التوقيت"""
-    
-    # الدقائق الحرجة
-    critical_minutes = [14, 29, 44, 59]
-    
-    # الثواني الحرجة
-    critical_seconds_range = range(45, 60)
-    
-    score = 100
-    alerts = []
-    factors = {}
-    
-    # تحليل الدقيقة
-    if current_minute in critical_minutes:
-        score -= 30
-        alerts.append("🔴 **دقيقة حرجة** - دقيقة تحول رئيسية")
-        factors['critical_minute'] = -30
-        
-        # خصم إضافي للثواني الأخيرة مع مسافة صغيرة
-        if current_second in critical_seconds_range and distance_to_target < 5:
-            if not momentum_boost:
-                score -= 40
-                alerts.append("⚠️ **خطر شديد** - ثواني أخيرة + مسافة < 5 نقاط = فخ سيولة محتمل")
-                factors['critical_seconds_small_distance'] = -40
-            else:
-                alerts.append("⚡ **استثناء الجوكر** - زخم قوي يسمح بالتجاوز")
-                factors['momentum_override'] = 20
-    else:
-        factors['normal_minute'] = 0
-    
-    # تحليل الثواني
-    if current_second > 45:
-        if distance_to_target < 3:
-            score -= 25
-            alerts.append("⚠️ **نهاية شمعة** + مسافة ضئيلة = احتمال انعكاس قوي")
-            factors['end_of_candle_small_distance'] = -25
-        elif distance_to_target < 5:
-            score -= 15
-            alerts.append("🟡 **نهاية شمعة** - يفضل الانتظار للشمعة الجديدة")
-            factors['end_of_candle'] = -15
-    elif current_second < 15:
-        if distance_to_target > 5:
-            score += 15
-            alerts.append("✅ **بداية شمعة مثالية** - وقت مناسب للدخول")
-            factors['beginning_of_candle'] = 15
-    
-    # تحليل المسافة
-    if distance_to_target < 3:
-        score -= 20
-        alerts.append("📏 **مسافة ضئيلة جداً** - احتمال انعكاس أو سبايك")
-        factors['very_small_distance'] = -20
-    elif distance_to_target < 5:
-        if current_minute in critical_minutes:
-            score -= 10
-            alerts.append("⚠️ **مسافة أقل من 5 نقاط في دقيقة حرجة** - توخ الحذر")
-            factors['small_distance_critical_minute'] = -10
-    
-    # مكافأة للتوقيت المثالي
-    if 10 <= current_second <= 30 and distance_to_target >= 5 and current_minute not in critical_minutes:
-        score += 20
-        alerts.append("💎 **توقيت مثالي** - جميع الظروف مناسبة")
-        factors['perfect_timing'] = 20
-    
-    # إضافة تعزيز الزخم
-    if momentum_boost:
-        score += 25
-        alerts.append("🚀 **تعزيز الزخم مفعل** - قوة اندفاعية استثنائية")
-        factors['momentum_boost'] = 25
-    
-    # تصنيف الجودة
-    if score >= 90:
-        quality = "ممتاز 💎"
-        quality_color = "🟢"
-        recommendation = "دخول فوري بقوة"
-    elif score >= 75:
-        quality = "جيد جداً ✅"
-        quality_color = "🟢"
-        recommendation = "دخول مناسب"
-    elif score >= 60:
-        quality = "جيد ⚡"
-        quality_color = "🟡"
-        recommendation = "دخول بحذر"
-    elif score >= 40:
-        quality = "مقبول ⚠️"
-        quality_color = "🟠"
-        recommendation = "انتظار تأكيد إضافي"
-    else:
-        quality = "خطير ❌"
-        quality_color = "🔴"
-        recommendation = "عدم الدخول - انتظر توقيت أفضل"
-    
-    return {
-        'score': max(0, min(100, score)),
-        'quality': quality,
-        'quality_color': quality_color,
-        'recommendation': recommendation,
-        'alerts': alerts,
-        'factors': factors
-    }
-
-def calculate_candle_speed(candle_data):
-    """حساب سرعة الشمعة بالنقاط"""
-    if not candle_data or len(candle_data) < 2:
-        return 0
-    
-    try:
-        high = float(candle_data[-1].get('high', 0))
-        low = float(candle_data[-1].get('low', 0))
-        prev_high = float(candle_data[-2].get('high', 0))
-        prev_low = float(candle_data[-2].get('low', 0))
-        
-        current_range = high - low
-        prev_range = prev_high - prev_low
-        
-        if prev_range > 0:
-            speed = (current_range / prev_range) * 100
-        else:
-            speed = 100
-            
-        return round(speed, 1)
-    except:
-        return 0
-
-def calculate_optimal_entry_window(time_metrics, time_quality):
-    """حساب نافذة الدخول المثلى"""
-    window = {}
-    
-    frame_seconds = time_metrics.get('frame_seconds', 60)
-    remaining = time_metrics.get('candle_phase', {}).get('seconds_remaining', 0)
-    probability = time_metrics.get('arrival_probability', 0)
-    
-    # تحديد نافذة الدخول
-    if probability > 80:
-        window['start'] = "الآن"
-        window['end'] = f"خلال {max(1, int(remaining * 0.3))} ثانية"
-        window['best_moment'] = "فوري"
-    elif probability > 50:
-        window['start'] = f"بعد {int(remaining * 0.2)} ثانية"
-        window['end'] = f"بعد {int(remaining * 0.6)} ثانية"
-        window['best_moment'] = "منتصف النافذة"
-    else:
-        window['start'] = "بعد إغلاق الشمعة"
-        window['end'] = "بداية الشمعة الجديدة"
-        window['best_moment'] = "افتتاح الشمعة التالية"
-    
-    # وقت إعادة التقييم
-    if remaining > 30:
-        window['reevaluate'] = f"بعد {int(remaining * 0.5)} ثانية"
-    else:
-        window['reevaluate'] = "بعد إغلاق الشمعة"
-    
-    return window
-
-# ============================================
 # نظام المناطق الزمنية حسب الدولة (NEW)
 # ============================================
 
@@ -3380,177 +3126,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 انتظر إغلاق الشمعة الحالية؛ إذا عادت تحت القمة، ادخل بيع 🔴 / شراء 🟢 (انعكاس فوري) بمجرد لمس مستوى الـ -2 / +2 نقطة.
 """
         
-        # ============================================
-        # تحليل زمني متقدم V7.4
-        # ============================================
-        
-        # تقدير القيم (سيتم استخراجها من التحليل لاحقاً)
-        estimated_speed = 2.5  # قيمة افتراضية
-        distance_to_target = 10  # قيمة افتراضية
-        max_speed_history = 5.0  # قيمة افتراضية
-        
-        # حساب المقاييس الزمنية
-        time_metrics = calculate_time_metrics(local_time, distance_to_target, candle, estimated_speed)
-        
-        # تحليل جودة التوقيت
-        time_quality = analyze_time_quality(
-            current_minute, 
-            current_second, 
-            distance_to_target, 
-            time_metrics.get('frame_seconds', 60),
-            momentum_boost
-        )
-        
-        # حساب مؤشر الزخم الزمني
-        tmi = calculate_time_momentum_index(estimated_speed, max_speed_history)
-        
-        # حساب نافذة الدخول المثلى
-        optimal_window = calculate_optimal_entry_window(time_metrics, time_quality)
-        
-        # تحضير نص مرحلة الشمعة
-        candle_phase = time_metrics.get('candle_phase', {})
-        candle_phase_text = candle_phase.get('phase', 'غير معروف')
-        candle_phase_description = candle_phase.get('description', '')
-        candle_phase_progress = candle_phase.get('progress', 0)
-        
-        # تحضير تحذيرات الوقت
-        time_alerts_text = "\n".join([f"• {alert}" for alert in time_quality['alerts']]) if time_quality['alerts'] else "• ✅ لا توجد تحذيرات"
-        
-        # حساب بعض القيم للتقييم
-        time_quality_score = time_quality['score']
-        time_quality_text = time_quality['quality']
-        arrival_prob = time_metrics.get('arrival_probability', 0)
-        arrival_text = "عالية" if arrival_prob > 70 else "متوسطة" if arrival_prob > 40 else "منخفضة"
-        
-        # درجة TMI
-        tmi_value = tmi
-        if tmi > 80:
-            tmi_text = "قوي جداً"
-        elif tmi > 60:
-            tmi_text = "قوي"
-        elif tmi > 40:
-            tmi_text = "متوسط"
-        else:
-            tmi_text = "ضعيف"
-        
-        # درجة تحقيق 5 نقاط
-        required_speed = time_metrics.get('required_speed_5_points', 0.1)
-        if estimated_speed >= required_speed * 2:
-            five_points_text = "سهل"
-        elif estimated_speed >= required_speed:
-            five_points_text = "ممكن"
-        elif estimated_speed >= required_speed * 0.5:
-            five_points_text = "صعب"
-        else:
-            five_points_text = "مستحيل"
-        
-        # حساب احتمالية الارتداد
-        reversal_probability = min(100, 100 - arrival_prob + (20 if current_minute in [14,29,44,59] else 0))
-        
-        # حساب جودة التوقيت النهائية
-        if time_quality_score >= 80:
-            final_time_quality = "ممتاز 💎"
-            time_recommendation = "دخول فوري بقوة"
-            current_status = "مناسب جداً للدخول"
-        elif time_quality_score >= 65:
-            final_time_quality = "جيد ✅"
-            time_recommendation = "دخول بحذر"
-            current_status = "مناسب مع تحفظ"
-        elif time_quality_score >= 50:
-            final_time_quality = "مقبول ⚠️"
-            time_recommendation = "انتظار تأكيد إضافي"
-            current_status = "غير مستقر"
-        else:
-            final_time_quality = "ضعيف ❌"
-            time_recommendation = "عدم الدخول"
-            current_status = "غير مناسب"
-        
-        # تحديد العامل الحاسم
-        factors = []
-        if time_quality_score < 50:
-            factors.append("جودة التوقيت")
-        if arrival_prob < 40:
-            factors.append("احتمالية الوصول")
-        if candle_phase_progress > 80:
-            factors.append("مرحلة الشمعة")
-        if tmi_value < 40:
-            factors.append("الزخم الزمني")
-        
-        critical_factor = " و ".join(factors) if factors else "جميع العوامل مناسبة"
-        
-        # ============================================
-        # قسم استخراج الوقت المحسن
-        # ============================================
-        
-        enhanced_time_section = f"""
-【استخراج الوقت والتحليل الزمني المتقدم V7.4】
-
-📊 **التحليل الزمني الدقيق (Time Analysis Pro V7.4):**
-
-【الوقت المرجعي】
-• الوقت على المنصة (المستخرج): [استخرج من الصورة] - (المرجع الأساسي المعتمد)
-• توقيت التحليل المحلي: {local_time.strftime('%H:%M:%S')}
-• الوقت المتبقي للإغلاق: {seconds_remaining} ثانية
-• تزامن التوقيت: [✅ متطابق]
-
-【تحليل الفريم والسرعة】
-• الفريم الحالي: {candle}
-• مدة الشمعة: {time_metrics.get('frame_seconds', 60)} ثانية
-• سرعة الشموع الحالية: {estimated_speed} نقطة/شمعة
-• مؤشر تسارع الزخم: {tmi_text}
-
-【تحليل المسافة والزمن】
-• المسافة للهدف: {distance_to_target} نقطة
-• الوقت المتوقع للوصول: {time_metrics.get('time_to_target', 0)} ثانية
-• عدد الشموع المتوقعة: {time_metrics.get('expected_candles', 0)} شمعة
-• احتمالية الوصول قبل الإغلاق: {arrival_prob}%
-
-【مرحلة الشمعة الحالية】
-• الموقع الزمني: {candle_phase_text}
-• التقدم: {candle_phase_progress}%
-• الثواني المنقضية: {candle_phase.get('seconds_elapsed', 0)} ثانية
-• الثواني المتبقية: {candle_phase.get('seconds_remaining', 0)} ثانية
-
-【نافذة الدخول المثلى (Optimal Entry Window)】
-• نافذة الدخول تبدأ: {optimal_window.get('start', 'الآن')}
-• نافذة الدخول تنتهي: {optimal_window.get('end', 'نهاية الشمعة')}
-• أفضل لحظة دخول: {optimal_window.get('best_moment', 'فوري')}
-• وقت إعادة التقييم: {optimal_window.get('reevaluate', 'بعد الإغلاق')}
-
-【تحليل نقاط التحول الزمني】
-• الدقيقة الحالية: {current_minute}
-• الثانية الحالية: {current_second}
-• موقع الدقيقة: {'🔴 حرجة (14,29,44,59)' if current_minute in [14,29,44,59] else '🟢 عادية'}
-• الموقع من الشمعة: {candle_phase_text}
-
-【مؤشر الزخم الزمني (TMI)】
-• TMI اللحظي: {tmi}%
-• قوة الزخم: {tmi_text}
-• تعزيز الزخم: {'✅ مفعل' if momentum_boost else '❌ غير مفعل'}
-
-【تحقيق قاعدة الـ 5 نقاط】
-• السرعة المطلوبة لـ 5 نقاط: {time_metrics.get('required_speed_5_points', 0)} نقطة/ثانية
-• السرعة المتاحة: {estimated_speed} نقطة/ثانية
-• إمكانية تحقيق 5 نقاط: {five_points_text}
-
-⚠️ **تحذيرات زمنية:**
-{time_alerts_text}
-
-【توصية زمنية نهائية】
-• جودة التوقيت: {final_time_quality} ({time_quality_score}/100)
-• القرار: {time_recommendation}
-• الوضع الحالي: {current_status}
-
-📈 **التحليل الإحصائي المتقدم:**
-• احتمالية الوصول: {arrival_prob}%
-• احتمالية الارتداد: {reversal_probability}%
-• مؤشر الثقة الزمني: {time_quality_score}%
-
-🎯 **الخلاصة الزمنية:**
-• الوضع الحالي: {current_status}
-• القرار النهائي: {time_recommendation}
-"""
-        
         # البرومبت الرئيسي مع إضافة جميع التعديلات
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
@@ -3568,8 +3143,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 {previous_context_info}
 
 {all_updates_section}
-
-{enhanced_time_section}
 
 ⚠️ **قاعدة الجوكر المنضبط (Disciplined Joker):**
 - لا يُسمح بتجاهل الوقت (الجوكر) إلا إذا كانت الشمعة تخترق "مستوى مغلق" (Closed Level) وبجسم شمعة ممتلئ بنسبة >90%.
@@ -3962,6 +3535,14 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 [9] النظام الزمني الذكي مع دقائق التحول
 
+【استخراج الوقت】
+• الوقت على المنصة: [______] من الصورة - المرجع الوحيد
+• الفريم: {candle}
+• المسافة للهدف: [______] نقطة
+• سرعة الشموع: [______] نقطة/شمعة
+• الشموع المتوقعة: [______]
+• وقت الوصول المتوقع: [______]
+
 【معامل الانزلاق - S5, S10 فقط】
 • نقطة الدخول المعدلة = السعر الحالي + نقطة أمان في اتجاه الصفقة
 • المسافة الفعلية = المسافة - 1 نقطة
@@ -4125,7 +3706,7 @@ else:
         
         # إعداد النص النهائي
         full_result = (
-            f"✅ **تم التحليل بنجاح - بالاصدار الجديد V7.4 مع التحليل الزمني المتقدم 🚨** \n"
+            f"✅ **تم التحليل بنجاح - بالاصدار الجديد 🚨** \n"
             f"━━━━━━━━━━━━━━━━\n"
             f"{initial_analysis}\n\n"
             f"━━━━━━━━━━━━━━━━\n"
@@ -5556,8 +5137,8 @@ def ping():
     return "PONG"
 
 def main():
-    """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية والتحليل الزمني المتقدم"""
-    print("🤖 Starting Obeida Trading with Timezone Support and Advanced Time Analysis V7.4...")
+    """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية"""
+    print("🤖 Starting Obeida Trading with Timezone Support ...")
     
     # تهيئة قاعدة البيانات الرئيسية
     init_db_with_subscription()
@@ -5660,7 +5241,7 @@ def main():
     loop.create_task(periodic_cleanup())
     loop.create_task(backup_scheduler())
     
-    print("✅ Telegram Bot with Timezone Support and Advanced Time Analysis V7.4 ready ...")
+    print("✅ Telegram Bot with Timezone Support ready ...")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
