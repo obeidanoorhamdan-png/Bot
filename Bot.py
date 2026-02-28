@@ -2828,6 +2828,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                                body_ratio, wick_ratio, distance_to_peak, 
                                higher_timeframe_trend, avg_volume_ratio):
     """
+    اختيار الصفقة الأنجح بناءً على معايير الأمان وليس الربح المتوقع
     """
     # 1. تعريف المتغير في البداية لتجنب خطأ 'not defined'
     total_success_score = 0
