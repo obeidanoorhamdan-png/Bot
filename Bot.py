@@ -2877,7 +2877,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         # إعدادات ثابتة
         GENERATION_CONFIG = {
-            "max_tokens": 1150,
+            "max_tokens": 950,
             "temperature": 0.0,
             "top_p": 1.0,
             "random_seed": 42
@@ -2885,16 +2885,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         # تحضير سياق التحليل السابق
         previous_context_info = ""
-        if prev_context and prev_time:
-            try:
-                prev_time_obj = datetime.fromisoformat(prev_time)
-                minutes_ago = int((datetime.now() - prev_time_obj).total_seconds() / 60)
-                previous_context_info = f"""
-                📋 **ذاكرة السياق (منذ {minutes_ago} دقيقة):**
-                {prev_context}
-                """
-            except:
-                previous_context_info = ""
         
         # ============================================
         # التعديلات الثلاثة الجديدة
