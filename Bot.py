@@ -2827,9 +2827,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         def get_success_driven_decision(is_at_historical_peak, breakout_points, volume_ratio, 
                                body_ratio, wick_ratio, distance_to_peak, 
                                higher_timeframe_trend, avg_volume_ratio):
-    """
-    اختيار الصفقة الأنجح بناءً على معايير الأمان وليس الربح المتوقع
-    """
+    """اختيار الصفقة الأنجح بناءً على معايير الأمان وليس الربح المتوقع"""
     # تعريف المتغير في البداية لتجنب خطأ 'not defined'
     total_success_score = 0
     
