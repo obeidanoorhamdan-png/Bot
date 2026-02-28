@@ -2781,8 +2781,9 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         # ============================================
         # [تعديل V7.4 PRO] - فلتر الأولوية القصوى
         # ============================================
-        def get_final_verdict_with_priority(distance_to_peak, breakout_force, body_ratio, seconds_remaining, 
-                                           volume_ratio, wick_ratio, is_at_peak, momentum_boost_active):
+        def get_success_driven_decision(is_at_historical_peak, breakout_points, volume_ratio, 
+                               body_ratio, wick_ratio, distance_to_peak, 
+                               higher_timeframe_trend, avg_volume_ratio):
             """
             نظام الفلترة الصارم - الأولوية للأكثر نجاحاً
             يعتمد على المسح الاستبعادي: ابحث عن سبب المنع أولاً
