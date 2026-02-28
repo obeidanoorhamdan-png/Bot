@@ -29,7 +29,7 @@ import pytz
 # --- الإعدادات الأساسية ---
 TOKEN = os.environ.get('TOKEN', "8583903565:AAFveu3KYGkPsC8L6WyermoaZ1tI_EtFHHs")
 
-MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "VXRxdx7d8f5q8ZyiwpH8eVsyyGeTXgfo")
+MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "qnq3Rck6jvSEpkXrajCG5pZ53X7ZRNG3")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "pixtral-large-latest"          # للرؤية والاستخراج البصري
 MISTRAL_MODEL_AUDIT = "mistral-large-latest"        # للتحليل المنطقي
