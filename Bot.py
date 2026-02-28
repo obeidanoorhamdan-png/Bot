@@ -4019,6 +4019,140 @@ else:
     
     return MAIN_MENU
 
+async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور في وضع التوصية"""
+    # التحقق من الاشتراك
+    if not await subscription_required(update, context):
+        return RECOMMENDATION_MODE
+    
+    user_id = update.effective_user.id
+    
+    # تسجيل استخدام
+    SubscriptionSystem.increment_usage(user_id, 'recommendation_photo')
+    
+    # الحصول على آخر عملة تم اختيارها
+    last_symbol = get_last_recommendation_symbol(context)
+    
+    wait_msg = await update.message.reply_text(f"📊 استنى شوي العملة: {last_symbol} قيد تحليل 🤌...")
+    
+    try:
+        # حفظ الصورة مؤقتاً
+        photo = await update.message.photo[-1].get_file()
+        timestamp = int(time.time())
+        image_path = os.path.join(IMAGE_CACHE_DIR, f"recommendation_{user_id}_{timestamp}.jpg")
+        await photo.download_to_drive(image_path)
+        
+        # الحصول على إعدادات المستخدم
+        candle, trade_time, _, _, _ = get_user_setting(user_id)
+        
+        if not candle or not trade_time:
+            await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
+            return RECOMMENDATION_MODE
+        
+        # تحليل الصورة
+        analysis_result = await analyze_chart_image(
+            update, 
+            context, 
+            image_path, 
+            candle, 
+            trade_time, 
+            last_symbol
+        )
+        
+        # تنسيق النتيجة مع دعم النسخ السريع
+        formatted_result = format_as_copyable_code(analysis_result, "text")
+        await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
+                
+    except Exception as e:
+        print(f"❌ خطأ في تحليل صورة التوصية: {e}")
+        await wait_msg.edit_text("❌ حدث خطأ في معالجة الصورة. يرجى المحاولة مرة أخرى.")
+    
+    # عرض خيارات المتابعة
+    reply_keyboard = [[key] for key in CATEGORIES.keys()]
+    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
+    
+    await update.message.reply_text(
+        "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
+    )
+    return RECOMMENDATION_MODE
+
+async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور في وضع التحليل"""
+    return await handle_photo_analysis(update, context)
+
+async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الصور للتحليل الفني المتقدم"""
+    # التحقق من الاشتراك
+    if not await subscription_required(update, context):
+        return MAIN_MENU
+    
+    user_id = update.effective_user.id
+    candle, trade_time, prev_context, prev_time, _ = get_user_setting(user_id)
+    
+    # تسجيل استخدام
+    SubscriptionSystem.increment_usage(user_id, 'photo_analysis')
+    
+    if not candle or not trade_time:
+        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"], ["🌍 دولتك"]]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
+        await update.message.reply_text(
+            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
+            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
+
+    wait_msg = await update.message.reply_text(" 📸 تم استلام الصورة بنجاح 📸")
+    photo = await update.message.photo[-1].get_file()
+    
+    timestamp = int(time.time())
+    original_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_original.jpg")
+    compressed_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_compressed.jpg")
+    
+    try:
+        await photo.download_to_drive(original_path)
+        compressed_path = compress_image(original_path)
+        base64_img = encode_image(compressed_path)
+        
+        if not base64_img:
+            await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
+            if os.path.exists(original_path):
+                os.remove(original_path)
+            if os.path.exists(compressed_path) and compressed_path != original_path:
+                os.remove(compressed_path)
+            return MAIN_MENU
+        
+        # تحليل الصورة باستخدام الدالة المحسنة
+        analysis_result = await analyze_chart_image(
+            update, 
+            context, 
+            original_path, 
+            candle, 
+            trade_time, 
+            "الشارت المرفق"
+        )
+        
+        # التحليل_result يحتوي بالفعل على النتيجة النهائية مع التنسيق
+        # تم التعامل مع إرسال النتيجة داخل الدالة analyze_chart_image
+        
+    except Exception as e:
+        print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
+        keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
+        await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
+    finally:
+        # تنظيف الملفات المؤقتة
+        for filepath in [original_path, compressed_path]:
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except Exception as e:
+                    print(f"⚠️ خطأ في حذف الملف المؤقت: {e}")
+    
+    return MAIN_MENU
+
 async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """بدء لوحة تحكم المشرف"""
     user_id = update.effective_user.id
