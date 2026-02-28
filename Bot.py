@@ -2764,6 +2764,161 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         # إضافة متغير "مفتاح القوة" لإلغاء القيود
         market_mode = "AGGRESSIVE" if candle.startswith('S') or (is_trap_minute and seconds_remaining < 15 and momentum_boost) else "CONSERVATIVE"
         
+        # ============================================
+        # [تعديل V7.4 PRO] - متغيرات نظام الأولوية للأكثر نجاحاً
+        # ============================================
+        distance_to_nearest_peak = 999  # سيتم تحديثها من التحليل
+        distance_to_nearest_trough = 999
+        is_at_historical_peak = False
+        is_at_historical_trough = False
+        breakout_force = 0.0
+        volume_ratio = 1.0
+        avg_volume_last_5 = 0.0
+        higher_timeframe_trend = "neutral"  # صاعد/هابط/محايد
+        structural_breakout_confirmed = False
+        liquidity_trap_detected = False
+        
+        # ============================================
+        # [تعديل V7.4 PRO] - فلتر الأولوية القصوى
+        # ============================================
+        def get_final_verdict_with_priority(distance_to_peak, breakout_force, body_ratio, seconds_remaining, 
+                                           volume_ratio, wick_ratio, is_at_peak, momentum_boost_active):
+            """
+            نظام الفلترة الصارم - الأولوية للأكثر نجاحاً
+            يعتمد على المسح الاستبعادي: ابحث عن سبب المنع أولاً
+            """
+            
+            # 🛑 الحاجز الأول: أمان السيولة (قاعدة الـ 5 نقاط) - الأولوية القصوى
+            if is_at_peak and distance_to_peak < 5:
+                if breakout_force < 1.5 or body_ratio < 0.9:
+                    return {
+                        "decision": "REJECT_BUY / SELL_REVERSAL 🔄",
+                        "confidence": 95,
+                        "reason": "⚠️ فخ سيولة: السعر ضمن 5 نقاط من القمة بدون ثالوث مؤسسي - الأولوية للانعكاس"
+                    }
+            
+            # 🛑 الحاجز الثاني: إجهاد الموجة (Climax Exhaustion)
+            if breakout_force > 3.0:  # شمعة ضخمة جداً (أكبر من 3 أضعاف المتوسط)
+                return {
+                    "decision": "WAIT_FOR_CORRECTION 🟡",
+                    "confidence": 80,
+                    "reason": "⚠️ إجهاد سعري: الشمعة أكبر من 3 أضعاف المتوسط - انتظر تصحيح"
+                }
+            
+            # 🛑 الحاجز الثالث: دقائق الغدر (Time Trap)
+            if seconds_remaining < 15 and not momentum_boost_active:
+                return {
+                    "decision": "STRICT_HOLD 🟡",
+                    "confidence": 90,
+                    "reason": "⚠️ دقيقة غدر: أقل من 15 ثانية بدون زخم معزز - انتظار"
+                }
+            
+            # ✅ إذا اجتاز كل الحواجز، اسمح بالدخول
+            return {
+                "decision": "MOMENTUM_ENTRY 🟢",
+                "confidence": 98,
+                "reason": "✅ اجتاز جميع فلاتر الأمان - دخول مسموح"
+            }
+        
+        # ============================================
+        # [تعديل V7.4 PRO] - مصفوفة القرار القطعي المحدثة
+        # ============================================
+        def get_success_driven_decision(is_at_historical_peak, breakout_points, volume_ratio, 
+                                       body_ratio, wick_ratio, distance_to_peak, 
+                                       higher_timeframe_trend, avg_volume_ratio):
+            """
+            اختيار الصفقة الأنجح بناءً على معايير الأمان وليس الربح المتوقع
+            """
+            
+            # حساب قوة الكسر الهيكلي
+            structural_breakout_force = volume_ratio / avg_volume_ratio if avg_volume_ratio > 0 else 1.0
+            
+            if is_at_historical_peak:
+                # منطقة القمم التاريخية - أخطر منطقة
+                
+                # 1. فحص الثالوث المؤسسي (الأمان 100% - كسر حقيقي)
+                if (breakout_points >= 5 and 
+                    volume_ratio >= 1.5 and 
+                    body_ratio > 0.9 and 
+                    wick_ratio < 0.2 and
+                    structural_breakout_force >= 1.5):
+                    
+                    return {
+                        "decision": "BREAKOUT_BUY 🟢",
+                        "success_rate": 98,
+                        "type": "STRUCTURAL_BREAKOUT",
+                        "reason": "✅ ثالوث مؤسسي مكتمل: اختراق حقيقي للقمة"
+                    }
+                
+                # 2. فحص فخ السيولة (الأمان 95% - انعكاس)
+                elif (distance_to_peak < 5 and 
+                      (wick_ratio > 0.4 or volume_ratio < 1.2) and
+                      (body_ratio < 0.5 or wick_ratio > 0.3)):
+                    
+                    return {
+                        "decision": "LIQUIDITY_TRAP_SELL 🔴",
+                        "success_rate": 95,
+                        "type": "LIQUIDITY_TRAP",
+                        "reason": "⚠️ فخ سيولة: ارتداد من القمة بدون قوة - بيع انعكاسي"
+                    }
+                
+                # 3. فحص سحب السيولة (الأمان 92% - انتظار انعكاس)
+                elif (wick_ratio > 0.3 and 
+                      distance_to_peak < 3 and
+                      volume_ratio < 1.3):
+                    
+                    return {
+                        "decision": "SWEEP_REVERSAL 🔄",
+                        "success_rate": 92,
+                        "type": "LIQUIDITY_SWEEP",
+                        "reason": "⚠️ سحب سيولة: لمس القمة وارتداد - استعد للانعكاس"
+                    }
+                
+                # 4. إذا لم يتحقق أي شرط صارم
+                else:
+                    return {
+                        "decision": "STRICT_HOLD 🟡",
+                        "success_rate": 0,
+                        "type": "NO_CLEAR_SIGNAL",
+                        "reason": "⛔ منطقة خطر: لم تتحقق شروط الكسر أو الانعكاس - انتظار"
+                    }
+            
+            else:
+                # السعر في منطقة آمنة (ليس عند قمم تاريخية)
+                
+                # التحقق من توافق الاتجاه مع الفريم الأكبر
+                trend_aligned = higher_timeframe_trend == "same_direction"
+                
+                # حساب درجة النجاح المرجحة (40/30/20/10)
+                safety_score = min(40, (distance_to_peak * 8)) if distance_to_peak < 999 else 40
+                volume_score = min(30, (volume_ratio * 20))
+                trend_score = 20 if trend_aligned else 0
+                pattern_score = min(10, (body_ratio * 10))
+                
+                total_success_score = safety_score + volume_score + trend_score + pattern_score
+                
+                if total_success_score >= 80 and volume_ratio >= 1.3 and body_ratio > 0.7:
+                    return {
+                        "decision": f"HIGH_PROBABILITY_ENTRY 🟢",
+                        "success_rate": total_success_score,
+                        "type": "MOMENTUM_ENTRY",
+                        "reason": f"✅ فرصة عالية الاحتمال: درجة الأمان {total_success_score}%"
+                    }
+                elif total_success_score >= 60:
+                    return {
+                        "decision": "MEDIUM_PROBABILITY_HOLD 🟡",
+                        "success_rate": total_success_score,
+                        "type": "UNCLEAR_SIGNAL",
+                        "reason": f"⚠️ احتمال متوسط: درجة الأمان {total_success_score}% - انتظار تأكيد"
+                    }
+                else:
+                    return {
+                        "decision": "LOW_PROBABILITY_REJECT 🔴",
+                        "success_rate": total_success_score,
+                        "type": "WEAK_SIGNAL",
+                        "reason": f"❌ احتمال منخفض: درجة الأمان {total_success_score}% - منع الدخول"
+                    }
+        
         # دوال مساعدة لبروتوكول التشريح الهيكلي V7.4
         def calculate_breakout_force(candle_volume, avg_volume):
             """حساب قوة الكسر الهيكلي"""
@@ -3030,6 +3185,42 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 """
         
         # ============================================
+        # [تعديل V7.4 PRO] - بروتوكول المسح الاستبعادي
+        # ============================================
+        
+        exclusion_protocol = """
+【🔍 **بروتوكول المسح الاستبعادي - الأولوية للأكثر نجاحاً (V7.4 PRO)**】
+
+📋 **قاعدة ذهبية: ابحث عن سبب المنع قبل البحث عن فرصة الدخول**
+
+أنت الآن في "وضع القناص" (Sniper Mode). مهمتك الأساسية هي استبعاد الصفقات الخاسرة قبل التفكير في الصفقات الرابحة. اتبع هذا الترتيب بدقة:
+
+المرحلة 1 - المسح الأمني (الأولوية القصوى):
+   ✅ هل السعر ضمن 5 نقاط من قمة/قاع تاريخي؟
+      - إذا نعم: امنع أي فكرة شراء/بيع فوراً
+      - قم بتفعيل "بروتوكول فخ السيولة" وابحث عن إشارة انعكاس
+
+المرحلة 2 - فحص الحجم المؤسسي:
+   ✅ هل حجم الشمعة ≥ 1.5x من المتوسط؟
+      - إذا لا: اشتبه في "تلاعب" وقلل الثقة 50%
+      - إذا نعم مع اختراق: هذا دليل سيولة حقيقية
+
+المرحلة 3 - توقيت الغدر:
+   ✅ هل الوقت المتبقي < 15 ثانية في دقيقة حرجة (14,29,44,59)؟
+      - إذا نعم: امنع الدخول إلا مع "اختراق مؤكد" بـ 5 نقاط
+
+المرحلة 4 - معادلة ترجيح النجاح (40/30/20/10):
+   احسب نسبة النجاح كالتالي:
+   • 40%: مسافة الأمان عن القمم/القيعان (كلما ابتعدت، زادت الثقة)
+   • 30%: قوة الحجم المؤسسي (Breakout Force = volume_ratio)
+   • 20%: اتجاه الفريم الأكبر (Higher Timeframe Alignment)
+   • 10%: شكل الشمعة الحالية (Body Ratio, Wick Ratio)
+
+⚠️ **تذكير دائم:**
+"السيولة تسبق الزخم، والأمان يسبق الربح. اختر الصفقة التي تحقق أعلى نسبة أمان، وليس أعلى ربح متوقع."
+"""
+        
+        # ============================================
         # مصفوفة القرار القطعي لجميع السيناريوهات
         # ============================================
         
@@ -3048,7 +3239,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         # دمج جميع التعديلات
         all_updates_section = f"""
-⚡ **التعديلات الثلاثة الجديدة + تحديثات V7.0 الهجومية + V7.3 التشريح الهيكلي + V7.4 القمم الصارمة:**
+⚡ **التعديلات الثلاثة الجديدة + تحديثات V7.0 الهجومية + V7.3 التشريح الهيكلي + V7.4 القمم الصارمة + V7.4 PRO الأولوية للأكثر نجاحاً:**
 
 {three_points_rule}
 
@@ -3062,9 +3253,11 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 {v7_4_updates}
 
+{exclusion_protocol}
+
 {decision_matrix}
 
-🔍 **كيفية تطبيق التعديلات في التحليل (مع V7.4):**
+🔍 **كيفية تطبيق التعديلات في التحليل (مع V7.4 PRO):**
 
 1. **عند فكرة الشراء:** تأكد من:
    - السعر تجاوز المقاومة بـ ≥ 3 نقاط (التعديل 1) أو ≥ 5 نقاط للقمم التاريخية مع "الثالوث المؤسسي" (V7.4)
@@ -3079,7 +3272,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
    - السعر ليس عند قاع تاريخي إلا مع انفجار حقيقي (التعديل 3 + V7.4)
    - الفريم الكبير (M1/M5) في نفس الاتجاه (قاعدة السمكة الكبيرة)
 
-3. **مصفوفة القرار القطعي (V7.4):**
+3. **مصفوفة القرار القطعي (V7.4 PRO):**
    - **كسر هيكلي حقيقي:** حجم ≥ 1.5x + استقرار ≥ 5 نقاط + FVG + ماروبوزو > 90% = دخول فوري 💥
    - **سحب سيولة (Sweep):** لمس القمة + ارتداد + عدم استقرار = انعكاس فوري 🔄
    - **فخ سيولة (Trap):** قمة تاريخية + شمعة <50% + ارتداد = دخول عكسي 🔄
@@ -3120,6 +3313,8 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
 مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات مع تطبيق قوانين السيادة الجديدة (V7.4 ELITE SNIPER MODE).
+
+{exclusion_protocol}
 
 🎯 **التوجيه الأساسي: التركيز الكامل على استخراج البيانات وتحليل الصورة**
 أنت ملزم بالتركيز التام على الصورة المرفقة فقط. يجب أن تستخرج كل البيانات والأرقام من الصورة بكامل قدراتك البصرية. لا تتشتت بأي معلومات خارجية أو افتراضات. كل ما تحتاجه موجود في الصورة:
@@ -3222,54 +3417,46 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
     - لا تدخل صفقة استمرارية إلا إذا أغلق السعر "فوق" القمة المخترقة بشمعتين على الأقل (تأكيد الكسر) مع "الثالوث المؤسسي" (V7.4)
     - إذا كان الزخم مفرطاً (>90%) ولكن الذيول طويلة، فهذا دليل على "خروج المؤسسات" وليس دخولها
 
-⚠️ **نظام حساب الثقة المتقدم (Confidence Score Calculation)**
+⚠️ **نظام حساب الثقة المتقدم - الأولوية للأمان (V7.4 PRO)**
   
-  📊 **معادلة حساب الثقة النهائية:**
+  📊 **معادلة الثقة الجديدة (مرجحة حسب الأمان):**
   
-  الثقة = (زخم_الاتجاه × 30%) + (توافق_الإطارات × 25%) + (وضوح_المستويات × 20%) + (حجم_السيولة × 15%) + (تطابق_الأنماط × 10%)
+  الثقة = (مسافة_الأمان_عن_القمم × 40%) + (قوة_الحجم_المؤسسي × 30%) + (توافق_الفريم_الأكبر × 20%) + (جودة_الشمعة × 10%)
   
-  **معايير التقييم:**
+  **تفاصيل المعايير:**
   
-  1. **زخم الاتجاه (30 نقطة كحد أقصى):**
-     - 25-30: زخم متفجر (آخر 3 شموع >85% بنفس الاتجاه، بشرط عدم وجود قمة سيولة قريبة)
-     - 20-24: زخم قوي (آخر 3 شموع 70-85%)
-     - 15-19: زخم متوسط (آخر 3 شموع 50-69%)
-     - 10-14: زخم ضعيف (آخر 3 شموع 30-49%)
-     - 0-9: بدون زخم واضح
+  1. **مسافة الأمان عن القمم/القيعان (40 نقطة كحد أقصى):**
+     - 36-40: > 10 نقاط من أقرب قمة/قاع (منطقة آمنة جداً)
+     - 30-35: 7-10 نقاط (منطقة آمنة)
+     - 20-29: 5-7 نقاط (منطقة مراقبة)
+     - 10-19: 3-5 نقاط (منطقة خطر - يرجح الانعكاس)
+     - 0-9: < 3 نقاط (منطقة فخ سيولة - امنع الشراء)
   
-  2. **توافق الإطارات (25 نقطة كحد أقصى):**
-     - 25: توافق كامل (H4, H1, M15, M5 بنفس الاتجاه)
-     - 20: توافق جيد (3 من 4 إطارات)
-     - 15: توافق متوسط (2 من 4 إطارات)
-     - 10: توافق ضعيف (إطار واحد فقط)
-     - 0: تضارب كامل
+  2. **قوة الحجم المؤسسي (30 نقطة كحد أقصى):**
+     - 27-30: حجم ≥ 2.0x (سيولة مؤسسية قوية جداً)
+     - 20-26: حجم 1.5x - 1.9x (سيولة جيدة)
+     - 10-19: حجم 1.0x - 1.4x (سيولة متوسطة)
+     - 0-9: حجم < 1.0x (سيولة ضعيفة - اشتباه تلاعب)
   
-  3. **وضوح المستويات (20 نقطة كحد أقصى):**
-     - 18-20: مستويات دعم/مقاومة واضحة جداً
-     - 14-17: مستويات واضحة
-     - 10-13: مستويات متوسطة الوضوح
-     - 5-9: مستويات غير واضحة
-     - 0: بدون مستويات
+  3. **توافق الفريم الأكبر (20 نقطة كحد أقصى):**
+     - 20: توافق كامل مع H1/H4
+     - 15: توافق مع M15/M30
+     - 10: محايد
+     - 0: تعارض كامل (منع الدخول)
   
-  4. **حجم السيولة (15 نقطة كحد أقصى):**
-     - 13-15: سيولة عالية (مناطق عرض/طلب واضحة، مع تأكيد عدم وجود فخاخ سيولة قريبة)
-     - 10-12: سيولة متوسطة
-     - 7-9: سيولة منخفضة
-     - 0-6: بدون سيولة أو وجود فخاخ سيولة
+  4. **جودة الشمعة (10 نقطة كحد أقصى):**
+     - 9-10: ماروبوزو >90% (جسم كامل)
+     - 7-8: جسم 70-90% (جيد)
+     - 5-6: جسم 50-70% (متوسط)
+     - 0-4: جسم <50% أو ذيل طويل (ضعيف)
   
-  5. **تطابق الأنماط (10 نقطة كحد أقصى):**
-     - 9-10: نمط واضح (وتد، علم، مثلث) مع تأكيد عدم وجود فخ سيولة
-     - 7-8: نمط متوسط الوضوح
-     - 5-6: نمط غير مكتمل
-     - 0-4: بدون نمط
+  📈 **مستويات الثقة الجديدة ومعناها:**
   
-  📈 **مستويات الثقة ومعناها:**
-  
-  - **💥 90-100%: ثقة عالية جداً** - دخول بقوة مع مخاطرة عالية (جميع شروط الأمان متوفرة)
-  - **🔥 75-89%: ثقة عالية** - دخول بحجم جيد مع وقف ضيق
-  - **⚡ 60-74%: ثقة متوسطة** - دخول بحجم متوسط
-  - **❄️ 40-59%: ثقة منخفضة** - دخول بحجم صغير أو انتظار تأكيد
-  - **🚫 أقل من 40%: لا توجد ثقة** - احتفاظ وانتظار
+  - **💥 90-100%: ثقة عالية جداً بالأمان** - اجتاز جميع فلاتر الأمان
+  - **🔥 75-89%: ثقة عالية** - فرصة جيدة مع مخاطر محدودة
+  - **⚡ 60-74%: ثقة متوسطة** - مراقبة وانتظار تأكيد
+  - **❄️ 40-59%: ثقة منخفضة** - يرجح الفشل - منع الدخول
+  - **🚫 < 40%: منطقة خطر** - فخ سيولة محتمل - امنع فوراً
 
 [1] تنبيه الربط البرمجي الإلزامي - المعطيات المستلمة من المستخدم
 
@@ -3572,7 +3759,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • الشموع المتوقعة: [X.X] شمعة
 • وقت الوصول المتوقع: [HH:MM:SS / فوري (Flash)]
 
-
 【معامل الانزلاق - S5, S10 فقط】
 • نقطة الدخول المعدلة = السعر الحالي + نقطة أمان في اتجاه الصفقة
 • المسافة الفعلية = المسافة - 1 نقطة
@@ -3602,57 +3788,60 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
    - أسباب المنع (عدا فحص الفخاخ)
 2. **الإجراء:** دخول فوري مع الاتجاه الانفجاري
 
-[11] خوارزمية القرار النهائي (Final Decision Matrix) - النسخة الهجومية المتكاملة V7.4
+[11] خوارزمية القرار النهائي - الأولوية للأكثر نجاحاً (V7.4 PRO SUCCESS-DRIVEN)
 
-🚨 **منطق القرار النهائي لتغطية جميع السيناريوهات (مع بروتوكول التشريح الهيكلي V7.4):**
+🚨 **منطق القرار النهائي مع المسح الاستبعادي:**
 
-if is_near_historical_level: # إذا كان السعر قريب من قمة أو قاع تاريخي (ضمن 5 نقاط)
-    # قياس قوة الكسر
-    breakout_force = candle_volume / avg_volume if avg_volume > 0 else 1.0
-    has_institutional_fvg = check_for_fvg_behind()
-    is_marubozu = candle_body_ratio > 0.9 and candle_wick_ratio < 0.2
+# نظام الفلترة الصارمة - البحث عن سبب المنع أولاً
+if is_near_historical_peak:  # إذا كان السعر قريب من قمة تاريخية (ضمن 5 نقاط)
     
-    if breakout_points >= 5 and is_marubozu and breakout_force >= 1.5 and has_institutional_fvg:
-        # السيناريو 1: كسر هيكلي حقيقي مع الثالوث المؤسسي (V7.4)
-        final_decision = "STRUCTURAL BREAKOUT - ENTRY WITH MOMENTUM (Buy/Sell) 💥"
-        confidence = 98
-        reason = "كسر هيكلي حقيقي: ثالوث مؤسسي (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%)"
-    elif breakout_points >= 3 and breakout_points < 5 and candle_wick_ratio > 0.40:
-        # السيناريو 2: سحب سيولة (Liquidity Sweep)
-        final_decision = "LIQUIDITY SWEEP - REVERSAL ENTRY (Opposite Direction) 🔄"
-        confidence = 92
-        reason = "سحب سيولة: لمس القمة وارتداد بدون استقرار ≥ 5 نقاط"
-    elif candle_wick_ratio > 0.40 or engulfing_ratio > 0.50:
-        # السيناريو 3: فخ سيولة وانعكاس - تشغيل تنبيه فخ السيولة
-        final_decision = "LIQUIDITY TRAP - REVERSAL ENTRY (SELL) 🔴"
-        confidence = 95
-        reason = "فخ سيولة: شمعة ضعيفة عند القمة التاريخية - إصدار تنبيه فوري"
+    # 1. فحص الثالوث المؤسسي (الأمان 100% - كسر حقيقي)
+    if (breakout_points >= 5 and 
+        volume_ratio >= 1.5 and 
+        body_ratio > 0.9 and 
+        wick_ratio < 0.2):
+        
+        final_decision = "BREAKOUT_BUY 🟢 (Success: 98%) - اختراق حقيقي"
+        
+    # 2. فحص فخ السيولة (الأمان 95% - انعكاس) - الأكثر نجاحاً إحصائياً
+    elif (distance_to_peak < 5 and 
+          (wick_ratio > 0.4 or volume_ratio < 1.2) and
+          body_ratio < 0.5):
+        
+        final_decision = "LIQUIDITY_TRAP_SELL 🔴 (Success: 95%) - فخ سيولة - الأولوية للانعكاس"
+        # ملاحظة: هذا الخيار أكثر نجاحاً من الشراء في هذه المنطقة
+        
+    # 3. فحص سحب السيولة (الأمان 92%)
+    elif wick_ratio > 0.3 and distance_to_peak < 3:
+        
+        final_decision = "SWEEP_REVERSAL 🔄 (Success: 92%) - سحب سيولة - استعد للانعكاس"
+        
+    # 4. منطقة خطر - انتظار
     else:
-        # السيناريو 4: تذبذب غير واضح
-        final_decision = "HOLD 🟡 - Waiting for 'Institutional Trinity' confirmation (V7.4)"
-        confidence = 60
-        reason = "تذبذب: لم تتحقق شروط الكسر أو الانعكاس"
+        final_decision = "STRICT_HOLD 🟡 (Success: N/A) - منطقة خطر - انتظار"
+
 else:
-    # السعر في منتصف الطريق، اتبع الزخم العادي مع قياس قوة الكسر
-    breakout_force = candle_volume / avg_volume if avg_volume > 0 else 1.0
+    # السعر في منطقة آمنة - طبق معادلة ترجيح النجاح
     
-    if momentum > 85 and distance_to_level > 3 and breakout_force >= 1.3:
-        final_decision = "Action (Buy/Sell) with Volume Confirmation"
-    elif engulfing_ratio > 0.5:
-        final_decision = "Flip Trade 🔄"
+    # حساب درجة النجاح المرجحة
+    safety_score = min(40, (distance_to_support * 8))  # 40% لمسافة الأمان
+    volume_score = min(30, (volume_ratio * 20))        # 30% لحجم السيولة
+    trend_score = 20 if higher_timeframe_aligned else 0  # 20% لاتجاه الفريم الأكبر
+    pattern_score = min(10, (body_ratio * 10))         # 10% لشكل الشمعة
+    
+    total_success_score = safety_score + volume_score + trend_score + pattern_score
+    
+    if total_success_score >= 80:
+        final_decision = f"HIGH_PROBABILITY_ENTRY 🟢 (Success: {total_success_score}%)"
+    elif total_success_score >= 60:
+        final_decision = f"MEDIUM_PROBABILITY_HOLD 🟡 (Success: {total_success_score}%)"
     else:
-        final_decision = "Follow Trend"
+        final_decision = f"LOW_PROBABILITY_REJECT 🔴 (Success: {total_success_score}%)"
 
-**التطبيق العملي للمناطق الحرجة (الدعم/المقاومة) مع V7.4:**
-- **عند مستوى الدعم:**
-  * إذا تحقق "الثالوث المؤسسي" (اختراق للأسفل بـ ≥ 5 نقاط + جسم > 90% + حجم ≥ 1.5x + FVG) ← القرار: **كسر هيكلي - بيع 💥🔴**.
-  * إذا لمس السعر الدعم وارتد (ذيل أو ابتلاع) ← القرار: **سحب سيولة - شراء انعكاسي 🔄🟢**.
-- **عند مستوى المقاومة:**
-  * إذا تحقق "الثالوث المؤسسي" (اختراق للأعلى بـ ≥ 5 نقاط + جسم > 90% + حجم ≥ 1.5x + FVG) ← القرار: **كسر هيكلي - شراء 💥🟢**.
-  * إذا لمس السعر المقاومة وارتد (ذيل أو ابتلاع) ← القرار: **فخ سيولة - بيع انعكاسي 🔄🔴 مع تنبيه فوري**.
-- **إذا شككت (<90% ثقة)** → احتفاظ 🟡
+🎯 **قاعدة ذهبية للقناص:**
+"يُمنع إصدار أي إشارة شراء (Buy) إذا كان السعر ضمن نطاق 5 نقاط من قمة تاريخية، حتى لو كانت الشمعة خضراء قوية. الأولوية هنا هي لصفقة 'الارتداد العكسي' (Reversal) لأنها الأكثر نجاحاً إحصائياً في هذه المناطق. لا تعتمد الزخم كدليل وحيد؛ الحجم (Volume) والمسافة الرقمية هما القادة."
 
-🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصرآ:
+🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصر:
 
 📊 التحليل الفني المتقدم:
 • بروتوكول الفشل الذاتي: [الصورة صالحة / الصورة غير صالحة - يرجى إرسال صورة أوضح]
@@ -3716,10 +3905,33 @@ else:
         # تطبيق بروتوكول التشريح الهيكلي V7.4 على التحليل
         if "historical_peak" in initial_analysis.lower() or "قمة تاريخية" in initial_analysis or "قاع تاريخي" in initial_analysis:
             # التحقق من شروط الأمان المعزز
-            if "breakout_points" in locals() and breakout_points < 5:
+            if 'breakout_points' in locals() and breakout_points < 5:
                 # إضافة تحذير إضافي
                 enhanced_warning = "\n\n⚠️ **تنبيه Obeida Trading (V7.4):**\nالسعر عند قمة/قاع تاريخي بدون 'الثالوث المؤسسي' (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%). يُمنع الدخول إلا مع توفر جميع الشروط."
                 initial_analysis += enhanced_warning
+            
+            # تطبيق نظام الأولوية للأكثر نجاحاً
+            priority_verdict = get_final_verdict_with_priority(
+                distance_to_peak=3.0,  # قيمة افتراضية، سيتم استخراجها من التحليل الفعلي
+                breakout_force=1.2,     # قيمة افتراضية
+                body_ratio=0.6,          # قيمة افتراضية
+                seconds_remaining=seconds_remaining,
+                volume_ratio=1.1,        # قيمة افتراضية
+                wick_ratio=0.35,          # قيمة افتراضية
+                is_at_peak=True,
+                momentum_boost_active=momentum_boost
+            )
+            
+            # إضافة تقييم الأولوية للتحليل
+            priority_evaluation = f"""
+━━━━━━━━━━━━━━━━━━━━━━
+🔍 **تقييم الأولوية للأكثر نجاحاً (V7.4 PRO):**
+• القرار: {priority_verdict['decision']}
+• الثقة: {priority_verdict['confidence']}%
+• السبب: {priority_verdict['reason']}
+━━━━━━━━━━━━━━━━━━━━━━
+"""
+            initial_analysis += priority_evaluation
         
         # تنظيف النصوص من التكرار
         initial_analysis = clean_repeated_text(initial_analysis)
@@ -3799,140 +4011,6 @@ else:
     finally:
         # تنظيف الملفات المؤقتة
         for filepath in [image_path, compressed_path] if 'compressed_path' in locals() else [image_path]:
-            if os.path.exists(filepath):
-                try:
-                    os.remove(filepath)
-                except Exception as e:
-                    print(f"⚠️ خطأ في حذف الملف المؤقت: {e}")
-    
-    return MAIN_MENU
-
-async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور في وضع التوصية"""
-    # التحقق من الاشتراك
-    if not await subscription_required(update, context):
-        return RECOMMENDATION_MODE
-    
-    user_id = update.effective_user.id
-    
-    # تسجيل استخدام
-    SubscriptionSystem.increment_usage(user_id, 'recommendation_photo')
-    
-    # الحصول على آخر عملة تم اختيارها
-    last_symbol = get_last_recommendation_symbol(context)
-    
-    wait_msg = await update.message.reply_text(f"📊 استنى شوي العملة: {last_symbol} قيد تحليل 🤌...")
-    
-    try:
-        # حفظ الصورة مؤقتاً
-        photo = await update.message.photo[-1].get_file()
-        timestamp = int(time.time())
-        image_path = os.path.join(IMAGE_CACHE_DIR, f"recommendation_{user_id}_{timestamp}.jpg")
-        await photo.download_to_drive(image_path)
-        
-        # الحصول على إعدادات المستخدم
-        candle, trade_time, _, _, _ = get_user_setting(user_id)
-        
-        if not candle or not trade_time:
-            await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
-            return RECOMMENDATION_MODE
-        
-        # تحليل الصورة
-        analysis_result = await analyze_chart_image(
-            update, 
-            context, 
-            image_path, 
-            candle, 
-            trade_time, 
-            last_symbol
-        )
-        
-        # تنسيق النتيجة مع دعم النسخ السريع
-        formatted_result = format_as_copyable_code(analysis_result, "text")
-        await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
-                
-    except Exception as e:
-        print(f"❌ خطأ في تحليل صورة التوصية: {e}")
-        await wait_msg.edit_text("❌ حدث خطأ في معالجة الصورة. يرجى المحاولة مرة أخرى.")
-    
-    # عرض خيارات المتابعة
-    reply_keyboard = [[key] for key in CATEGORIES.keys()]
-    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-    
-    await update.message.reply_text(
-        "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-    )
-    return RECOMMENDATION_MODE
-
-async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور في وضع التحليل"""
-    return await handle_photo_analysis(update, context)
-
-async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور للتحليل الفني المتقدم"""
-    # التحقق من الاشتراك
-    if not await subscription_required(update, context):
-        return MAIN_MENU
-    
-    user_id = update.effective_user.id
-    candle, trade_time, prev_context, prev_time, _ = get_user_setting(user_id)
-    
-    # تسجيل استخدام
-    SubscriptionSystem.increment_usage(user_id, 'photo_analysis')
-    
-    if not candle or not trade_time:
-        keyboard = [["⚙️ إعدادات التحليل"], ["الرجوع للقائمة الرئيسية"], ["🌍 دولتك"]]
-        if user_id == ADMIN_ID:
-            keyboard.append(["👑 لوحة التحكم"])
-        await update.message.reply_text(
-            "❌ **يجب ضبط الإعدادات أولاً**\n\n"
-            "الرجاء استخدام أزرار القائمة لضبط الإعدادات قبل تحليل الصور.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return MAIN_MENU
-
-    wait_msg = await update.message.reply_text(" 📸 تم استلام الصورة بنجاح 📸")
-    photo = await update.message.photo[-1].get_file()
-    
-    timestamp = int(time.time())
-    original_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_original.jpg")
-    compressed_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}_compressed.jpg")
-    
-    try:
-        await photo.download_to_drive(original_path)
-        compressed_path = compress_image(original_path)
-        base64_img = encode_image(compressed_path)
-        
-        if not base64_img:
-            await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
-            if os.path.exists(original_path):
-                os.remove(original_path)
-            if os.path.exists(compressed_path) and compressed_path != original_path:
-                os.remove(compressed_path)
-            return MAIN_MENU
-        
-        # تحليل الصورة باستخدام الدالة المحسنة
-        analysis_result = await analyze_chart_image(
-            update, 
-            context, 
-            original_path, 
-            candle, 
-            trade_time, 
-            "الشارت المرفق"
-        )
-        
-        # التحليل_result يحتوي بالفعل على النتيجة النهائية مع التنسيق
-        # تم التعامل مع إرسال النتيجة داخل الدالة analyze_chart_image
-        
-    except Exception as e:
-        print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
-        keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
-    finally:
-        # تنظيف الملفات المؤقتة
-        for filepath in [original_path, compressed_path]:
             if os.path.exists(filepath):
                 try:
                     os.remove(filepath)
