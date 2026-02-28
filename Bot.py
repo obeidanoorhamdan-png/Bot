@@ -2824,100 +2824,100 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         # [تعديل V7.4 PRO] - مصفوفة القرار القطعي المحدثة
         # ============================================
         def get_success_driven_decision(is_at_historical_peak, breakout_points, volume_ratio, 
-                                       body_ratio, wick_ratio, distance_to_peak, 
-                                       higher_timeframe_trend, avg_volume_ratio):
-            """
-            اختيار الصفقة الأنجح بناءً على معايير الأمان وليس الربح المتوقع
-            """
+                               body_ratio, wick_ratio, distance_to_peak, 
+                               higher_timeframe_trend, avg_volume_ratio):
+    """
+    اختيار الصفقة الأنجح بناءً على معايير الأمان وليس الربح المتوقع
+    """
+    
+    # حساب قوة الكسر الهيكلي
+    structural_breakout_force = volume_ratio / avg_volume_ratio if avg_volume_ratio > 0 else 1.0
+    
+    if is_at_historical_peak:
+        # منطقة القمم التاريخية - أخطر منطقة
+        
+        # 1. فحص الثالوث المؤسسي (الأمان 100% - كسر حقيقي)
+        if (breakout_points >= 5 and 
+            volume_ratio >= 1.5 and 
+            body_ratio > 0.9 and 
+            wick_ratio < 0.2 and
+            structural_breakout_force >= 1.5):
             
-            # حساب قوة الكسر الهيكلي
-            structural_breakout_force = volume_ratio / avg_volume_ratio if avg_volume_ratio > 0 else 1.0
+            return {
+                "decision": "BREAKOUT_BUY 🟢",
+                "success_rate": 98,
+                "type": "STRUCTURAL_BREAKOUT",
+                "reason": "✅ ثالوث مؤسسي مكتمل: اختراق حقيقي للقمة"
+            }
+        
+        # 2. فحص فخ السيولة (الأمان 95% - انعكاس)
+        elif (distance_to_peak < 5 and 
+              (wick_ratio > 0.4 or volume_ratio < 1.2) and
+              (body_ratio < 0.5 or wick_ratio > 0.3)):
             
-            if is_at_historical_peak:
-                # منطقة القمم التاريخية - أخطر منطقة
-                
-                # 1. فحص الثالوث المؤسسي (الأمان 100% - كسر حقيقي)
-                if (breakout_points >= 5 and 
-                    volume_ratio >= 1.5 and 
-                    body_ratio > 0.9 and 
-                    wick_ratio < 0.2 and
-                    structural_breakout_force >= 1.5):
-                    
-                    return {
-                        "decision": "BREAKOUT_BUY 🟢",
-                        "success_rate": 98,
-                        "type": "STRUCTURAL_BREAKOUT",
-                        "reason": "✅ ثالوث مؤسسي مكتمل: اختراق حقيقي للقمة"
-                    }
-                
-                # 2. فحص فخ السيولة (الأمان 95% - انعكاس)
-                elif (distance_to_peak < 5 and 
-                      (wick_ratio > 0.4 or volume_ratio < 1.2) and
-                      (body_ratio < 0.5 or wick_ratio > 0.3)):
-                    
-                    return {
-                        "decision": "LIQUIDITY_TRAP_SELL 🔴",
-                        "success_rate": 95,
-                        "type": "LIQUIDITY_TRAP",
-                        "reason": "⚠️ فخ سيولة: ارتداد من القمة بدون قوة - بيع انعكاسي"
-                    }
-                
-                # 3. فحص سحب السيولة (الأمان 92% - انتظار انعكاس)
-                elif (wick_ratio > 0.3 and 
-                      distance_to_peak < 3 and
-                      volume_ratio < 1.3):
-                    
-                    return {
-                        "decision": "SWEEP_REVERSAL 🔄",
-                        "success_rate": 92,
-                        "type": "LIQUIDITY_SWEEP",
-                        "reason": "⚠️ سحب سيولة: لمس القمة وارتداد - استعد للانعكاس"
-                    }
-                
-                # 4. إذا لم يتحقق أي شرط صارم
-                else:
-                    return {
-                        "decision": "STRICT_HOLD 🟡",
-                        "success_rate": 0,
-                        "type": "NO_CLEAR_SIGNAL",
-                        "reason": "⛔ منطقة خطر: لم تتحقق شروط الكسر أو الانعكاس - انتظار"
-                    }
+            return {
+                "decision": "LIQUIDITY_TRAP_SELL 🔴",
+                "success_rate": 95,
+                "type": "LIQUIDITY_TRAP",
+                "reason": "⚠️ فخ سيولة: ارتداد من القمة بدون قوة - بيع انعكاسي"
+            }
+        
+        # 3. فحص سحب السيولة (الأمان 92% - انتظار انعكاس)
+        elif (wick_ratio > 0.3 and 
+              distance_to_peak < 3 and
+              volume_ratio < 1.3):
             
-            else:
-                # السعر في منطقة آمنة (ليس عند قمم تاريخية)
-                
-                # التحقق من توافق الاتجاه مع الفريم الأكبر
-                trend_aligned = higher_timeframe_trend == "same_direction"
-                
-                # حساب درجة النجاح المرجحة (40/30/20/10)
-                safety_score = min(40, (distance_to_peak * 8)) if distance_to_peak < 999 else 40
-                volume_score = min(30, (volume_ratio * 20))
-                trend_score = 20 if trend_aligned else 0
-                pattern_score = min(10, (body_ratio * 10))
-                
-                total_success_score = safety_score + volume_score + trend_score + pattern_score
-                
-                if total_success_score >= 80 and volume_ratio >= 1.3 and body_ratio > 0.7:
-                    return {
-                        "decision": f"HIGH_PROBABILITY_ENTRY 🟢",
-                        "success_rate": total_success_score,
-                        "type": "MOMENTUM_ENTRY",
-                        "reason": f"✅ فرصة عالية الاحتمال: درجة الأمان {total_success_score}%"
-                    }
-                elif total_success_score >= 60:
-                    return {
-                        "decision": "MEDIUM_PROBABILITY_HOLD 🟡",
-                        "success_rate": total_success_score,
-                        "type": "UNCLEAR_SIGNAL",
-                        "reason": f"⚠️ احتمال متوسط: درجة الأمان {total_success_score}% - انتظار تأكيد"
-                    }
-                else:
-                    return {
-                        "decision": "LOW_PROBABILITY_REJECT 🔴",
-                        "success_rate": total_success_score,
-                        "type": "WEAK_SIGNAL",
-                        "reason": f"❌ احتمال منخفض: درجة الأمان {total_success_score}% - منع الدخول"
-                    }
+            return {
+                "decision": "SWEEP_REVERSAL 🔄",
+                "success_rate": 92,
+                "type": "LIQUIDITY_SWEEP",
+                "reason": "⚠️ سحب سيولة: لمس القمة وارتداد - استعد للانعكاس"
+            }
+        
+        # 4. إذا لم يتحقق أي شرط صارم
+        else:
+            return {
+                "decision": "STRICT_HOLD 🟡",
+                "success_rate": 0,
+                "type": "NO_CLEAR_SIGNAL",
+                "reason": "⛔ منطقة خطر: لم تتحقق شروط الكسر أو الانعكاس - انتظار"
+            }
+    
+    else:
+        # السعر في منطقة آمنة (ليس عند قمم تاريخية)
+        
+        # التحقق من توافق الاتجاه مع الفريم الأكبر
+        trend_aligned = higher_timeframe_trend == "same_direction"
+        
+        # حساب درجة النجاح المرجحة (40/30/20/10)
+        safety_score = min(40, (distance_to_peak * 8)) if distance_to_peak < 999 else 40
+        volume_score = min(30, (volume_ratio * 20))
+        trend_score = 20 if trend_aligned else 0
+        pattern_score = min(10, (body_ratio * 10))
+        
+        total_success_score = safety_score + volume_score + trend_score + pattern_score
+        
+        if total_success_score >= 80 and volume_ratio >= 1.3 and body_ratio > 0.7:
+            return {
+                "decision": f"HIGH_PROBABILITY_ENTRY 🟢",
+                "success_rate": total_success_score,
+                "type": "MOMENTUM_ENTRY",
+                "reason": f"✅ فرصة عالية الاحتمال: درجة الأمان {total_success_score}%"
+            }
+        elif total_success_score >= 60:
+            return {
+                "decision": "MEDIUM_PROBABILITY_HOLD 🟡",
+                "success_rate": total_success_score,
+                "type": "UNCLEAR_SIGNAL",
+                "reason": f"⚠️ احتمال متوسط: درجة الأمان {total_success_score}% - انتظار تأكيد"
+            }
+        else:
+            return {
+                "decision": "LOW_PROBABILITY_REJECT 🔴",
+                "success_rate": total_success_score,
+                "type": "WEAK_SIGNAL",
+                "reason": f"❌ احتمال منخفض: درجة الأمان {total_success_score}% - منع الدخول"
+            }
         
         # دوال مساعدة لبروتوكول التشريح الهيكلي V7.4
         def calculate_breakout_force(candle_volume, avg_volume):
