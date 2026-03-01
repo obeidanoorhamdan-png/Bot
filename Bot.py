@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from telegram.error import NetworkError, TimedOut
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for
 from PIL import Image
 import pytz
 
@@ -42,6 +42,13 @@ DATA_VERSION = "2.0.0"  # نسخة البيانات للحماية من التغ
 
 # معرف المشرف الرئيسي
 ADMIN_ID = 6207431030
+
+# كلمة مرور لوحة التحكم (يمكن تغييرها)
+ADMIN_PANEL_PASSWORD = "Obeida2008"
+
+# إعدادات Flask
+app = Flask(__name__)
+app.secret_key = secrets.token_hex(32)  # مفتاح سري للتشفير
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
@@ -168,83 +175,7 @@ MAJOR_COUNTRIES = {
     "🇿🇦 جنوب أفريقيا": "Africa/Johannesburg"
 }
 
-# دالة للحصول على المنطقة الزمنية للمستخدم
-def get_user_timezone(user_id):
-    """الحصول على المنطقة الزمنية للمستخدم من قاعدة البيانات"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    # التحقق من وجود عمود country_timezone
-    cursor.execute("PRAGMA table_info(users)")
-    columns = [col[1] for col in cursor.fetchall()]
-    
-    if 'country_timezone' not in columns:
-        cursor.execute("ALTER TABLE users ADD COLUMN country_timezone TEXT DEFAULT 'Asia/Gaza'")
-        conn.commit()
-    
-    cursor.execute("SELECT country_timezone FROM users WHERE user_id = ?", (user_id,))
-    result = cursor.fetchone()
-    conn.close()
-    
-    if result and result[0]:
-        return result[0]
-    return "Asia/Gaza"  # القيمة الافتراضية
-
-def set_user_timezone(user_id, timezone):
-    """تعيين المنطقة الزمنية للمستخدم"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    
-    # التحقق من وجود المستخدم
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-    if not cursor.fetchone():
-        cursor.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
-    
-    cursor.execute("UPDATE users SET country_timezone = ? WHERE user_id = ?", (timezone, user_id))
-    conn.commit()
-    conn.close()
-    
-    log_data_change("update_timezone", user_id, f"timezone={timezone}")
-    return True
-
-def get_localized_time(user_id):
-    """الحصول على الوقت المحلي حسب منطقة المستخدم"""
-    try:
-        timezone_str = get_user_timezone(user_id)
-        user_tz = pytz.timezone(timezone_str)
-        return datetime.now(user_tz)
-    except Exception as e:
-        print(f"⚠️ خطأ في الحصول على الوقت المحلي: {e}")
-        return datetime.now(pytz.timezone('Asia/Gaza'))  # الرجوع للافتراضي
-
-# تعديل دالة get_market_session لاستخدام المنطقة الزمنية للمستخدم
-def get_market_session(user_id=None):
-    """الحصول على جلسة السوق باستخدام المنطقة الزمنية للمستخدم"""
-    try:
-        if user_id:
-            local_time = get_localized_time(user_id)
-        else:
-            local_time = datetime.now(pytz.timezone('Asia/Gaza'))
-        
-        current_hour = local_time.hour
-        timezone_name = get_user_timezone(user_id) if user_id else "Asia/Gaza"
-        
-        # تحديد الجلسة حسب التوقيت العالمي
-        if 2 <= current_hour < 8:
-            return "الجلسة الآسيوية", f"{current_hour:02d}:00-{current_hour+6:02d}:00 بالتوقيت المحلي", "منخفضة", timezone_name
-        elif 8 <= current_hour < 14:
-            return "جلسة لندن/أوروبا", f"{current_hour:02d}:00-{current_hour+6:02d}:00 بالتوقيت المحلي", "مرتفعة", timezone_name
-        elif 14 <= current_hour < 20:
-            return "جلسة نيويورك", f"{current_hour:02d}:00-{current_hour+6:02d}:00 بالتوقيت المحلي", "عالية جداً", timezone_name
-        elif 20 <= current_hour < 24 or 0 <= current_hour < 2:
-            return "جلسة المحيط الهادئ", f"{20 if current_hour>=20 else 0:02d}:00-{2 if current_hour>=20 else 8:02d}:00 بالتوقيت المحلي", "منخفضة", timezone_name
-        else:
-            return "جلسة عالمية", "متداخلة", "متوسطة", timezone_name
-    except Exception as e:
-        print(f"⚠️ خطأ في تحديد جلسة السوق: {e}")
-        return "جلسة عالمية", "غير محددة", "متوسطة", "Asia/Gaza"
-
-# توزيع العملات للنظام الجديد
+# توزيع العملات (تم حذف توصية)
 CATEGORIES = {
     "أزواج العملات 🏛️": [
         "EUR/USD (OTC)", "GBP/USD (OTC)", "USD/JPY (OTC)", "USD/CHF (OTC)",
@@ -275,8 +206,8 @@ IMAGE_CACHE_DIR = "image_cache"
 MAX_IMAGE_SIZE = (1024, 1024)  # أقصى حجم للصورة بعد الضغط
 IMAGE_QUALITY = 95  # جودة الصورة بعد الضغط (من 0-100)
 
-# حالات المحادثة (للنسخة الجديدة V2)
-MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, RECOMMENDATION_MODE, CATEGORY_SELECTION, ADMIN_MENU, ADD_SUBSCRIPTION, SELECT_DURATION, REMOVE_USER, BROADCAST_MESSAGE, SET_USER_DURATION, COUNTRY_SELECTION = range(14)
+# حالات المحادثة (للنسخة الجديدة V2) - تم حذف RECOMMENDATION_MODE و CATEGORY_SELECTION
+MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, CHAT_MODE, ANALYZE_MODE, ADMIN_MENU, ADD_SUBSCRIPTION, SELECT_DURATION, REMOVE_USER, BROADCAST_MESSAGE, SET_USER_DURATION, COUNTRY_SELECTION = range(12)
 
 # إنشاء المجلدات الضرورية
 for directory in [IMAGE_CACHE_DIR, BACKUP_DIR]:
@@ -298,9 +229,9 @@ class SubscriptionSystem:
         'trial': {'name': 'تجريبي', 'duration': 86400, 'features': ['basic_analysis']},
         'hourly': {'name': 'ساعة', 'duration': 3600, 'features': ['basic_analysis']},
         'daily': {'name': 'يوم', 'duration': 86400, 'features': ['basic_analysis', 'chat']},
-        'weekly': {'name': 'أسبوع', 'duration': 604800, 'features': ['basic_analysis', 'chat', 'recommendations']},
-        'monthly': {'name': 'شهر', 'duration': 2592000, 'features': ['basic_analysis', 'chat', 'recommendations', 'advanced_analysis']},
-        'yearly': {'name': 'سنة', 'duration': 31536000, 'features': ['basic_analysis', 'chat', 'recommendations', 'advanced_analysis', 'priority']},
+        'weekly': {'name': 'أسبوع', 'duration': 604800, 'features': ['basic_analysis', 'chat']},
+        'monthly': {'name': 'شهر', 'duration': 2592000, 'features': ['basic_analysis', 'chat', 'advanced_analysis']},
+        'yearly': {'name': 'سنة', 'duration': 31536000, 'features': ['basic_analysis', 'chat', 'advanced_analysis', 'priority']},
         'lifetime': {'name': 'مدى الحياة', 'duration': -1, 'features': ['all']}
     }
     
@@ -561,7 +492,7 @@ class SubscriptionSystem:
             for feature in features:
                 if feature == 'all':
                     # إضافة جميع الصلاحيات
-                    all_features = ['basic_analysis', 'chat', 'recommendations', 'advanced_analysis', 'priority']
+                    all_features = ['basic_analysis', 'chat', 'advanced_analysis', 'priority']
                     for f in all_features:
                         try:
                             cursor.execute("""
@@ -1100,7 +1031,7 @@ def check_user_subscription(user_id):
     return status, message
 
 # ============================================
-# باقي الكود كما هو مع تعديلات دالة get_market_session
+# باقي الكود مع تعديلات بعد حذف توصية
 # ============================================
 
 def init_db_with_subscription():
@@ -1266,7 +1197,7 @@ def compress_image(image_path, max_size=MAX_IMAGE_SIZE, quality=IMAGE_QUALITY):
         print(f"⚠️ خطأ في ضغط الصورة: {e}")
         return image_path
 
-def download_chart_image(symbol="BTCUSDT"):
+def download_chart_image(symbol="EUR/USD (OTC)"):
     """سحب صورة شارت من TradingView"""
     try:
         API_KEY = "c94425"
@@ -1588,16 +1519,7 @@ def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None, i
     except Exception as e:
         print(f"⚠️ خطأ في تنظيف الذاكرة: {e}")
 
-def save_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE, symbol: str):
-    """حفظ آخر رمز تم اختياره في التوصيات"""
-    context.user_data['last_recommendation_symbol'] = symbol
-
-def get_last_recommendation_symbol(context: ContextTypes.DEFAULT_TYPE):
-    """الحصول على آخر رمز تم اختياره في التوصيات"""
-    return context.user_data.get('last_recommendation_symbol', 'BTC (OTC)')
-
 def get_mistral_analysis(symbol):
-
     headers = {
         "Authorization": f"Bearer {MISTRAL_KEY}",
         "Content-Type": "application/json"
@@ -1680,7 +1602,7 @@ def get_mistral_analysis(symbol):
         print(f"Error in get_mistral_analysis: {e}")
         return "⚠️ حدث خطأ في الاتصال بالمحلل."
 
-# --- دوال معالجة البوت (محدثة لنظام الاشتراك الجديد مع إضافة اختيار الدولة) ---
+# --- دوال معالجة البوت (محدثة بعد حذف توصية) ---
 
 async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """التحقق من الاشتراك للمستخدمين غير المشتركين"""
@@ -1766,8 +1688,7 @@ async def handle_country_selection(update: Update, context: ContextTypes.DEFAULT
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"],
-            ["🌍 دولتك"]
+            ["💬 دردشة", "🌍 دولتك"]
         ]
         if user_id == ADMIN_ID:
             keyboard.append(["👑 لوحة التحكم"])
@@ -1821,8 +1742,7 @@ async def handle_country_selection(update: Update, context: ContextTypes.DEFAULT
         
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"],
-            ["🌍 دولتك"]
+            ["💬 دردشة", "🌍 دولتك"]
         ]
         if user_id == ADMIN_ID:
             keyboard.append(["👑 لوحة التحكم"])
@@ -1862,7 +1782,7 @@ async def handle_country_selection(update: Update, context: ContextTypes.DEFAULT
     return COUNTRY_SELECTION
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء البوت - مع إضافة زر دولتك"""
+    """بدء البوت - مع إضافة زر دولتك (تم حذف توصية)"""
     user = update.effective_user
     user_id = user.id
     username = user.username or str(user_id)
@@ -1889,11 +1809,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_timezone = get_user_timezone(user_id)
     
     if is_admin:
-        # المشرف - يرى جميع الأزرار
+        # المشرف - يرى جميع الأزرار (بدون توصية)
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"],
-            ["🌍 دولتك", "👑 لوحة التحكم"]
+            ["💬 دردشة", "🌍 دولتك"],
+            ["👑 لوحة التحكم"]
         ]
         
         welcome_msg = (
@@ -1902,7 +1822,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🕒 **توقيتك المحلي:** {local_time} ({user_timezone})\n\n"
             "🤖 الخدمات المتاحة:\n"
             "• 📊 تحليل الشارتات\n"
-            "• 📈 توصيات فورية\n"
             "• 💬 دردشة ذكية\n"
             "• 🌍 اختيار دولتك\n"
             "• ⚙️ إعدادات متقدمة\n\n"
@@ -1910,11 +1829,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
     elif status:
-        # مستخدم مشترك - يرى جميع الأزرار مع زر الدولة
+        # مستخدم مشترك - يرى جميع الأزرار مع زر الدولة (بدون توصية)
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"],
-            ["🌍 دولتك"]
+            ["💬 دردشة", "🌍 دولتك"]
         ]
         
         sub_name = details['name'] if details else 'مشترك'
@@ -1937,7 +1855,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🕒 **توقيتك المحلي:** {local_time} ({user_timezone})\n\n"
             f"🤖 الخدمات المتاحة:\n"
             f"• 📊 تحليل الشارتات\n"
-            f"• 📈 توصيات فورية\n"
             f"• 💬 دردشة ذكية\n"
             f"• 🌍 اختيار دولتك\n"
             f"• ⚙️ إعدادات متقدمة\n\n"
@@ -1967,7 +1884,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
     
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات القائمة الرئيسية"""
+    """معالجة اختيارات القائمة الرئيسية (تم حذف توصية)"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
@@ -2031,14 +1948,10 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_message == "💬 دردشة":
         return await start_chat_mode(update, context)
     
-    elif user_message == "📈 توصية":
-        return await start_recommendation_mode(update, context)
-    
-    # إعادة عرض القائمة الرئيسية
+    # إعادة عرض القائمة الرئيسية (بدون توصية)
     keyboard = [
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["💬 دردشة", "📈 توصية"],
-        ["🌍 دولتك"]
+        ["💬 دردشة", "🌍 دولتك"]
     ]
     if user_id == ADMIN_ID:
         keyboard.append(["👑 لوحة التحكم"])
@@ -2067,8 +1980,7 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"],
-            ["🌍 دولتك"]
+            ["💬 دردشة", "🌍 دولتك"]
         ]
         if user_id == ADMIN_ID:
             keyboard.append(["👑 لوحة التحكم"])
@@ -2119,8 +2031,7 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"],
-            ["🌍 دولتك"]
+            ["💬 دردشة", "🌍 دولتك"]
         ]
         if user_id == ADMIN_ID:
             keyboard.append(["👑 لوحة التحكم"])
@@ -2134,7 +2045,7 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
     if user_message in TRADE_TIMES:
         save_user_setting(user_id, "trade_time", user_message)
         
-        keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["📈 توصية"], ["🌍 دولتك"], ["الرجوع للقائمة الرئيسية"]]
+        keyboard = [["📊 تحليل صورة"], ["💬 دردشة"], ["🌍 دولتك"], ["الرجوع للقائمة الرئيسية"]]
         if user_id == ADMIN_ID:
             keyboard.append(["👑 لوحة التحكم"])
         
@@ -2174,8 +2085,7 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
     if user_message == "الرجوع للقائمة الرئيسية":
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["💬 دردشة", "📈 توصية"],
-            ["🌍 دولتك"]
+            ["💬 دردشة", "🌍 دولتك"]
         ]
         if user_id == ADMIN_ID:
             keyboard.append(["👑 لوحة التحكم"])
@@ -2232,7 +2142,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # التحقق من الأوامر الخاصة
     if user_message == "ايقاف الدردشة":
-        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"], ["🌍 دولتك"]]
+        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "🌍 دولتك"]]
         if user_id == ADMIN_ID:
             main_keyboard.append(["👑 لوحة التحكم"])
         await update.message.reply_text(
@@ -2242,7 +2152,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return MAIN_MENU
     
     elif user_message == "الرجوع للقائمة الرئيسية":
-        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"], ["🌍 دولتك"]]
+        main_keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "🌍 دولتك"]]
         if user_id == ADMIN_ID:
             main_keyboard.append(["👑 لوحة التحكم"])
         await update.message.reply_text(
@@ -2251,7 +2161,7 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return MAIN_MENU
     
-    # برومبتات متخصصة حسب الاختيار (نفس الكود السابق)
+    # برومبتات متخصصة حسب الاختيار
     system_prompts = {
         "🚀 مساعد شامل": """أنت Obeida Trading، مساعد ذكي شامل يمتلك معرفة عميقة في:
 🎯 **التحليل الفني والمالي:** خبرة في أسواق المال، تحليل الشارتات، واستراتيجيات التداول
@@ -2448,215 +2358,6 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await wait_msg.edit_text("❌ حدث خطأ غير متوقع. النظام يعمل على الإصلاح تلقائياً...")
     
     return CHAT_MODE
-
-async def start_recommendation_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """بدء وضع التوصية"""
-    # التحقق من الاشتراك
-    if not await subscription_required(update, context):
-        return RECOMMENDATION_MODE
-    
-    reply_keyboard = [[key] for key in CATEGORIES.keys()]
-    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-    
-    await update.message.reply_text(
-        "🚀 **نظام التوصيات**\n\n"
-        "اختر القسم المطلوب من الأزرار:",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-    )
-    return RECOMMENDATION_MODE
-
-async def handle_recommendation_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيارات نظام التوصية مع سحب الصور"""
-    # التحقق من الاشتراك
-    if not await subscription_required(update, context):
-        return RECOMMENDATION_MODE
-    
-    user_text = update.message.text.strip()
-    user_id = update.effective_user.id
-    
-    # العودة للقائمة الرئيسية
-    if user_text == "الرجوع للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"], ["🌍 دولتك"]]
-        if update.effective_user.id == ADMIN_ID:
-            keyboard.append(["👑 لوحة التحكم"])
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    # التحقق من الأقسام الرئيسية
-    if user_text in CATEGORIES:
-        keyboard = [[asset] for asset in CATEGORIES[user_text]]
-        keyboard.append(["🔙 العودة للقائمة", "الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            f"📍 قسم: {user_text}\nاختر العملة الآن:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        )
-        return CATEGORY_SELECTION
-    
-    # التحقق من العملة المختارة
-    symbol_to_analyze = None
-    for category_list in CATEGORIES.values():
-        if user_text in category_list:
-            symbol_to_analyze = user_text
-            break
-    
-    # إذا وجدت العملة، ابدأ التحليل مع سحب الصورة
-    if symbol_to_analyze:
-        save_last_recommendation_symbol(context, symbol_to_analyze)
-        wait_msg = await update.message.reply_text(f"📸 تم سحب صورة وجاري تحليل 🤌...")
-        
-        # تسجيل استخدام الميزة
-        SubscriptionSystem.increment_usage(user_id, 'recommendation')
-        
-        # سحب صورة الشارت أولاً
-        chart_image_path = download_chart_image(symbol_to_analyze)
-        
-        if chart_image_path and os.path.exists(chart_image_path):
-            # إرسال الصورة للمستخدم
-            with open(chart_image_path, 'rb') as photo:
-                await update.message.reply_photo(
-                    photo=photo,
-                    caption=f"📈 شارت {symbol_to_analyze} المباشر"
-                )
-            
-            # استخدام الصورة للتحليل الفني
-            try:
-                # استدعاء تحليل الصورة
-                await wait_msg.edit_text(f"استنى شويه قاعد أحلل {symbol_to_analyze} 🤌...")
-                
-                # إنشاء كائن تحديث مؤقت للصورة
-                from telegram import PhotoSize
-                
-                # تحميل الصورة ككائن PhotoSize
-                photo_file = await context.bot.get_file(chart_image_path)
-                
-                # إنشاء تحديث مؤقت
-                class TempUpdate:
-                    def __init__(self, original_update, photo_path):
-                        self.effective_user = original_update.effective_user
-                        self.effective_chat = original_update.effective_chat
-                        self.message = TempMessage(photo_path)
-                
-                class TempMessage:
-                    def __init__(self, photo_path):
-                        self.photo = [TempPhotoSize(photo_path)]
-                        self.text = ""
-                
-                class TempPhotoSize:
-                    def __init__(self, file_path):
-                        self.file_path = file_path
-                    
-                    async def get_file(self):
-                        class TempFile:
-                            def __init__(self, path):
-                                self.path = path
-                            
-                            async def download_to_drive(self, destination):
-                                shutil.copy2(self.path, destination)
-                                return destination
-                        
-                        return TempFile(self.file_path)
-                
-                temp_update = TempUpdate(update, chart_image_path)
-                
-                # الحصول على إعدادات المستخدم
-                candle, trade_time, _, _, _ = get_user_setting(user_id)
-                
-                if not candle or not trade_time:
-                    await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
-                    
-                    reply_keyboard = [[key] for key in CATEGORIES.keys()]
-                    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-                    
-                    await update.message.reply_text(
-                        "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-                        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-                    )
-                    return RECOMMENDATION_MODE
-                
-                # تحليل الصورة
-                analysis_result = await analyze_chart_image(
-                    temp_update, 
-                    context, 
-                    chart_image_path, 
-                    candle, 
-                    trade_time, 
-                    symbol_to_analyze
-                )
-                
-                # تنسيق النتيجة مع دعم النسخ السريع
-                formatted_result = format_as_copyable_code(analysis_result, "text")
-                await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
-                
-            except Exception as e:
-                print(f"❌ خطأ في تحليل الصورة التلقائية: {e}")
-                # التحليل النصي الاحتياطي
-                analysis = get_mistral_analysis(symbol_to_analyze)
-                
-                final_msg = (
-                    f"📈 **نتائج توصية {symbol_to_analyze}**\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"{analysis}\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"🤖 **Powered by - Obeida Trading**"
-                )
-                
-                final_msg = clean_repeated_text(final_msg)
-                formatted_result = format_as_copyable_code(final_msg, "text")
-                await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
-            
-            # حذف الصورة المؤقتة
-            try:
-                os.remove(chart_image_path)
-            except:
-                pass
-        else:
-            # إذا فشل سحب الصورة، استخدم التحليل النصي
-            analysis = get_mistral_analysis(symbol_to_analyze)
-            
-            final_msg = (
-                f"📈 **نتائج توصية {symbol_to_analyze}**\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"{analysis}\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"🤖 **Powered by - Obeida Trading**"
-            )
-            
-            final_msg = clean_repeated_text(final_msg)
-            formatted_result = format_as_copyable_code(final_msg, "text")
-            await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
-        
-        # عرض الأزرار للاستمرار
-        reply_keyboard = [[key] for key in CATEGORIES.keys()]
-        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-        )
-        return RECOMMENDATION_MODE
-    
-    # إذا كان النص "🔙 العودة للقائمة"
-    if user_text == "🔙 العودة للقائمة":
-        reply_keyboard = [[key] for key in CATEGORIES.keys()]
-        reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            "🔙 **العودة للقائمة الرئيسية للتوصيات**\nاختر القسم المطلوب:",
-            reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-        )
-        return RECOMMENDATION_MODE
-    
-    # إذا لم يطابق النص أي شيء
-    await update.message.reply_text(
-        "❌ خيار غير موجود. يرجى اختيار عملة من القائمة الظاهرة في الأزرار.\n\n"
-        "اضغط 'الرجوع للقائمة الرئيسية' للعودة.",
-        reply_markup=ReplyKeyboardMarkup([["الرجوع للقائمة الرئيسية"]], resize_keyboard=True)
-    )
-    return RECOMMENDATION_MODE
 
 async def analyze_chart_image(update, context, image_path, candle, trade_time, symbol):
     """تحليل صورة الشارت مع القوانين الجديدة والتعديلات الثلاثة والنسخة الهجومية V7.4 (التشريح الهيكلي الصارم) - نسخة الأولوية للأنجح"""
@@ -4013,7 +3714,7 @@ else:
         # حفظ سياق التحليل في قاعدة البيانات
         save_analysis_context(user_id, initial_analysis)
         
-        keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["📈 توصية"], ["🌍 دولتك"], ["الرجوع للقائمة الرئيسية"]]
+        keyboard = [["📊 تحليل صورة"], ["⚙️ إعدادات التحليل"], ["🌍 دولتك"], ["الرجوع للقائمة الرئيسية"]]
         if user_id == ADMIN_ID:
             keyboard.append(["👑 لوحة التحكم"])
         
@@ -4095,64 +3796,6 @@ else:
                     print(f"⚠️ خطأ في حذف الملف المؤقت: {e}")
     
     return MAIN_MENU
-
-async def handle_recommendation_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الصور في وضع التوصية"""
-    # التحقق من الاشتراك
-    if not await subscription_required(update, context):
-        return RECOMMENDATION_MODE
-    
-    user_id = update.effective_user.id
-    
-    # تسجيل استخدام
-    SubscriptionSystem.increment_usage(user_id, 'recommendation_photo')
-    
-    # الحصول على آخر عملة تم اختيارها
-    last_symbol = get_last_recommendation_symbol(context)
-    
-    wait_msg = await update.message.reply_text(f"📊 استنى شوي العملة: {last_symbol} قيد تحليل 🤌...")
-    
-    try:
-        # حفظ الصورة مؤقتاً
-        photo = await update.message.photo[-1].get_file()
-        timestamp = int(time.time())
-        image_path = os.path.join(IMAGE_CACHE_DIR, f"recommendation_{user_id}_{timestamp}.jpg")
-        await photo.download_to_drive(image_path)
-        
-        # الحصول على إعدادات المستخدم
-        candle, trade_time, _, _, _ = get_user_setting(user_id)
-        
-        if not candle or not trade_time:
-            await wait_msg.edit_text("❌ يجب ضبط الإعدادات أولاً. الرجاء استخدام 'إعدادات التحليل'.")
-            return RECOMMENDATION_MODE
-        
-        # تحليل الصورة
-        analysis_result = await analyze_chart_image(
-            update, 
-            context, 
-            image_path, 
-            candle, 
-            trade_time, 
-            last_symbol
-        )
-        
-        # تنسيق النتيجة مع دعم النسخ السريع
-        formatted_result = format_as_copyable_code(analysis_result, "text")
-        await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
-                
-    except Exception as e:
-        print(f"❌ خطأ في تحليل صورة التوصية: {e}")
-        await wait_msg.edit_text("❌ حدث خطأ في معالجة الصورة. يرجى المحاولة مرة أخرى.")
-    
-    # عرض خيارات المتابعة
-    reply_keyboard = [[key] for key in CATEGORIES.keys()]
-    reply_keyboard.append(["الرجوع للقائمة الرئيسية"])
-    
-    await update.message.reply_text(
-        "🔽 **اختر قسم آخر أو العودة للقائمة الرئيسية:**",
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
-    )
-    return RECOMMENDATION_MODE
 
 async def handle_photo_in_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة الصور في وضع التحليل"""
@@ -4266,7 +3909,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN_MENU
     
     if user_message == "🔙 العودة للقائمة الرئيسية":
-        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "📈 توصية"], ["🌍 دولتك"], ["👑 لوحة التحكم"]]
+        keyboard = [["⚙️ إعدادات التحليل", "📊 تحليل صورة"], ["💬 دردشة", "🌍 دولتك"], ["👑 لوحة التحكم"]]
         await update.message.reply_text(
             "🏠 العودة للقائمة الرئيسية",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -4762,7 +4405,7 @@ class DataProtection:
         DataProtection.backup_codes_db()
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """أمر المساعدة"""
+    """أمر المساعدة (تم حذف توصية)"""
     help_text = f"""
     🤖 **أوامر البوت:**
     
@@ -4773,7 +4416,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     1. استخدم أزرار القائمة للتنقل
     2. أرسل صورة الشارت للتحليل
     3. اختر "دردشة" للاستفسارات النصية
-    4. اختر "توصية" لتحليل العملات مع سحب الصور التلقائي
     
     🌍 **نظام المناطق الزمنية:**
     • اختر "دولتك" من القائمة الرئيسية
@@ -4819,17 +4461,140 @@ def run_flask_server():
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-# --- Flask Server مع واجهة تحكم (محدثة) ---
-app = Flask(__name__)
+# --- Flask Server مع واجهة تحكم متطورة ونظام كلمة مرور ---
 
-# HTML template for admin panel (محدث)
+# HTML template for login page
+LOGIN_PAGE_HTML = """
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تسجيل الدخول - Obeida Trading</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .login-container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 10px 50px rgba(0,0,0,0.2);
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .login-header h1 {
+            color: #333;
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        .login-header p {
+            color: #666;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+            font-weight: 600;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #f0f0f0;
+            border-radius: 10px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn-login {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 20px;
+            color: #999;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <h1>🔐 تسجيل الدخول</h1>
+            <p>لوحة تحكم Obeida Trading</p>
+        </div>
+        
+        {% if error %}
+        <div class="error-message">
+            ⚠️ {{ error }}
+        </div>
+        {% endif %}
+        
+        <form method="POST">
+            <div class="form-group">
+                <label>كلمة المرور</label>
+                <input type="password" name="password" placeholder="أدخل كلمة المرور" required>
+            </div>
+            <button type="submit" class="btn-login">دخول</button>
+        </form>
+        
+        <div class="footer">
+            <p>نظام إدارة الاشتراكات المتطور V2</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+# HTML template for admin panel (محدث مع نظام كلمة مرور)
 ADMIN_PANEL_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title> Obeida Trading - نظام الاشتراك المتطور</title>
+    <title>لوحة التحكم - Obeida Trading</title>
     <style>
         * {
             margin: 0;
@@ -4852,7 +4617,10 @@ ADMIN_PANEL_HTML = """
             padding: 30px;
             margin-bottom: 30px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-            text-align: center;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
         }
         .header h1 {
             color: #333;
@@ -4862,6 +4630,18 @@ ADMIN_PANEL_HTML = """
         .header p {
             color: #666;
             font-size: 1.1em;
+        }
+        .logout-btn {
+            background: #dc3545;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+        .logout-btn:hover {
+            background: #c82333;
         }
         .stats-grid {
             display: grid;
@@ -4907,6 +4687,9 @@ ADMIN_PANEL_HTML = """
         .tab.active {
             background: #667eea;
             color: white;
+        }
+        .tab:hover:not(.active) {
+            border-color: #667eea;
         }
         .tab-content {
             display: none;
@@ -5022,51 +4805,6 @@ ADMIN_PANEL_HTML = """
         .btn-danger:hover {
             background: #c82333;
         }
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.5);
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-        .modal-content {
-            background: white;
-            padding: 30px;
-            border-radius: 20px;
-            width: 90%;
-            max-width: 600px;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 5px;
-            color: #666;
-            font-weight: 600;
-        }
-        .form-group input, .form-group select {
-            width: 100%;
-            padding: 10px;
-            border: 2px solid #f0f0f0;
-            border-radius: 10px;
-            font-size: 1em;
-        }
-        .form-group input:focus, .form-group select:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        .modal-actions {
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-            margin-top: 20px;
-        }
         .search-box {
             margin-bottom: 20px;
         }
@@ -5082,14 +4820,32 @@ ADMIN_PANEL_HTML = """
             color: white;
             margin-top: 30px;
         }
+        .refresh-btn {
+            background: #17a2b8;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            margin-right: 10px;
+        }
+        .refresh-btn:hover {
+            background: #138496;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🤖 لوحة تحكم Obeida Trading - V2</h1>
-            <p>نظام إدارة الاشتراكات - المشرف: @Sz2zv</p>
-            <p style="color: #28a745; font-size: 0.9em;">🌍 نظام المناطق الزمنية للمستخدمين نشط</p>
+            <div>
+                <h1>🤖 لوحة تحكم Obeida Trading - V2</h1>
+                <p>نظام إدارة الاشتراكات المتطور - المشرف: @Sz2zv</p>
+                <p style="color: #28a745; font-size: 0.9em;">🌍 نظام المناطق الزمنية للمستخدمين نشط</p>
+            </div>
+            <div>
+                <a href="/admin/refresh" class="refresh-btn">🔄 تحديث</a>
+                <a href="/logout" class="logout-btn">🚪 تسجيل الخروج</a>
+            </div>
         </div>
 
         <div class="stats-grid">
@@ -5110,7 +4866,8 @@ ADMIN_PANEL_HTML = """
         <div class="tabs">
             <div class="tab active" onclick="showTab('users')">👥 المستخدمين</div>
             <div class="tab" onclick="showTab('subscriptions')">📊 الاشتراكات</div>
-            <div class="tab" onclick="showTab('stats')">📈 إحصائيات</div>
+                        <div class="tab" onclick="showTab('stats')">📈 إحصائيات</div>
+            <div class="tab" onclick="showTab('backup')">💾 النسخ الاحتياطي</div>
         </div>
 
         <div id="users-tab" class="tab-content active">
@@ -5131,6 +4888,7 @@ ADMIN_PANEL_HTML = """
                                 <th>تاريخ الانتهاء</th>
                                 <th>الحالة</th>
                                 <th>آخر نشاط</th>
+                                <th>المنطقة الزمنية</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -5146,6 +4904,7 @@ ADMIN_PANEL_HTML = """
                                     </span>
                                 </td>
                                 <td>{{ user.last_active }}</td>
+                                <td>{{ user.timezone }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -5203,11 +4962,37 @@ ADMIN_PANEL_HTML = """
                 </div>
             </div>
         </div>
+
+        <div id="backup-tab" class="tab-content">
+            <div class="section">
+                <h2 class="section-title">💾 النسخ الاحتياطي</h2>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>اسم الملف</th>
+                                <th>الحجم</th>
+                                <th>تاريخ الإنشاء</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for backup in backups %}
+                            <tr>
+                                <td>{{ backup.name }}</td>
+                                <td>{{ backup.size }}</td>
+                                <td>{{ backup.date }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="footer">
-        <p>🤯 Obeida Trading 🤯 </p>
-        <p style="font-size: 0.8em;">نسخة البيانات: {{ data_version }} - آخر نسخة احتياطية: {{ last_backup }}</p>
+        <p>🤯 Obeida Trading - نظام إدارة الاشتراكات المتطور V2 🤯</p>
+        <p style="font-size: 0.8em;">نسخة البيانات: {{ data_version }} - آخر تحديث: {{ last_update }}</p>
     </div>
 
     <script>
@@ -5215,7 +5000,7 @@ ADMIN_PANEL_HTML = """
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             
-            document.querySelector(`.tab:nth-child(${tabName === 'users' ? 1 : tabName === 'subscriptions' ? 2 : 3})`).classList.add('active');
+            document.querySelector(`.tab:nth-child(${tabName === 'users' ? 1 : tabName === 'subscriptions' ? 2 : tabName === 'stats' ? 3 : 4})`).classList.add('active');
             document.getElementById(tabName + '-tab').classList.add('active');
         }
 
@@ -5239,26 +5024,35 @@ ADMIN_PANEL_HTML = """
                 }
             }
         }
-
-        // Close modals when clicking outside
-        window.onclick = function(event) {
-            let generateModal = document.getElementById('generateCodeModal');
-            let showModal = document.getElementById('showCodeModal');
-            if (event.target == generateModal) {
-                generateModal.style.display = 'none';
-            }
-            if (event.target == showModal) {
-                showModal.style.display = 'none';
-                location.reload();
-            }
-        }
     </script>
 </body>
 </html>
 """
 
+# دوال Flask مع نظام كلمة مرور
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """صفحة تسجيل الدخول"""
+    if request.method == 'POST':
+        password = request.form.get('password')
+        if password == ADMIN_PANEL_PASSWORD:
+            session['logged_in'] = True
+            session['login_time'] = datetime.now().isoformat()
+            return redirect('/admin')
+        else:
+            return render_template_string(LOGIN_PAGE_HTML, error='كلمة المرور غير صحيحة')
+    
+    return render_template_string(LOGIN_PAGE_HTML, error=None)
+
+@app.route('/logout')
+def logout():
+    """تسجيل الخروج"""
+    session.clear()
+    return redirect('/login')
+
 @app.route('/')
 def home():
+    """الصفحة الرئيسية"""
     return """
     <!DOCTYPE html>
     <html>
@@ -5275,20 +5069,23 @@ def home():
         <h1> 📊 Obeida Trading - Subscription System 📊</h1>
         <p>Chat & Technical Analysis Bot with Advanced Subscription System</p>
         <div class="status">🌍 نظام المناطق الزمنية للمستخدمين نشط ✅</div>
+        <div class="status">🔐 نظام حماية بكلمة مرور نشط ✅</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <a href="/admin" class="admin-link">🔐 عرض بيانات المشرف</a>
+        <a href="/login" class="admin-link">🔐 دخول لوحة التحكم</a>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
+    """فحص صحة النظام"""
     stats = SubscriptionSystem.get_stats()
     return {
         "status": "active", 
         "ai_provider": "Mistral AI", 
         "subscription_system": "advanced_v2",
         "timezone_support": True,
+        "auth_protected": True,
         "data_version": DATA_VERSION,
         "total_users": stats.get('total_users', 0),
         "active_users": stats.get('active_users', 0),
@@ -5298,7 +5095,11 @@ def health():
 
 @app.route('/admin')
 def admin_panel():
-    """لوحة تحكم المشرف المحدثة"""
+    """لوحة تحكم المشرف المحمية"""
+    # التحقق من تسجيل الدخول
+    if not session.get('logged_in'):
+        return redirect('/login')
+    
     try:
         stats = SubscriptionSystem.get_stats()
         users = SubscriptionSystem.get_all_users()
@@ -5324,35 +5125,58 @@ def admin_panel():
             if end_date and datetime.fromisoformat(end_date) < datetime.now():
                 end_display += " (منتهي)"
             
+            # الحصول على المنطقة الزمنية للمستخدم
+            timezone = get_user_timezone(uid)
+            
             formatted_users.append({
                 'id': uid,
                 'name': display_name,
                 'subscription_type': sub_name or 'غير مشترك',
                 'end_date': end_display,
                 'status': status,
-                'last_active': last_active[:16] if last_active else '-'
+                'last_active': last_active[:16] if last_active else '-',
+                'timezone': timezone
             })
         
         # معلومات النسخ الاحتياطي
-        last_backup = "لا توجد نسخ"
+        backups = []
         if os.path.exists(BACKUP_DIR):
-            backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')])
-            if backups:
-                last_backup = backups[-1].replace('backup_', '').replace('.db', '')
+            for f in sorted(os.listdir(BACKUP_DIR), reverse=True)[:10]:
+                if f.endswith('.db'):
+                    filepath = os.path.join(BACKUP_DIR, f)
+                    size = os.path.getsize(filepath) / 1024
+                    size_str = f"{size:.1f} KB" if size < 1024 else f"{size/1024:.1f} MB"
+                    mod_time = datetime.fromtimestamp(os.path.getmtime(filepath))
+                    backups.append({
+                        'name': f,
+                        'size': size_str,
+                        'date': mod_time.strftime('%Y-%m-%d %H:%M:%S')
+                    })
         
         return render_template_string(
             ADMIN_PANEL_HTML,
             stats=stats,
             users=formatted_users,
+            backups=backups,
             data_version=DATA_VERSION,
-            last_backup=last_backup
+            last_update=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         )
     except Exception as e:
         return f"خطأ في تحميل لوحة التحكم: {str(e)}"
 
+@app.route('/admin/refresh')
+def admin_refresh():
+    """تحديث لوحة التحكم"""
+    if not session.get('logged_in'):
+        return redirect('/login')
+    return redirect('/admin')
+
 @app.route('/admin/add_subscription_v2', methods=['POST'])
 def add_subscription_v2():
     """إضافة اشتراك لمستخدم"""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
     try:
         data = request.json
         user_id = data.get('user_id')
@@ -5376,6 +5200,9 @@ def add_subscription_v2():
 @app.route('/admin/revoke_subscription_v2', methods=['POST'])
 def revoke_subscription_v2():
     """إلغاء اشتراك مستخدم"""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
     try:
         data = request.json
         user_id = data.get('user_id')
@@ -5393,6 +5220,9 @@ def revoke_subscription_v2():
 @app.route('/admin/extend_subscription_v2', methods=['POST'])
 def extend_subscription_v2():
     """تمديد اشتراك مستخدم"""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
     try:
         data = request.json
         user_id = data.get('user_id')
@@ -5415,6 +5245,9 @@ def extend_subscription_v2():
 @app.route('/admin/block_user_v2', methods=['POST'])
 def block_user_v2():
     """حظر مستخدم"""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
     try:
         data = request.json
         user_id = data.get('user_id')
@@ -5432,6 +5265,9 @@ def block_user_v2():
 @app.route('/admin/unblock_user_v2', methods=['POST'])
 def unblock_user_v2():
     """إلغاء حظر مستخدم"""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
     try:
         data = request.json
         user_id = data.get('user_id')
@@ -5448,16 +5284,52 @@ def unblock_user_v2():
 @app.route('/admin/get_stats_v2')
 def get_stats_v2():
     """الحصول على الإحصائيات"""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
     stats = SubscriptionSystem.get_stats()
     return jsonify({'success': True, 'stats': stats})
 
+@app.route('/admin/get_users_v2')
+def get_users_v2():
+    """الحصول على قائمة المستخدمين"""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'غير مصرح'})
+    
+    users = SubscriptionSystem.get_all_users()
+    formatted_users = []
+    
+    for u in users:
+        uid, username, first_name, created, last_active, is_blocked, sub_type, sub_name, start_date, end_date, is_active = u
+        
+        if is_blocked == 1:
+            status = "محظور"
+        elif is_active == 1 and (not end_date or datetime.fromisoformat(end_date) > datetime.now()):
+            status = "نشط"
+        else:
+            status = "منتهي"
+        
+        display_name = first_name or username or str(uid)
+        
+        formatted_users.append({
+            'id': uid,
+            'name': display_name,
+            'subscription': sub_name or 'غير مشترك',
+            'end_date': end_date[:16] if end_date else None,
+            'status': status,
+            'last_active': last_active[:16] if last_active else None
+        })
+    
+    return jsonify({'success': True, 'users': formatted_users})
+
 @app.route('/ping')
 def ping():
+    """فحص الاتصال"""
     return "PONG"
 
 def main():
-    """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية"""
-    print("🤖 Starting Obeida Trading with Timezone Support ...")
+    """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية ولوحة تحكم محمية"""
+    print("🤖 Starting Obeida Trading with Timezone Support and Protected Admin Panel...")
     
     # تهيئة قاعدة البيانات الرئيسية
     init_db_with_subscription()
@@ -5470,7 +5342,7 @@ def main():
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
-        # تنظيف جميع الملفات المؤقتة عند بدء التشغيل
+    # تنظيف جميع الملفات المؤقتة عند بدء التشغيل
     print("🧹 جاري تنظيف الملفات المؤقتة عند بدء التشغيل...")
     try:
         if os.path.exists(IMAGE_CACHE_DIR):
@@ -5514,13 +5386,6 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode),
                 MessageHandler(filters.PHOTO, handle_photo_in_analyze_mode)
             ],
-            RECOMMENDATION_MODE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection),
-                MessageHandler(filters.PHOTO, handle_recommendation_photo)
-            ],
-            CATEGORY_SELECTION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_recommendation_selection)
-            ],
             ADMIN_MENU: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_menu)
             ],
@@ -5560,7 +5425,9 @@ def main():
     loop.create_task(periodic_cleanup())
     loop.create_task(backup_scheduler())
     
-    print("✅ Telegram Bot with Timezone Support ready ...")
+    print("✅ Telegram Bot with Timezone Support and Protected Admin Panel ready...")
+    print(f"🔐 Admin Panel URL: http://localhost:8080/login")
+    print(f"🔑 Admin Password: {ADMIN_PANEL_PASSWORD}")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
