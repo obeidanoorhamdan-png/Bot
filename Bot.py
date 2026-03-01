@@ -46,8 +46,8 @@ ADMIN_ID = 6207431030
 
 # إعدادات Flask
 SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
-ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'Sz2zv')
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', hashlib.sha256('admin123'.encode()).hexdigest())  # تشفير كلمة المرور
+ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'Obeida059')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', hashlib.sha256('Obeida059'.encode()).hexdigest())  # تشفير كلمة المرور
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
@@ -6346,7 +6346,6 @@ def main():
     
     print("✅ Telegram Bot with Timezone Support and Secure Admin Panel ready ...")
     print(f"🌍 Admin Panel URL: http://localhost:8080/admin")
-    print(f"🔐 Login with username: {ADMIN_USERNAME} and password: admin123")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
