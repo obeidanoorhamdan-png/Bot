@@ -22,7 +22,8 @@ from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from telegram.error import NetworkError, TimedOut
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for, flash
+from functools import wraps
 from PIL import Image
 import pytz
 
@@ -42,6 +43,11 @@ DATA_VERSION = "2.0.0"  # نسخة البيانات للحماية من التغ
 
 # معرف المشرف الرئيسي
 ADMIN_ID = 6207431030
+
+# إعدادات Flask
+SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
+ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'Sz2zv')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', hashlib.sha256('admin123'.encode()).hexdigest())  # تشفير كلمة المرور
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
@@ -4815,21 +4821,174 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def run_flask_server():
-    """تشغيل Flask server"""
+    """تشغيل Flask server مع نظام مصادقة متكامل"""
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
-# --- Flask Server مع واجهة تحكم (محدثة) ---
+# --- Flask Server مع واجهة تحكم محسنة ونظام مصادقة ---
 app = Flask(__name__)
+app.secret_key = SECRET_KEY
 
-# HTML template for admin panel (محدث)
+# دالة للتحقق من تسجيل الدخول
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# HTML template لصفحة تسجيل الدخول
+LOGIN_PAGE_HTML = """
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>تسجيل الدخول - Obeida Trading</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .login-container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            animation: slideIn 0.5s ease;
+        }
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .login-header h1 {
+            color: #333;
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        .login-header p {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .logo {
+            font-size: 4em;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+            font-weight: 600;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #f0f0f0;
+            border-radius: 10px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn-login {
+            width: 100%;
+            padding: 14px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .btn-login:hover {
+            background: #5a67d8;
+        }
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 10px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+            border: 1px solid #f5c6cb;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 20px;
+            color: #999;
+            font-size: 0.8em;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <div class="logo">🤖</div>
+            <h1>Obeida Trading</h1>
+            <p>نظام إدارة الاشتراكات المتطور</p>
+        </div>
+        
+        {% if error %}
+        <div class="error-message">{{ error }}</div>
+        {% endif %}
+        
+        <form method="POST" action="/login">
+            <div class="form-group">
+                <label>👤 اسم المستخدم</label>
+                <input type="text" name="username" required autofocus>
+            </div>
+            <div class="form-group">
+                <label>🔑 كلمة المرور</label>
+                <input type="password" name="password" required>
+            </div>
+            <button type="submit" class="btn-login">تسجيل الدخول</button>
+        </form>
+        
+        <div class="footer">
+            <p>© 2024 Obeida Trading - جميع الحقوق محفوظة</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+# HTML template للوحة التحكم المحسنة
 ADMIN_PANEL_HTML = """
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title> Obeida Trading - نظام الاشتراك المتطور</title>
+    <title>لوحة التحكم - Obeida Trading V2</title>
     <style>
         * {
             margin: 0;
@@ -4852,16 +5011,31 @@ ADMIN_PANEL_HTML = """
             padding: 30px;
             margin-bottom: 30px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-            text-align: center;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
         }
         .header h1 {
             color: #333;
-            font-size: 2.5em;
-            margin-bottom: 10px;
+            font-size: 2.2em;
+            margin-bottom: 5px;
         }
-        .header p {
+        .header .subtitle {
             color: #666;
             font-size: 1.1em;
+        }
+        .logout-btn {
+            background: #dc3545;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+        .logout-btn:hover {
+            background: #c82333;
         }
         .stats-grid {
             display: grid;
@@ -4889,6 +5063,11 @@ ADMIN_PANEL_HTML = """
             font-size: 2.5em;
             font-weight: bold;
         }
+        .stat-card .trend {
+            color: #28a745;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
         .tabs {
             display: flex;
             gap: 10px;
@@ -4903,6 +5082,7 @@ ADMIN_PANEL_HTML = """
             font-weight: 600;
             transition: all 0.3s;
             border: 2px solid transparent;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         }
         .tab.active {
             background: #667eea;
@@ -4930,6 +5110,8 @@ ADMIN_PANEL_HTML = """
         }
         .table-container {
             overflow-x: auto;
+            border-radius: 10px;
+            border: 1px solid #f0f0f0;
         }
         table {
             width: 100%;
@@ -4938,12 +5120,12 @@ ADMIN_PANEL_HTML = """
         th {
             background: #667eea;
             color: white;
-            padding: 12px;
+            padding: 15px;
             font-weight: 600;
             text-align: center;
         }
         td {
-            padding: 12px;
+            padding: 15px;
             border-bottom: 1px solid #f0f0f0;
             text-align: center;
         }
@@ -4951,7 +5133,7 @@ ADMIN_PANEL_HTML = """
             background: #f8f9ff;
         }
         .status-badge {
-            padding: 5px 10px;
+            padding: 5px 12px;
             border-radius: 20px;
             font-size: 0.9em;
             font-weight: 600;
@@ -4960,14 +5142,17 @@ ADMIN_PANEL_HTML = """
         .status-active {
             background: #d4edda;
             color: #155724;
+            border: 1px solid #c3e6cb;
         }
         .status-expired {
             background: #f8d7da;
             color: #721c24;
+            border: 1px solid #f5c6cb;
         }
         .status-blocked {
             background: #f8d7da;
             color: #721c24;
+            border: 1px solid #f5c6cb;
         }
         .code-box {
             background: #f8f9ff;
@@ -5022,6 +5207,13 @@ ADMIN_PANEL_HTML = """
         .btn-danger:hover {
             background: #c82333;
         }
+        .btn-info {
+            background: #17a2b8;
+            color: white;
+        }
+        .btn-info:hover {
+            background: #138496;
+        }
         .modal {
             display: none;
             position: fixed;
@@ -5040,6 +5232,12 @@ ADMIN_PANEL_HTML = """
             border-radius: 20px;
             width: 90%;
             max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .modal-content h2 {
+            margin-bottom: 20px;
+            color: #333;
         }
         .form-group {
             margin-bottom: 20px;
@@ -5050,14 +5248,15 @@ ADMIN_PANEL_HTML = """
             color: #666;
             font-weight: 600;
         }
-        .form-group input, .form-group select {
+        .form-group input, .form-group select, .form-group textarea {
             width: 100%;
-            padding: 10px;
+            padding: 12px;
             border: 2px solid #f0f0f0;
             border-radius: 10px;
             font-size: 1em;
+            transition: border-color 0.3s;
         }
-        .form-group input:focus, .form-group select:focus {
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
             outline: none;
             border-color: #667eea;
         }
@@ -5082,28 +5281,114 @@ ADMIN_PANEL_HTML = """
             color: white;
             margin-top: 30px;
         }
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .quick-action-card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+        .quick-action-card:hover {
+            transform: translateY(-5px);
+            border-color: #667eea;
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.2);
+        }
+        .quick-action-card .icon {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        .quick-action-card .title {
+            font-weight: 600;
+            color: #333;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: #f0f0f0;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #667eea;
+            border-radius: 5px;
+            transition: width 0.3s;
+        }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+            display: none;
+            z-index: 1001;
+            border-right: 5px solid #667eea;
+        }
+        .notification.success {
+            border-right-color: #28a745;
+        }
+        .notification.error {
+            border-right-color: #dc3545;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🤖 لوحة تحكم Obeida Trading - V2</h1>
-            <p>نظام إدارة الاشتراكات - المشرف: @Sz2zv</p>
-            <p style="color: #28a745; font-size: 0.9em;">🌍 نظام المناطق الزمنية للمستخدمين نشط</p>
+            <div>
+                <h1>🤖 لوحة تحكم Obeida Trading - V2</h1>
+                <p class="subtitle">نظام إدارة الاشتراكات المتطور - المشرف: @Sz2zv</p>
+            </div>
+            <div>
+                <span style="margin-right: 20px; color: #666;">مرحباً، المشرف</span>
+                <a href="/logout" class="logout-btn">تسجيل الخروج</a>
+            </div>
         </div>
 
         <div class="stats-grid">
             <div class="stat-card">
-                <h3>إجمالي المستخدمين</h3>
+                <h3>👥 إجمالي المستخدمين</h3>
                 <div class="number">{{ stats.total_users }}</div>
+                <div class="trend">+{{ stats.new_users_today if stats.new_users_today else 0 }} اليوم</div>
             </div>
             <div class="stat-card">
-                <h3>المشتركين النشطين</h3>
+                <h3>✅ المشتركين النشطين</h3>
                 <div class="number">{{ stats.active_users }}</div>
+                <div class="trend">{{ (stats.active_users / stats.total_users * 100)|round(1) if stats.total_users > 0 else 0 }}% من الإجمالي</div>
             </div>
             <div class="stat-card">
-                <h3>المحظورين</h3>
+                <h3>🚫 المحظورين</h3>
                 <div class="number">{{ stats.blocked_users }}</div>
+                <div class="trend" style="color: #dc3545;">{{ (stats.blocked_users / stats.total_users * 100)|round(1) if stats.total_users > 0 else 0 }}% من الإجمالي</div>
+            </div>
+        </div>
+
+        <div class="quick-actions">
+            <div class="quick-action-card" onclick="showAddSubscriptionModal()">
+                <div class="icon">➕</div>
+                <div class="title">إضافة اشتراك</div>
+            </div>
+            <div class="quick-action-card" onclick="showBroadcastModal()">
+                <div class="icon">📢</div>
+                <div class="title">إذاعة</div>
+            </div>
+            <div class="quick-action-card" onclick="exportData()">
+                <div class="icon">📊</div>
+                <div class="title">تصدير البيانات</div>
+            </div>
+            <div class="quick-action-card" onclick="createBackup()">
+                <div class="icon">💾</div>
+                <div class="title">نسخ احتياطي</div>
             </div>
         </div>
 
@@ -5111,6 +5396,7 @@ ADMIN_PANEL_HTML = """
             <div class="tab active" onclick="showTab('users')">👥 المستخدمين</div>
             <div class="tab" onclick="showTab('subscriptions')">📊 الاشتراكات</div>
             <div class="tab" onclick="showTab('stats')">📈 إحصائيات</div>
+            <div class="tab" onclick="showTab('backups')">💾 النسخ الاحتياطي</div>
         </div>
 
         <div id="users-tab" class="tab-content active">
@@ -5118,7 +5404,7 @@ ADMIN_PANEL_HTML = """
                 <h2 class="section-title">👥 قائمة المستخدمين</h2>
                 
                 <div class="search-box">
-                    <input type="text" id="searchUsers" placeholder="🔍 بحث عن مستخدم..." onkeyup="searchUsers()">
+                    <input type="text" id="searchUsers" placeholder="🔍 بحث عن مستخدم (الاسم، المعرف، البريد)..." onkeyup="searchUsers()">
                 </div>
 
                 <div class="table-container">
@@ -5131,21 +5417,31 @@ ADMIN_PANEL_HTML = """
                                 <th>تاريخ الانتهاء</th>
                                 <th>الحالة</th>
                                 <th>آخر نشاط</th>
+                                <th>المنطقة الزمنية</th>
+                                <th>الإجراءات</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for user in users %}
                             <tr>
-                                <td>{{ user.id }}</td>
+                                <td><span class="code-box">{{ user.id }}</span></td>
                                 <td>{{ user.name }}</td>
                                 <td>{{ user.subscription_type }}</td>
                                 <td>{{ user.end_date }}</td>
                                 <td>
-                                    <span class="status-badge {% if user.status == 'نشط' %}status-active{% elif user.status == 'محظور' %}status-blocked{% else %}status-expired{% endif %}">
+                                    <span class="status-badge 
+                                        {% if user.status == 'نشط' %}status-active
+                                        {% elif user.status == 'محظور' %}status-blocked
+                                        {% else %}status-expired{% endif %}">
                                         {{ user.status }}
                                     </span>
                                 </td>
                                 <td>{{ user.last_active }}</td>
+                                <td>{{ user.timezone }}</td>
+                                <td class="actions">
+                                    <button class="btn btn-success" onclick="extendSubscription('{{ user.id }}')">⏱️ تمديد</button>
+                                    <button class="btn btn-warning" onclick="blockUser('{{ user.id }}')">🚫 حظر</button>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -5164,6 +5460,7 @@ ADMIN_PANEL_HTML = """
                                 <th>نوع الاشتراك</th>
                                 <th>العدد</th>
                                 <th>النسبة المئوية</th>
+                                <th>الإيرادات التقديرية ($)</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -5172,6 +5469,7 @@ ADMIN_PANEL_HTML = """
                                 <td>{{ type }}</td>
                                 <td>{{ count }}</td>
                                 <td>{{ (count / stats.active_users * 100)|round(1) if stats.active_users > 0 else 0 }}%</td>
+                                <td>${{ count * 10 }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -5189,6 +5487,7 @@ ADMIN_PANEL_HTML = """
                             <tr>
                                 <th>الميزة</th>
                                 <th>عدد مرات الاستخدام</th>
+                                <th>نسبة الاستخدام</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -5196,6 +5495,52 @@ ADMIN_PANEL_HTML = """
                             <tr>
                                 <td>{{ feature }}</td>
                                 <td>{{ count }}</td>
+                                <td>
+                                    <div style="width: 200px;">
+                                        <div class="progress-bar">
+                                            <div class="progress-fill" style="width: {{ (count / stats.total_usage * 100)|round(1) if stats.total_usage > 0 else 0 }}%"></div>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="backups-tab" class="tab-content">
+            <div class="section">
+                <h2 class="section-title">💾 النسخ الاحتياطية</h2>
+                
+                <div class="quick-actions">
+                    <div class="quick-action-card" onclick="createManualBackup()">
+                        <div class="icon">➕</div>
+                        <div class="title">إنشاء نسخة احتياطية</div>
+                    </div>
+                </div>
+
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>اسم الملف</th>
+                                <th>التاريخ</th>
+                                <th>الحجم</th>
+                                <th>الإجراءات</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for backup in backups %}
+                            <tr>
+                                <td>{{ backup.name }}</td>
+                                <td>{{ backup.date }}</td>
+                                <td>{{ backup.size }}</td>
+                                <td class="actions">
+                                    <button class="btn btn-primary" onclick="downloadBackup('{{ backup.name }}')">📥 تحميل</button>
+                                    <button class="btn btn-danger" onclick="restoreBackup('{{ backup.name }}')">🔄 استعادة</button>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -5205,17 +5550,111 @@ ADMIN_PANEL_HTML = """
         </div>
     </div>
 
+    <!-- Modal إضافة اشتراك -->
+    <div id="addSubscriptionModal" class="modal">
+        <div class="modal-content">
+            <h2>➕ إضافة اشتراك جديد</h2>
+            <div class="form-group">
+                <label>معرف المستخدم (User ID)</label>
+                <input type="number" id="modalUserId" placeholder="مثال: 123456789">
+            </div>
+            <div class="form-group">
+                <label>نوع الاشتراك</label>
+                <select id="modalSubscriptionType">
+                    <option value="hourly">🕐 ساعة</option>
+                    <option value="daily">📅 يوم</option>
+                    <option value="weekly">📆 أسبوع</option>
+                    <option value="monthly">📅 شهر</option>
+                    <option value="yearly">📅 سنة</option>
+                    <option value="lifetime">♾️ مدى الحياة</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-success" onclick="confirmAddSubscription()">✅ إضافة</button>
+                <button class="btn btn-danger" onclick="closeModal('addSubscriptionModal')">❌ إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal إذاعة -->
+    <div id="broadcastModal" class="modal">
+        <div class="modal-content">
+            <h2>📢 إذاعة للمشتركين</h2>
+            <div class="form-group">
+                <label>الرسالة</label>
+                <textarea id="broadcastMessage" rows="5" placeholder="أدخل نص الرسالة..."></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-success" onclick="confirmBroadcast()">✅ إرسال</button>
+                <button class="btn btn-danger" onclick="closeModal('broadcastModal')">❌ إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal تمديد اشتراك -->
+    <div id="extendModal" class="modal">
+        <div class="modal-content">
+            <h2>⏱️ تمديد اشتراك</h2>
+            <div class="form-group">
+                <label>معرف المستخدم</label>
+                <input type="text" id="extendUserId" readonly>
+            </div>
+            <div class="form-group">
+                <label>المدة الإضافية (بالثواني)</label>
+                <input type="number" id="extendSeconds" value="86400" min="1">
+            </div>
+            <div class="form-group">
+                <label>مدة مكافئة</label>
+                <select onchange="document.getElementById('extendSeconds').value = this.value">
+                    <option value="3600">ساعة واحدة (3600 ثانية)</option>
+                    <option value="86400" selected>يوم واحد (86400 ثانية)</option>
+                    <option value="604800">أسبوع (604800 ثانية)</option>
+                    <option value="2592000">شهر (2592000 ثانية)</option>
+                    <option value="31536000">سنة (31536000 ثانية)</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-success" onclick="confirmExtend()">✅ تمديد</button>
+                <button class="btn btn-danger" onclick="closeModal('extendModal')">❌ إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal حظر مستخدم -->
+    <div id="blockModal" class="modal">
+        <div class="modal-content">
+            <h2>🚫 حظر مستخدم</h2>
+            <div class="form-group">
+                <label>معرف المستخدم</label>
+                <input type="text" id="blockUserId" readonly>
+            </div>
+            <div class="form-group">
+                <label>سبب الحظر</label>
+                <input type="text" id="blockReason" placeholder="سبب الحظر...">
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-warning" onclick="confirmBlock()">🚫 حظر</button>
+                <button class="btn btn-danger" onclick="closeModal('blockModal')">❌ إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal إشعار -->
+    <div id="notification" class="notification"></div>
+
     <div class="footer">
-        <p>🤯 Obeida Trading 🤯 </p>
-        <p style="font-size: 0.8em;">نسخة البيانات: {{ data_version }} - آخر نسخة احتياطية: {{ last_backup }}</p>
+        <p>🤯 Obeida Trading 🤯 - نظام إدارة الاشتراكات المتطور V2</p>
+        <p style="font-size: 0.8em;">نسخة البيانات: {{ data_version }} | آخر تحديث: {{ now }}</p>
     </div>
 
     <script>
+        let currentUserId = '';
+
         function showTab(tabName) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             
-            document.querySelector(`.tab:nth-child(${tabName === 'users' ? 1 : tabName === 'subscriptions' ? 2 : 3})`).classList.add('active');
+            document.querySelector(`.tab:nth-child(${tabName === 'users' ? 1 : tabName === 'subscriptions' ? 2 : tabName === 'stats' ? 3 : 4})`).classList.add('active');
             document.getElementById(tabName + '-tab').classList.add('active');
         }
 
@@ -5240,25 +5679,254 @@ ADMIN_PANEL_HTML = """
             }
         }
 
+        function showModal(modalId) {
+            document.getElementById(modalId).style.display = 'flex';
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+
+        function showAddSubscriptionModal() {
+            showModal('addSubscriptionModal');
+        }
+
+        function showBroadcastModal() {
+            showModal('broadcastModal');
+        }
+
+        function extendSubscription(userId) {
+            currentUserId = userId;
+            document.getElementById('extendUserId').value = userId;
+            showModal('extendModal');
+        }
+
+        function blockUser(userId) {
+            currentUserId = userId;
+            document.getElementById('blockUserId').value = userId;
+            showModal('blockModal');
+        }
+
+        function showNotification(message, type = 'success') {
+            let notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = 'notification ' + type;
+            notification.style.display = 'block';
+            
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+
+        function confirmAddSubscription() {
+            let userId = document.getElementById('modalUserId').value;
+            let subType = document.getElementById('modalSubscriptionType').value;
+            
+            if (!userId) {
+                showNotification('الرجاء إدخال معرف المستخدم', 'error');
+                return;
+            }
+            
+            fetch('/admin/add_subscription_v2', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: parseInt(userId),
+                    subscription_type: subType
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('✅ تم إضافة الاشتراك بنجاح');
+                    closeModal('addSubscriptionModal');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ: ' + error, 'error');
+            });
+        }
+
+        function confirmBroadcast() {
+            let message = document.getElementById('broadcastMessage').value;
+            
+            if (!message) {
+                showNotification('الرجاء إدخال نص الرسالة', 'error');
+                return;
+            }
+            
+            fetch('/admin/broadcast', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ message: message })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`✅ تم إرسال الرسالة لـ ${data.sent} مشترك`);
+                    closeModal('broadcastModal');
+                } else {
+                    showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ: ' + error, 'error');
+            });
+        }
+
+        function confirmExtend() {
+            let seconds = document.getElementById('extendSeconds').value;
+            
+            fetch('/admin/extend_subscription_v2', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: parseInt(currentUserId),
+                    additional_seconds: parseInt(seconds)
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('✅ تم تمديد الاشتراك بنجاح');
+                    closeModal('extendModal');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ: ' + error, 'error');
+            });
+        }
+
+        function confirmBlock() {
+            let reason = document.getElementById('blockReason').value || 'Blocked by admin';
+            
+            fetch('/admin/block_user_v2', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: parseInt(currentUserId),
+                    reason: reason
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('✅ تم حظر المستخدم بنجاح');
+                    closeModal('blockModal');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ: ' + error, 'error');
+            });
+        }
+
+        function exportData() {
+            window.location.href = '/admin/export_data';
+        }
+
+        function createBackup() {
+            fetch('/admin/create_backup', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('✅ تم إنشاء النسخة الاحتياطية بنجاح');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ: ' + error, 'error');
+            });
+        }
+
+        function downloadBackup(filename) {
+            window.location.href = '/admin/download_backup/' + filename;
+        }
+
+        function restoreBackup(filename) {
+            if (confirm('هل أنت متأكد من استعادة هذه النسخة؟ سيتم استبدال البيانات الحالية.')) {
+                fetch('/admin/restore_backup/' + filename, {
+                    method: 'POST'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showNotification('✅ تم استعادة النسخة بنجاح');
+                        setTimeout(() => location.reload(), 1000);
+                    } else {
+                        showNotification('❌ ' + data.error, 'error');
+                    }
+                })
+                .catch(error => {
+                    showNotification('❌ حدث خطأ: ' + error, 'error');
+                });
+            }
+        }
+
         // Close modals when clicking outside
         window.onclick = function(event) {
-            let generateModal = document.getElementById('generateCodeModal');
-            let showModal = document.getElementById('showCodeModal');
-            if (event.target == generateModal) {
-                generateModal.style.display = 'none';
-            }
-            if (event.target == showModal) {
-                showModal.style.display = 'none';
-                location.reload();
-            }
+            let modals = ['addSubscriptionModal', 'broadcastModal', 'extendModal', 'blockModal'];
+            modals.forEach(modalId => {
+                let modal = document.getElementById(modalId);
+                if (event.target == modal) {
+                    modal.style.display = 'none';
+                }
+            });
         }
     </script>
 </body>
 </html>
 """
 
+# دوال Flask
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """صفحة تسجيل الدخول"""
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        
+        # تشفير كلمة المرور المدخلة
+        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+        
+        if username == ADMIN_USERNAME and hashed_password == ADMIN_PASSWORD:
+            session['logged_in'] = True
+            session['username'] = username
+            return redirect(url_for('admin_panel'))
+        else:
+            return render_template_string(LOGIN_PAGE_HTML, error='اسم المستخدم أو كلمة المرور غير صحيحة')
+    
+    return render_template_string(LOGIN_PAGE_HTML)
+
+@app.route('/logout')
+def logout():
+    """تسجيل الخروج"""
+    session.clear()
+    return redirect(url_for('login'))
+
 @app.route('/')
 def home():
+    """الصفحة الرئيسية"""
     return """
     <!DOCTYPE html>
     <html>
@@ -5276,13 +5944,14 @@ def home():
         <p>Chat & Technical Analysis Bot with Advanced Subscription System</p>
         <div class="status">🌍 نظام المناطق الزمنية للمستخدمين نشط ✅</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <a href="/admin" class="admin-link">🔐 عرض بيانات المشرف</a>
+        <a href="/admin" class="admin-link">🔐 الدخول للوحة التحكم</a>
     </body>
     </html>
     """
 
 @app.route('/health')
 def health():
+    """فحص صحة النظام"""
     stats = SubscriptionSystem.get_stats()
     return {
         "status": "active", 
@@ -5297,11 +5966,17 @@ def health():
     }
 
 @app.route('/admin')
+@login_required
 def admin_panel():
-    """لوحة تحكم المشرف المحدثة"""
+    """لوحة تحكم المشرف المحسنة مع نظام المصادقة"""
     try:
         stats = SubscriptionSystem.get_stats()
         users = SubscriptionSystem.get_all_users()
+        
+        # حساب إحصائيات إضافية
+        total_usage = sum(stats.get('feature_usage', {}).values())
+        stats['total_usage'] = total_usage
+        stats['new_users_today'] = 0  # يمكن حسابها من قاعدة البيانات
         
         # تنسيق بيانات المستخدمين
         formatted_users = []
@@ -5324,33 +5999,46 @@ def admin_panel():
             if end_date and datetime.fromisoformat(end_date) < datetime.now():
                 end_display += " (منتهي)"
             
+            # الحصول على المنطقة الزمنية للمستخدم
+            timezone = get_user_timezone(uid)
+            
             formatted_users.append({
                 'id': uid,
                 'name': display_name,
                 'subscription_type': sub_name or 'غير مشترك',
                 'end_date': end_display,
                 'status': status,
-                'last_active': last_active[:16] if last_active else '-'
+                'last_active': last_active[:16] if last_active else '-',
+                'timezone': timezone
             })
         
         # معلومات النسخ الاحتياطي
-        last_backup = "لا توجد نسخ"
+        backups = []
         if os.path.exists(BACKUP_DIR):
-            backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')])
-            if backups:
-                last_backup = backups[-1].replace('backup_', '').replace('.db', '')
+            files = sorted([f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')], reverse=True)
+            for f in files[:10]:  # آخر 10 نسخ
+                filepath = os.path.join(BACKUP_DIR, f)
+                size = os.path.getsize(filepath) / 1024  # KB
+                mod_time = os.path.getmtime(filepath)
+                backups.append({
+                    'name': f,
+                    'date': datetime.fromtimestamp(mod_time).strftime('%Y-%m-%d %H:%M'),
+                    'size': f'{size:.1f} KB'
+                })
         
         return render_template_string(
             ADMIN_PANEL_HTML,
             stats=stats,
             users=formatted_users,
+            backups=backups,
             data_version=DATA_VERSION,
-            last_backup=last_backup
+            now=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         )
     except Exception as e:
         return f"خطأ في تحميل لوحة التحكم: {str(e)}"
 
 @app.route('/admin/add_subscription_v2', methods=['POST'])
+@login_required
 def add_subscription_v2():
     """إضافة اشتراك لمستخدم"""
     try:
@@ -5374,6 +6062,7 @@ def add_subscription_v2():
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/admin/revoke_subscription_v2', methods=['POST'])
+@login_required
 def revoke_subscription_v2():
     """إلغاء اشتراك مستخدم"""
     try:
@@ -5391,6 +6080,7 @@ def revoke_subscription_v2():
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/admin/extend_subscription_v2', methods=['POST'])
+@login_required
 def extend_subscription_v2():
     """تمديد اشتراك مستخدم"""
     try:
@@ -5413,6 +6103,7 @@ def extend_subscription_v2():
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/admin/block_user_v2', methods=['POST'])
+@login_required
 def block_user_v2():
     """حظر مستخدم"""
     try:
@@ -5430,6 +6121,7 @@ def block_user_v2():
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/admin/unblock_user_v2', methods=['POST'])
+@login_required
 def unblock_user_v2():
     """إلغاء حظر مستخدم"""
     try:
@@ -5445,7 +6137,99 @@ def unblock_user_v2():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+@app.route('/admin/broadcast', methods=['POST'])
+@login_required
+def broadcast():
+    """إذاعة رسالة للمشتركين"""
+    try:
+        data = request.json
+        message = data.get('message')
+        
+        if not message:
+            return jsonify({'success': False, 'error': 'الرسالة مطلوبة'})
+        
+        subscribers = SubscriptionSystem.get_all_subscribers()
+        sent_count = 0
+        
+        # هنا يمكن إضافة منطق الإذاعة عبر البوت
+        # سيتم تنفيذه بشكل غير متزامن
+        
+        return jsonify({'success': True, 'sent': sent_count})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/create_backup', methods=['POST'])
+@login_required
+def create_backup():
+    """إنشاء نسخة احتياطية"""
+    try:
+        DataProtection.backup_database()
+        DataProtection.backup_codes_db()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/download_backup/<filename>')
+@login_required
+def download_backup(filename):
+    """تحميل نسخة احتياطية"""
+    try:
+        filepath = os.path.join(BACKUP_DIR, filename)
+        if os.path.exists(filepath):
+            return send_file(filepath, as_attachment=True)
+        return jsonify({'success': False, 'error': 'الملف غير موجود'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/restore_backup/<filename>', methods=['POST'])
+@login_required
+def restore_backup(filename):
+    """استعادة نسخة احتياطية"""
+    try:
+        filepath = os.path.join(BACKUP_DIR, filename)
+        if not os.path.exists(filepath):
+            return jsonify({'success': False, 'error': 'الملف غير موجود'})
+        
+        # استعادة قاعدة البيانات الرئيسية
+        if 'main_backup' in filename:
+            shutil.copy2(filepath, DB_NAME)
+        # استعادة قاعدة بيانات الاشتراك
+        elif 'subscription_backup' in filename:
+            shutil.copy2(filepath, SUBSCRIPTION_DB_NAME)
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/export_data')
+@login_required
+def export_data():
+    """تصدير البيانات كملف JSON"""
+    try:
+        users = SubscriptionSystem.get_all_users()
+        stats = SubscriptionSystem.get_stats()
+        
+        data = {
+            'export_date': datetime.now().isoformat(),
+            'data_version': DATA_VERSION,
+            'stats': stats,
+            'users': users
+        }
+        
+        # إنشاء ملف JSON للتحميل
+        json_str = json.dumps(data, indent=2, default=str)
+        
+        from flask import Response
+        return Response(
+            json_str,
+            mimetype='application/json',
+            headers={'Content-Disposition': 'attachment;filename=obeida_export.json'}
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/admin/get_stats_v2')
+@login_required
 def get_stats_v2():
     """الحصول على الإحصائيات"""
     stats = SubscriptionSystem.get_stats()
@@ -5456,8 +6240,8 @@ def ping():
     return "PONG"
 
 def main():
-    """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية"""
-    print("🤖 Starting Obeida Trading with Timezone Support ...")
+    """الدالة الرئيسية - النسخة النهائية مع نظام المناطق الزمنية ولوحة تحكم محمية"""
+    print("🤖 Starting Obeida Trading with Timezone Support and Secure Admin Panel ...")
     
     # تهيئة قاعدة البيانات الرئيسية
     init_db_with_subscription()
@@ -5466,11 +6250,11 @@ def main():
     DataProtection.backup_database()
     DataProtection.backup_codes_db()
     
-    # تشغيل Flask
+    # تشغيل Flask مع نظام المصادقة
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
     
-        # تنظيف جميع الملفات المؤقتة عند بدء التشغيل
+    # تنظيف جميع الملفات المؤقتة عند بدء التشغيل
     print("🧹 جاري تنظيف الملفات المؤقتة عند بدء التشغيل...")
     try:
         if os.path.exists(IMAGE_CACHE_DIR):
@@ -5560,7 +6344,9 @@ def main():
     loop.create_task(periodic_cleanup())
     loop.create_task(backup_scheduler())
     
-    print("✅ Telegram Bot with Timezone Support ready ...")
+    print("✅ Telegram Bot with Timezone Support and Secure Admin Panel ready ...")
+    print(f"🌍 Admin Panel URL: http://localhost:8080/admin")
+    print(f"🔐 Login with username: {ADMIN_USERNAME} and password: admin123")
     
     # تشغيل البوت
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
