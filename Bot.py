@@ -2665,7 +2665,7 @@ async def handle_recommendation_selection(update: Update, context: ContextTypes.
     return RECOMMENDATION_MODE
 
 async def analyze_chart_image(update, context, image_path, candle, trade_time, symbol):
-    """تحليل صورة الشارت مع القوانين الجديدة والتعديلات الثلاثة والنسخة الهجومية V7.4 (التشريح الهيكلي الصارم) - نسخة الأولوية للأنجح"""
+    """تحليل صورة الشارت مع القوانين الجديدة والتعديلات الثلاثة والنسخة الهجومية V7.5 FINAL (التشريح الهيكلي الصارم مع فلاتر الأمان المتقدمة)"""
     try:
         user_id = update.effective_user.id
         prev_context, prev_time = get_analysis_context(user_id)
@@ -2760,7 +2760,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         safety_buffer = 3  # القيمة الافتراضية
         
         if is_trap_minute and seconds_remaining < 15:
-            # بدلاً من المنع الكامل، اطلب من الموديل البحث عن "تصفية العقود"
             market_mode = "SUPER_CONSERVATIVE"
             safety_buffer = 5  # زيادة مسافة الأمان لـ 5 نقاط بدلاً من 3
             last_minute_status = "VOLATILITY_EXPANSION_WITH_EXTRA_BUFFER"
@@ -2770,7 +2769,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         # إضافة متغير "مفتاح القوة" لإلغاء القيود
         market_mode = "AGGRESSIVE" if candle.startswith('S') or (is_trap_minute and seconds_remaining < 15 and momentum_boost) else "CONSERVATIVE"
         
-        # دوال مساعدة لبروتوكول التشريح الهيكلي V7.4
+        # دوال مساعدة لبروتوكول التشريح الهيكلي V7.5
         def calculate_breakout_force(candle_volume, avg_volume):
             """حساب قوة الكسر الهيكلي"""
             if avg_volume > 0:
@@ -2797,214 +2796,297 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             return liquidity_layers
             
         # ============================================
-        # [تعديل V7.4 PRO النهائي] - فلتر الأولوية القصوى والمسح الاستبعادي الكامل
+        # [تعديل V7.5 FINAL] - خوارزمية المسح الاستبعادي الكامل (Complete Exclusion Scan)
         # ============================================
-        def get_final_verdict(distance_to_peak, breakout_force, body_ratio, wick_ratio, seconds_remaining, is_trap_minute, momentum_boost, volume_ratio=1.0):
+        def exclusionary_scan(distance_to_peak, distance_to_bottom, is_at_historical_peak, is_at_historical_bottom, 
+                              candle_body_ratio, candle_wick_ratio, volume_ratio, avg_volume_ratio, 
+                              engulfing_ratio, is_trap_minute, seconds_remaining, momentum_boost, 
+                              current_direction, breakout_force):
             """
-            خوارزمية الفلتر الاستبعادي النهائي - الأولوية للأكثر نجاحاً
-            المسح الأمني الكامل قبل اتخاذ أي قرار
-            نظام الأولويات: الأمان الرقمي > قوة الحجم > التوقيت > شكل الشمعة
+            خوارزمية المسح الاستبعادي الكامل (V7.5 FINAL)
+            الهدف: منع أي صفقة خاطئة قبل الوصول إلى مرحلة القرار
+            تعمل كـ "حواجز أمان" متسلسلة - إذا فشل أي شرط، يتم رفض الصفقة فوراً
             """
-            # 🛑 الحاجز الأول والأهم: أمان السيولة وقاعدة الـ 5 نقاط الرقمية
-            # الأولوية الرقمية: قراءة الأرقام قبل الأشكال
-            if distance_to_peak < 5:  # السعر ضمن نطاق 5 نقاط من قمة تاريخية
-                # فحص الثالوث المؤسسي - الشرط الوحيد للشراء
-                if breakout_force >= 1.5 and body_ratio >= 0.9:
-                    return {
-                        "decision": "STRUCTURAL_BREAKOUT 💥",
-                        "success_rate": 98,
-                        "reason": "كسر هيكلي حقيقي: ثالوث مؤسسي مكتمل (مسافة ≥5 نقاط + حجم ≥1.5x + جسم >90%)",
-                        "action": "MOMENTUM_ENTRY",
-                        "priority": "HIGHEST_SAFETY"
-                    }
-                else:
-                    # فخ سيولة - تحويل الشراء لبيع فوراً (الأولوية للصفقة الانعكاسية)
-                    return {
-                        "decision": "LIQUIDITY_TRAP_REVERSAL 🔴",
-                        "success_rate": 95,
-                        "reason": "فخ سيولة: قمة تاريخية قريبة (<5 نقاط) بدون ثالوث مؤسسي - تحويل الشراء لبيع فوراً",
-                        "action": "SELL_REVERSAL",
-                        "priority": "IMMEDIATE_REVERSAL"
-                    }
             
-            # 🛑 الحاجز الثاني: إجهاد الموجة (شمعة ضخمة جداً)
-            if breakout_force > 3.0:  # الشمعة الحالية > 3 أضعاف المتوسط
-                return {
-                    "decision": "EXHAUSTION_HOLD 🟡",
-                    "success_rate": 80,
-                    "reason": "إجهاد سعري: الشمعة الحالية > 3 أضعاف المتوسط - انتظر تصحيح",
-                    "action": "WAIT_FOR_CORRECTION",
-                    "priority": "EXHAUSTION_ALERT"
-                }
+            reasons = []
+            passed = True
+            reversal_signal = None
             
-            # 🛑 الحاجز الثالث: دقائق الغدر - نافذة التنفيذ الذهبية
-            # نافذة التنفيذ المثالية: بين الثانية 05 والثانية 25 فقط
-            optimal_execution_window = 5 <= (60 - seconds_remaining) <= 25
+            # 🛑 الحاجز 1: فلتر "منطقة القتل الرقمية" - الأولوية القصوى (5 نقاط)
+            if is_at_historical_peak or distance_to_peak < 5:
+                # شرط الثالوث المؤسسي للشراء
+                if not (breakout_force >= 1.5 and candle_body_ratio >= 0.9 and distance_to_peak >= 5):
+                    passed = False
+                    reasons.append("فخ سيولة: قمة تاريخية بدون ثالوث مؤسسي")
+                    reversal_signal = "LIQUIDITY_TRAP_REVERSAL 🔴"
+                    return passed, reasons, reversal_signal
             
-            if is_trap_minute:
-                if seconds_remaining < 15 and not momentum_boost:
-                    return {
-                        "decision": "STRICT_HOLD 🟡",
-                        "success_rate": 90,
-                        "reason": "دقيقة غدر: وقت حرج بدون زخم كافي - انتظار",
-                        "action": "HOLD",
-                        "priority": "TIME_TRAP"
-                    }
-                elif seconds_remaining < 15 and momentum_boost and not optimal_execution_window:
-                    return {
-                        "decision": "CAUTION_HOLD 🟡",
-                        "success_rate": 75,
-                        "reason": "دقيقة غدر مع زخم لكن خارج نافذة التنفيذ المثالية (5-25 ثانية)",
-                        "action": "HOLD",
-                        "priority": "SUBOPTIMAL_TIMING"
-                    }
+            if is_at_historical_bottom or distance_to_bottom < 5:
+                # شرط الثالوث المؤسسي للبيع
+                if not (breakout_force >= 1.5 and candle_body_ratio >= 0.9 and distance_to_bottom >= 5):
+                    passed = False
+                    reasons.append("فخ سيولة: قاع تاريخي بدون ثالوث مؤسسي")
+                    reversal_signal = "LIQUIDITY_TRAP_REVERSAL 🟢"
+                    return passed, reasons, reversal_signal
             
-            # 🛑 الحاجز الرابع: رفض سعري (ذيول طويلة)
-            if wick_ratio > 0.6:  # ذيل > 60% من الشمعة
-                return {
-                    "decision": "REJECTION_HOLD 🟡",
-                    "success_rate": 85,
-                    "reason": "رفض سعري: ذيل طويل > 60% - انتظار تأكيد",
-                    "action": "HOLD",
-                    "priority": "PRICE_REJECTION"
-                }
+            # 🛑 الحاجز 2: قانون الابتلاع القاتل (50% Kill Switch)
+            if engulfing_ratio > 0.5:
+                # شمعة عكسية ابتلعت أكثر من 50% من الشمعة السابقة
+                passed = False
+                reasons.append(f"قانون الابتلاع: شمعة عكسية ابتلعت {engulfing_ratio*100:.0f}% من الشمعة السابقة")
+                reversal_signal = "IMMEDIATE_REVERSAL 🔄"
+                return passed, reasons, reversal_signal
             
-            # ✅ إذا اجتاز كل الحواجز، اسمح بالدخول مع تحديد الاتجاه
-            if body_ratio > 0.9 and breakout_force >= 1.3:
-                return {
-                    "decision": "MOMENTUM_ENTRY 🟢",
-                    "success_rate": 98,
-                    "reason": "زخم حقيقي: جسم >90% + حجم ≥1.3x",
-                    "action": "BUY",
-                    "priority": "CONFIRMED_MOMENTUM"
-                }
-            else:
-                return {
-                    "decision": "CONSERVATIVE_HOLD 🟡",
-                    "success_rate": 70,
-                    "reason": "سيولة غير كافية - انتظار تأكيد أقوى",
-                    "action": "HOLD",
-                    "priority": "INSUFFICIENT_LIQUIDITY"
-                }
+            # 🛑 الحاجز 3: فلتر إجهاد الموجة (Exhaustion Filter)
+            if avg_volume_ratio > 3.0:  # الشمعة الحالية > 3 أضعاف المتوسط
+                passed = False
+                reasons.append(f"إجهاد سعري: الشمعة الحالية أكبر بـ {avg_volume_ratio:.1f}x من المتوسط")
+                reversal_signal = "EXHAUSTION_HOLD 🟡"
+                return passed, reasons, reversal_signal
+            
+            # 🛑 الحاجز 4: فلتر الرفض السعري (Price Rejection)
+            if candle_wick_ratio > 0.6:  # ذيل > 60% من الشمعة
+                passed = False
+                reasons.append(f"رفض سعري: ذيل طويل بنسبة {candle_wick_ratio*100:.0f}%")
+                reversal_signal = "REJECTION_HOLD 🟡"
+                return passed, reasons, reversal_signal
+            
+            # 🛑 الحاجز 5: فلتر التوقيت (نافذة التنفيذ الذهبية)
+            seconds_passed = 60 - seconds_remaining
+            if candle.startswith('S'):  # فريمات الثواني
+                # النافذة الذهبية: من 5 إلى 25 ثانية فقط
+                if not (5 <= seconds_passed <= 25):
+                    passed = False
+                    reasons.append(f"خارج نافذة التنفيذ الذهبية: الثواني المنقضية = {seconds_passed} (يجب أن تكون بين 5-25)")
+                    reversal_signal = "TIMING_HOLD 🟡"
+                    return passed, reasons, reversal_signal
+            else:  # فريمات الدقائق
+                # النافذة الذهبية: من 10 إلى 40 ثانية
+                if not (10 <= seconds_passed <= 40):
+                    passed = False
+                    reasons.append(f"خارج نافذة التنفيذ الذهبية: الثواني المنقضية = {seconds_passed} (يجب أن تكون بين 10-40)")
+                    reversal_signal = "TIMING_HOLD 🟡"
+                    return passed, reasons, reversal_signal
+            
+            # 🛑 الحاجز 6: فلتر دقائق الغدر (Trap Minutes)
+            if is_trap_minute and seconds_remaining < 15 and not momentum_boost:
+                passed = False
+                reasons.append("دقيقة غدر: وقت حرج بدون زخم كافي")
+                reversal_signal = "TRAP_MINUTE_HOLD 🟡"
+                return passed, reasons, reversal_signal
+            
+            # ✅ إذا اجتاز جميع الحواجز
+            return passed, reasons, reversal_signal
 
         # ============================================
-        # [تعديل V7.4 PRO] - معادلة ترجيح النجاح المتقدمة
+        # [تعديل V7.5 FINAL] - خوارزمية القرار المتقدمة مع الأولوية للانعكاس
         # ============================================
-        def calculate_success_weighted_score(distance_safety, volume_force, timeframe_alignment, candle_shape):
+        def get_success_driven_decision_v7_5(is_at_historical_peak, is_at_historical_bottom, 
+                                             breakout_points, breakout_force, 
+                                             candle_body_ratio, candle_wick_ratio, 
+                                             volume_ratio, avg_volume_ratio,
+                                             engulfing_ratio, distance_to_peak, distance_to_bottom,
+                                             current_direction, has_fvg):
             """
-            معادلة ترجيح النجاح المتقدمة (Weighted Success Score)
-            الأولويات: 40% لمسافة الأمان | 30% لقوة الحجم | 20% لتوافق الإطارات | 10% لشكل الشمعة
-            هذه المعادلة تضمن اختيار الأنجح دائماً بناءً على الأهمية وليس العدد
+            خوارزمية القرار المتقدمة V7.5 FINAL
+            الأولوية: الانعكاس > الكسر الحقيقي > الاحتفاظ
+            تعتمد على فكرة "السيولة تسبق الزخم"
             """
-            # مسافة الأمان (40%)
-            distance_score = min(40, distance_safety * 4)  # 10 نقاط = 40 درجة
             
-            # قوة الحجم (30%)
-            volume_score = min(30, volume_force * 20)  # 1.5x = 30 درجة
+            # ✅ الخطوة 1: التحقق من الانعكاس (Reversal Priority)
+            # فحص الانعكاس من القمم التاريخية
+            if is_at_historical_peak or distance_to_peak < 5:
+                # إذا كان هناك ذيل طويل أو ابتلاع عكسي
+                if candle_wick_ratio > 0.4 or engulfing_ratio > 0.5:
+                    return {
+                        "decision": "LIQUIDITY_TRAP_REVERSAL 🔄",
+                        "action": "SELL_REVERSAL 🔴",
+                        "confidence": 95,
+                        "reason": f"فخ سيولة: قمة تاريخية مع { 'ذيل طويل' if candle_wick_ratio > 0.4 else 'ابتلاع عكسي' }",
+                        "success_rate": "95%",
+                        "entry_type": "REVERSAL_AT_PEAK_MINUS_2"
+                    }
             
-            # توافق الإطارات (20%)
-            timeframe_score = min(20, timeframe_alignment * 5)  # 4 إطارات = 20 درجة
+            # فحص الانعكاس من القيعان التاريخية
+            if is_at_historical_bottom or distance_to_bottom < 5:
+                if candle_wick_ratio > 0.4 or engulfing_ratio > 0.5:
+                    return {
+                        "decision": "LIQUIDITY_TRAP_REVERSAL 🔄",
+                        "action": "BUY_REVERSAL 🟢",
+                        "confidence": 95,
+                        "reason": f"فخ سيولة: قاع تاريخي مع { 'ذيل طويل' if candle_wick_ratio > 0.4 else 'ابتلاع عكسي' }",
+                        "success_rate": "95%",
+                        "entry_type": "REVERSAL_AT_BOTTOM_PLUS_2"
+                    }
+            
+            # ✅ الخطوة 2: التحقق من الكسر الحقيقي (Breakout Priority)
+            # الكسر من القمم التاريخية (الثالوث المؤسسي)
+            if is_at_historical_peak or distance_to_peak < 8:
+                if (breakout_points >= 5 and candle_body_ratio >= 0.9 and 
+                    volume_ratio >= 1.5 and has_fvg):
+                    return {
+                        "decision": "STRUCTURAL_BREAKOUT 💥",
+                        "action": "BREAKOUT_BUY 🟢",
+                        "confidence": 98,
+                        "reason": "كسر هيكلي حقيقي: ثالوث مؤسسي مكتمل (≥5 نقاط + حجم ≥1.5x + جسم >90% + FVG)",
+                        "success_rate": "98%",
+                        "entry_type": "RETEST_ENTRY"
+                    }
+            
+            # الكسر من القيعان التاريخية (الثالوث المؤسسي)
+            if is_at_historical_bottom or distance_to_bottom < 8:
+                if (breakout_points >= 5 and candle_body_ratio >= 0.9 and 
+                    volume_ratio >= 1.5 and has_fvg):
+                    return {
+                        "decision": "STRUCTURAL_BREAKOUT 💥",
+                        "action": "BREAKOUT_SELL 🔴",
+                        "confidence": 98,
+                        "reason": "كسر هيكلي حقيقي: ثالوث مؤسسي مكتمل (≥5 نقاط + حجم ≥1.5x + جسم >90% + FVG)",
+                        "success_rate": "98%",
+                        "entry_type": "RETEST_ENTRY"
+                    }
+            
+            # ✅ الخطوة 3: الزخم العادي في منتصف الطريق
+            # شراء في منتصف الطريق
+            if current_direction == "UP" and volume_ratio >= 1.3 and candle_body_ratio > 0.8:
+                return {
+                    "decision": "MOMENTUM_ENTRY 🟢",
+                    "action": "BUY 🟢",
+                    "confidence": 90,
+                    "reason": f"زخم شراء قوي: حجم {volume_ratio:.1f}x + جسم {candle_body_ratio*100:.0f}%",
+                    "success_rate": "90%",
+                    "entry_type": "RETEST_ENTRY"
+                }
+            
+            # بيع في منتصف الطريق
+            if current_direction == "DOWN" and volume_ratio >= 1.3 and candle_body_ratio > 0.8:
+                return {
+                    "decision": "MOMENTUM_ENTRY 🔴",
+                    "action": "SELL 🔴",
+                    "confidence": 90,
+                    "reason": f"زخم بيع قوي: حجم {volume_ratio:.1f}x + جسم {candle_body_ratio*100:.0f}%",
+                    "success_rate": "90%",
+                    "entry_type": "RETEST_ENTRY"
+                }
+            
+            # ✅ الخطوة 4: إذا لم يتحقق أي شرط - احتفاظ
+            return {
+                "decision": "HOLD 🟡",
+                "action": "HOLD",
+                "confidence": 70,
+                "reason": "لم تتحقق شروط الكسر أو الانعكاس - انتظار تأكيد أقوى",
+                "success_rate": "70%",
+                "entry_type": "NO_ENTRY"
+            }
+
+        # ============================================
+        # [تعديل V7.5 FINAL] - فلتر نوع السوق (OTC vs Real Market)
+        # ============================================
+        def market_type_filter(candle_wick_ratio, is_at_historical_level, volume_ratio, candle_body_ratio):
+            """
+            فلتر نوع السوق للتمييز بين OTC والسوق الحقيقي
+            في OTC، الفتايل الطويلة عند المستويات التاريخية تعتبر فخاخ سيولة
+            """
+            # إذا كان السوق OTC (افتراضي للفريمات السريعة)
+            if candle.startswith('S'):
+                # في OTC، الفتايل الطويلة عند المستويات = فخ سيولة
+                if is_at_historical_level and candle_wick_ratio > 0.3:
+                    return {
+                        "is_trap": True,
+                        "reason": "OTC Trap: فتل طويل عند مستوى تاريخي",
+                        "action": "REVERSAL"
+                    }
+                
+                # في OTC، الشموع الضخمة جداً = تفريغ عقود
+                if volume_ratio > 2.5 and candle_body_ratio > 0.9 and is_at_historical_level:
+                    return {
+                        "is_trap": True,
+                        "reason": "OTC Distribution: حجم ضخم عند قمة = تفريغ",
+                        "action": "REVERSAL"
+                    }
+            
+            # السوق العادي
+            return {
+                "is_trap": False,
+                "reason": "Normal Market",
+                "action": "NORMAL"
+            }
+
+        # ============================================
+        # [تعديل V7.5 FINAL] - معادلة ترجيح النجاح المتقدمة
+        # ============================================
+        def calculate_success_weighted_score(distance_safety, volume_force, timeframe_alignment, candle_shape, reversal_potential):
+            """
+            معادلة ترجيح النجاح المتقدمة (Weighted Success Score) V7.5 FINAL
+            الأولويات المعدلة: 35% لمسافة الأمان | 25% لقوة الحجم | 20% للانعكاس المحتمل | 10% لتوافق الإطارات | 10% لشكل الشمعة
+            """
+            # مسافة الأمان (35%)
+            distance_score = min(35, distance_safety * 3.5)  # 10 نقاط = 35 درجة
+            
+            # قوة الحجم (25%)
+            volume_score = min(25, volume_force * 16.67)  # 1.5x = 25 درجة
+            
+            # إمكانية الانعكاس (20%) - جديد
+            reversal_score = min(20, reversal_potential * 10)  # 2 = 20 درجة
+            
+            # توافق الإطارات (10%)
+            timeframe_score = min(10, timeframe_alignment * 2.5)  # 4 إطارات = 10 درجة
             
             # شكل الشمعة (10%)
             shape_score = min(10, candle_shape * 2)  # 5/5 = 10 درجات
             
-            total_score = distance_score + volume_score + timeframe_score + shape_score
+            total_score = distance_score + volume_score + reversal_score + timeframe_score + shape_score
             
             return {
                 "score": min(100, max(0, total_score)),
                 "breakdown": {
                     "distance": distance_score,
                     "volume": volume_score,
+                    "reversal": reversal_score,
                     "timeframe": timeframe_score,
                     "shape": shape_score
                 }
             }
 
         # ============================================
-        # [تعديل V7.4 PRO النهائي] - مصفوفة القرار القطعي المتكاملة
+        # [تعديل V7.5 FINAL] - نقطة دخول إعادة الاختبار المحسنة
         # ============================================
-        def get_success_driven_decision(is_at_historical_peak, breakout_points, volume_ratio, body_ratio, wick_ratio, distance_to_peak):
+        def calculate_retest_entry_enhanced(current_price, broken_level, direction, is_breakout=True, market_type="OTC"):
             """
-            منطق اختيار الصفقة الأنجح (Success-Driven Logic) - V7.4 النهائي
-            يعطي قراراً واحداً قطعياً من ثلاثة: كسر هيكلي 💥 / فخ سيولة 🔄 / احتفاظ 🟡
-            """
-            if is_at_historical_peak:
-                # 1. فحص الثالوث المؤسسي (الأمان 100%) - الشرط الوحيد للكسر الحقيقي
-                if breakout_points >= 5 and volume_ratio >= 1.5 and body_ratio > 0.9:
-                    return {
-                        "decision": "STRUCTURAL_BREAKOUT 💥",
-                        "action": "BREAKOUT_BUY 🟢",
-                        "success_rate": 98,
-                        "reason": "ثالوث مؤسسي مكتمل: كسر حقيقي بمسافة 5+ نقاط + حجم 1.5x + جسم >90%",
-                        "entry_type": "IMMEDIATE_MOMENTUM"
-                    }
-                
-                # 2. فحص فخ السيولة (الأمان 95%) - الأولوية للصفقة الانعكاسية
-                elif distance_to_peak < 5 and (wick_ratio > 0.4 or volume_ratio < 1.2):
-                    return {
-                        "decision": "LIQUIDITY_TRAP 🔄",
-                        "action": "REVERSAL_SELL 🔴",
-                        "success_rate": 95,
-                        "reason": "فخ سيولة: قمة تاريخية مع ارتداد - دخول عكسي فوري",
-                        "entry_type": "RETEST_ENTRY",
-                        "entry_price": "القمة - نقطة واحدة (بعد الارتداد)"
-                    }
-                
-                # 3. إذا لم يتحقق أي شرط صارم
-                else:
-                    return {
-                        "decision": "STRICT_HOLD 🟡",
-                        "action": "HOLD",
-                        "success_rate": "N/A - Risk High",
-                        "reason": "لم يتحقق الثالوث المؤسسي ولا شروط فخ السيولة - خطر مرتفع",
-                        "entry_type": "NO_ENTRY"
-                    }
-            else:
-                # السعر في منتصف الطريق - فحص قوة الحجم
-                if volume_ratio >= 1.3 and body_ratio > 0.8:
-                    return {
-                        "decision": "MOMENTUM_ENTRY 🟢",
-                        "action": "BUY" if body_ratio > 0 else "SELL",
-                        "success_rate": 90,
-                        "reason": "زخم مدعوم بحجم قوي",
-                        "entry_type": "RETEST_ENTRY",
-                        "entry_price": "إعادة اختبار المستوى المكسور"
-                    }
-                else:
-                    return {
-                        "decision": "HOLD 🟡",
-                        "action": "HOLD",
-                        "success_rate": 70,
-                        "reason": "زخم ضعيف أو حجم غير كافٍ",
-                        "entry_type": "NO_ENTRY"
-                    }
-
-        # ============================================
-        # [تعديل V7.4 PRO] - نقطة دخول إعادة الاختبار (The Retest Entry)
-        # ============================================
-        def calculate_retest_entry(current_price, broken_level, direction, is_breakout=True):
-            """
-            حساب نقطة الدخول المثالية - إعادة اختبار المستوى المكسور
-            الهدف: الدخول من أدنى سعر ممكن (Zero Drawdown)
+            حساب نقطة الدخول المثالية مع مراعاة نوع السوق
             """
             if direction == "BUY" and is_breakout:
-                # بعد كسر مقاومة، نقطة الدخول المثالية هي إعادة اختبارها كدعم
-                return {
-                    "entry_price": broken_level,  # إعادة الاختبار
-                    "stop_loss": broken_level - 2,  # نقطتين تحت المستوى
-                    "reason": "إعادة اختبار المقاومة المكسورة كدعم",
-                    "drawdown": "صفر تقريباً"
-                }
+                if market_type == "OTC":
+                    # في OTC، نقطة الدخول تكون أقرب للمستوى بسبب الانزلاق السعري
+                    return {
+                        "entry_price": broken_level + 0.5,  # نصف نقطة فوق المستوى
+                        "stop_loss": broken_level - 3,  # 3 نقاط تحت المستوى
+                        "reason": "إعادة اختبار في OTC - دخول مبكر قليلاً",
+                        "drawdown": "منخفض جداً"
+                    }
+                else:
+                    return {
+                        "entry_price": broken_level,  # إعادة الاختبار
+                        "stop_loss": broken_level - 2,  # نقطتين تحت المستوى
+                        "reason": "إعادة اختبار المقاومة المكسورة كدعم",
+                        "drawdown": "صفر تقريباً"
+                    }
             elif direction == "SELL" and is_breakout:
-                # بعد كسر دعم، نقطة الدخول المثالية هي إعادة اختباره كمقاومة
-                return {
-                    "entry_price": broken_level,  # إعادة الاختبار
-                    "stop_loss": broken_level + 2,  # نقطتين فوق المستوى
-                    "reason": "إعادة اختبار الدعم المكسور كمقاومة",
-                    "drawdown": "صفر تقريباً"
-                }
+                if market_type == "OTC":
+                    return {
+                        "entry_price": broken_level - 0.5,  # نصف نقطة تحت المستوى
+                        "stop_loss": broken_level + 3,  # 3 نقاط فوق المستوى
+                        "reason": "إعادة اختبار في OTC - دخول مبكر قليلاً",
+                        "drawdown": "منخفض جداً"
+                    }
+                else:
+                    return {
+                        "entry_price": broken_level,  # إعادة الاختبار
+                        "stop_loss": broken_level + 2,  # نقطتين فوق المستوى
+                        "reason": "إعادة اختبار الدعم المكسور كمقاومة",
+                        "drawdown": "صفر تقريباً"
+                    }
             else:
-                # دخول مباشر (في حالات الزخم القوي جداً)
                 return {
                     "entry_price": current_price,
                     "stop_loss": current_price - 3 if direction == "BUY" else current_price + 3,
@@ -3012,54 +3094,18 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                     "drawdown": "طبيعي"
                 }
 
-        # ============================================
-        # [تعديل V7.4 PRO] - فلتر نافذة الوقت الذهبية (Execution Window)
-        # ============================================
-        def is_in_golden_execution_window(current_second, candle_type):
-            """
-            نافذة الوقت الذهبية للتنفيذ
-            حصر تنفيذ الصفقة فقط بين الثانية 05 والثانية 25 من عمر الشمعة
-            الهدف: تجنب "تذبذب البداية" العشوائي و"غدر النهاية" في آخر ثوانٍ
-            """
-            seconds_in_candle = 60 - current_second  # الثواني المنقضية من الشمعة
-            
-            if candle_type.startswith('S'):  # فريمات الثواني
-                # النافذة الذهبية: من 5 إلى 25 ثانية
-                return 5 <= seconds_in_candle <= 25
-            else:  # فريمات الدقائق
-                # النافذة الذهبية: من 10 إلى 40 ثانية
-                return 10 <= seconds_in_candle <= 40
-
-        # ============================================
-        # [تعديل V7.4 PRO] - منطق الانعكاس الفوري (The Reversal Trigger)
-        # ============================================
-        def check_immediate_reversal(price, peak_level, distance_to_peak, current_direction):
-            """
-            منطق الانعكاس الفوري لاصطياد فخ السيولة
-            إذا لمس السعر القمة (بمسافة < 5 نقاط) ثم هبط بـ نقطة واحدة تحتها
-            """
-            if distance_to_peak < 5 and current_direction == "UP":
-                # اقترب من القمة، الآن نراقب الهبوط
-                return {
-                    "triggered": True,
-                    "action": "SELL_IMMEDIATE 🔴",
-                    "entry": peak_level - 1,  # نقطة واحدة تحت القمة
-                    "stop_loss": peak_level + 2,  # نقطتين فوق القمة
-                    "reason": "انعكاس فوري من قمة - فخ سيولة",
-                    "success_rate": 95
-                }
-            return {
-                "triggered": False,
-                "action": "HOLD 🟡",
-                "reason": "لا يوجد انعكاس فوري"
-            }
-
         # متغيرات بروتوكول التشريح الهيكلي
         breakout_force = 0.0  # سيتم تحديثها من التحليل
         avg_volume = 0.0  # سيتم تحديثها من التحليل
         has_fvg = False  # سيتم تحديثها من التحليل
         liquidity_sweep_detected = False  # سيتم تحديثها من التحليل
         retail_liquidity_zones = []  # سيتم تحديثها من التحليل
+        engulfing_ratio = 0.0  # سيتم تحديثها من التحليل
+        distance_to_peak = 100.0  # قيمة افتراضية كبيرة
+        distance_to_bottom = 100.0  # قيمة افتراضية كبيرة
+        is_at_historical_peak = False
+        is_at_historical_bottom = False
+        current_direction = "UP"  # قيمة افتراضية
         
         # ربط معطيات الإعدادات
         candle_category = ""
@@ -3109,7 +3155,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         # إعدادات ثابتة
         GENERATION_CONFIG = {
-            "max_tokens": 980,
+            "max_tokens": 1000,
             "temperature": 0.0,
             "top_p": 1.0,
             "random_seed": 42
@@ -3262,25 +3308,87 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 """
         
         # ============================================
-        # مصفوفة القرار القطعي لجميع السيناريوهات
+        # التحديثات الجديدة V7.5 FINAL - فلاتر الأمان المتقدمة
         # ============================================
         
-        decision_matrix = """
-📊 **مصفوفة القرار القطعي لجميع السيناريوهات (V7.4 النهائي):**
+        v7_5_final_updates = """
+🔒 **تحديث نهائي V7.5 FINAL - فلاتر الأمان المتقدمة (حل مشكلة الصفقات الخاطئة)**
 
-| الحالة الفنية | السلوك السعري (Action) | القرار النهائي (Signal) | نسبة النجاح |
-|---------------|------------------------|-------------------------|-------------|
-| اندفاع نحو قمة | اختراق +5 نقاط + زخم > 90% + حجم ≥ 1.5x | كسر هيكلي 💥 (شراء 🟢) | 98% |
-| لمس قمة وارتداد | ذيل طويل أو ارتداد -2 نقطة | سحب سيولة 🔄 (بيع 🔴) | 95% |
-| انهيار نحو قاع | كسر -5 نقاط + زخم > 90% + حجم ≥ 1.5x | كسر هيكلي 💥 (بيع 🔴) | 98% |
-| لمس قاع وارتداد | ذيل سفلي أو ارتداد +2 نقطة | سحب سيولة 🔄 (شراء 🟢) | 95% |
-| شمعة عكسية مباغتة | ابتلعت 50% من الشمعة السابقة | انعكاس فوري 🔄 (عكس الاتجاه) | 85% |
-| تذبذب عند مستوى | عدم استقرار فوق/تحت بـ 3 نقاط | احتفاظ 🟡 (انتظار السيولة) | 70% |
+【1. خوارزمية المسح الاستبعادي الكامل (Complete Exclusion Scan)】
+   - تعمل كـ "حواجز أمان" متسلسلة قبل أي قرار
+   - إذا فشل أي شرط، يتم رفض الصفقة فوراً
+   - الحواجز: القمم التاريخية ← الابتلاع ← الإجهاد ← الرفض السعري ← التوقيت ← دقائق الغدر
+
+【2. فلتر "منطقة القتل الرقمية" (5 Points Safety Buffer)】
+   - إذا كان السعر ضمن 5 نقاط من قمة تاريخية:
+     * يُمنع الشراء إلا بتحقق "الثالوث المؤسسي" (≥5 نقاط + حجم ≥1.5x + جسم >90% + FVG)
+     * إذا لم يتحقق الثالوث ← القرار الإلزامي: انعكاس فوري (نسبة نجاح 95%)
+
+【3. قانون الابتلاع كشرط إجباري (50% Kill Switch)】
+   - إذا ابتلعت شمعة عكسية 50% من الشمعة السابقة:
+     * إلغاء فوري لأي صفقة مع الاتجاه القديم
+     * تحويل فوري للاتجاه المعاكس (انعكاس) 🔄
+     * نسبة نجاح 85-90%
+
+【4. فلتر إجهاد الموجة (Exhaustion Filter)】
+   - إذا كانت الشمعة الحالية > 3 أضعاف متوسط آخر 5 شموع:
+     * منع الدخول مع الاتجاه (إجهاد سعري)
+     * انتظر تصحيح أو انعكاس
+     * نسبة نجاح الاحتفاظ 80%
+
+【5. فلتر نوع السوق (OTC vs Real Market)】
+   - في OTC: الفتايل الطويلة عند المستويات = فخ سيولة
+   - في OTC: الشموع الضخمة جداً عند القمم = تفريغ عقود
+   - في السوق العادي: تطبيق القواعد القياسية
+
+【6. نافذة التنفيذ الذهبية الصارمة (Golden Execution Window)】
+   - فريمات الثواني: الدخول مسموح فقط بين الثانية 5 والثانية 25
+   - فريمات الدقائق: الدخول مسموح فقط بين الثانية 10 والثانية 40
+   - خارج هذه النوافذ: احتفاظ إلزامي (نسبة نجاح منخفضة)
+
+【7. معادلة ترجيح النجاح المعدلة (Weighted Success Score V7.5)】
+   - 35% لمسافة الأمان عن القمم/القيعان (الأولوية القصوى)
+   - 25% لقوة الحجم المؤسسي (سيولة الحيتان)
+   - 20% لإمكانية الانعكاس المحتمل (جديد)
+   - 10% لتوافق الإطارات الزمنية
+   - 10% لشكل الشمعة (الزخم البصري)
+
+【8. تنبيه فخ السيولة المحسن (Liquidity Trap Alert V7.5)】
+   - يتم تفعيله فوراً عند اكتشاف أي من:
+     * قمة تاريخية + مسافة < 5 نقاط + حجم < 1.5x
+     * قمة تاريخية + فتيلة علوية > 40%
+     * قمة تاريخية + جسم شمعة < 50%
+   - الإجراء: إلغاء الشراء وتحويل للبيع الانعكاسي فوراً
+
+🎯 **الخلاصة النهائية V7.5 FINAL:**
+   - الأولوية للانعكاس (Reversal) على الاستمرار (Continuation)
+   - السيولة تسبق الزخم - لا تشتري عند القمم
+   - المسافة الرقمية (5 نقاط) أهم من شكل الشمعة
+   - نافذة التنفيذ الذهبية تحمي من تذبذب البداية وغدر النهاية
+"""
+        
+        # ============================================
+        # مصفوفة القرار القطعي النهائية V7.5
+        # ============================================
+        
+        decision_matrix_v7_5 = """
+📊 **مصفوفة القرار القطعي النهائية (V7.5 FINAL):**
+
+| الحالة الفنية | الشرط | القرار النهائي | نسبة النجاح |
+|---------------|-------|----------------|-------------|
+| قمة تاريخية + ثالوث مؤسسي | ≥5 نقاط + حجم ≥1.5x + جسم >90% + FVG | كسر هيكلي 💥 (شراء) | 98% |
+| قمة تاريخية + فتل طويل (>40%) | ذيل علوي + ارتداد | فخ سيولة 🔄 (بيع) | 95% |
+| قمة تاريخية + جسم ضعيف (<50%) | عدم اختراق حقيقي | فخ سيولة 🔄 (بيع) | 95% |
+| قمة تاريخية + مسافة <5 نقاط | بدون ثالوث مؤسسي | انعكاس فوري 🔄 (بيع) | 95% |
+| شمعة عكسية تبتلع >50% | ابتلاع الشمعة السابقة | انعكاس فوري 🔄 | 85-90% |
+| شمعة >3x المتوسط | إجهاد سعري | احتفاظ 🟡 | 80% |
+| خارج نافذة التنفيذ | وقت غير مناسب | احتفاظ 🟡 | 70% |
+| زخم في منتصف الطريق | حجم ≥1.3x + جسم >80% | دخول مع الاتجاه 🟢/🔴 | 90% |
 """
         
         # دمج جميع التعديلات
         all_updates_section = f"""
-⚡ **التعديلات الثلاثة الجديدة + تحديثات V7.0 الهجومية + V7.3 التشريح الهيكلي + V7.4 القمم الصارمة + نظام الأولوية للأنجح النهائي:**
+⚡ **جميع التحديثات مجمعة (V7.5 FINAL - الحل النهائي):**
 
 {three_points_rule}
 
@@ -3294,64 +3402,45 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 {v7_4_updates}
 
-{decision_matrix}
+{v7_5_final_updates}
 
-🔍 **كيفية تطبيق التعديلات في التحليل (مع V7.4 PRO النهائي - الأولوية للأنجح):**
-
-1. **عند فكرة الشراء:** تأكد من:
-   - السعر تجاوز المقاومة بـ ≥ 3 نقاط (التعديل 1) أو ≥ 5 نقاط للقمم التاريخية مع "الثالوث المؤسسي" (V7.4)
-   - لا توجد شمعة حمراء ابتلعت 50% من آخر شمعة خضراء (التعديل 2)
-   - السعر ليس عند قمة تاريخية إلا مع انفجار حقيقي (التعديل 3 + V7.4)
-   - الفريم الكبير (M1/M5) في نفس الاتجاه (قاعدة السمكة الكبيرة)
-   - **للقمم التاريخية: شرط إلزامي (V7.4) = حجم شمعة ≥ 1.5x + استقرار ≥ 5 نقاط + FVG خلفي + شمعة ماروبوزو > 90%**
-
-2. **عند فكرة البيع:** تأكد من:
-   - السعر كسر الدعم بـ ≥ 3 نقاط للأسفل (التعديل 1) أو ≥ 5 نقاط للقيعان التاريخية مع "الثالوث المؤسسي" (V7.4)
-   - لا توجد شمعة خضراء ابتلعت 50% من آخر شمعة حمراء (التعديل 2)
-   - السعر ليس عند قاع تاريخي إلا مع انفجار حقيقي (التعديل 3 + V7.4)
-   - الفريم الكبير (M1/M5) في نفس الاتجاه (قاعدة السمكة الكبيرة)
-
-3. **مصفوفة القرار القطعي النهائية (V7.4 PRO):**
-   - **كسر هيكلي حقيقي:** حجم ≥ 1.5x + استقرار ≥ 5 نقاط + FVG + ماروبوزو > 90% = دخول فوري 💥 (نجاح 98%)
-   - **سحب سيولة (Sweep):** لمس القمة + ارتداد + عدم استقرار = انعكاس فوري 🔄 (نجاح 95%)
-   - **فخ سيولة (Trap):** قمة تاريخية + شمعة <50% + ارتداد = دخول عكسي 🔄 (نجاح 95%)
-   - **تذبذب:** عدم وضوح = احتفاظ 🟡 (نجاح 70%)
-
-4. **نقاط الإلغاء الفوري:**
-   - ظهور شمعة عكسية تبتلع 50% من الشمعة السابقة = انعكاس فوري
-   - وجود قمة تاريخية بدون "الثالوث المؤسسي" (≥ 5 نقاط + FVG + حجم ≥ 1.5x + ماروبوزو > 90%) = إلغاء الشراء والتحول للبيع
-   - الشمعة الحالية > 3 أضعاف متوسط آخر 5 شموع = إجهاد سعري (انتظر انعكاس)
-   - **كسر هيكلي بدون حجم كافي (< 1.5x) = إلغاء إشارة الكسر**
+{decision_matrix_v7_5}
 """
-        
-        # ============================================
-        # نموذج تنبيه فخ السيولة (سيتم إضافته ديناميكياً في التحليل)
-        # ============================================
-        
-        liquidity_trap_alert_template = """
-🚨 **نموذج تنبيه: اكتشاف فخ سيولة (Liquidity Trap)**
 
-⚠️ **تحذير عالي الخطورة - V7.4 PRO النهائي** ⚠️
+        # نموذج تنبيه فخ السيولة المحسن
+        liquidity_trap_alert_v7_5 = """
+🚨 **⚠️ تنبيه عالي الخطورة - V7.5 FINAL النهائي ⚠️**
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 **الموقع:** قمة تاريخية (Historical Peak) 🏔️
-**الحالة:** تم رصد "زخم وهمي" - اختراق كاذب.
+**الحالة:** تم رصد "فخ سيولة" - اختراق كاذب.
 
-**التحليل الرقمي:**
+**التحليل الرقمي الدقيق:**
 • **المسافة من القمة:** +{distance_points} نقطة (فشل شرط الـ 5 نقاط ❌)
-• **حجم الشمعة:** {volume_ratio}x (ضعف السيولة المؤسسية ❌)
-• **شكل الشمعة:** فتيلة علوية طويلة (رفض سعري ❌)
+• **حجم الشمعة:** {volume_ratio}x من المتوسط (أقل من 1.5x ❌)
+• **شكل الشمعة:** {candle_shape_description} (رفض سعري ❌)
+• **نسبة الجسم:** {body_percentage}% (أقل من 90% للثالوث المؤسسي ❌)
+• **الفتيلة العلوية:** {wick_percentage}% (تأكيد رفض سعري)
 
-🛡️ **القرار الدفاعي:**
-إلغاء فكرة الشراء / بيع فوراً. السعر الآن يسحب السيولة لضرب أوامر الوقف.
+🛡️ **القرار الدفاعي الإلزامي:**
+إلغاء فكرة الشراء فوراً / بيع انعكاسي 🔴. السعر الآن يسحب السيولة لضرب أوامر الوقف قبل الانعكاس.
 
 🔄 **الإجراء القادم:**
-انتظر إغلاق الشمعة الحالية؛ إذا عادت تحت القمة، ادخل بيع 🔴 (انعكاس فوري) بمجرد لمس مستوى الـ -2 نقطة تحت القمة.
+انتظر إغلاق الشمعة الحالية؛ إذا عادت تحت القمة، ادخل بيع 🔴 فوراً بمجرد لمس مستوى القمة - 2 نقطة.
+
+📊 **نقطة الدخول المقترحة للبيع (انعكاس):**
+• **الدخول:** {peak_level - 2} (بعد تأكيد الارتداد)
+• **الهدف 1:** {peak_level - 5} (أول سيولة داخلية)
+• **الهدف 2:** {peak_level - 10} (منطقة طلب)
+• **وقف الخسارة:** {peak_level + 3} (فوق القمة بـ 3 نقاط)
+• **نسبة المخاطرة/العائد:** 1:3 على الأقل
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
         
-        # البرومبت الرئيسي مع إضافة جميع التعديلات ونظام الأولوية للأنجح النهائي
+        # البرومبت الرئيسي مع إضافة جميع التعديلات
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VOLUME PROFILE + MARKET PSYCHOLOGY.
-مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات مع تطبيق قوانين السيادة الجديدة (V7.4 ELITE SNIPER MODE النهائي - الأولوية للأنجح).
+مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات مع تطبيق قوانين السيادة الجديدة (V7.5 FINAL ELITE SNIPER MODE - الحل النهائي).
 
 🎯 **التوجيه الأساسي: التركيز الكامل على استخراج البيانات وتحليل الصورة**
 أنت ملزم بالتركيز التام على الصورة المرفقة فقط. يجب أن تستخرج كل البيانات والأرقام من الصورة بكامل قدراتك البصرية. لا تتشتت بأي معلومات خارجية أو افتراضات. كل ما تحتاجه موجود في الصورة:
@@ -3360,60 +3449,66 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 2. **تحديد الزمن الحالي:** ابحث عن ساعة المنصة في الزاوية اليسرى/اليمنى السفلية - **هذا هو المرجع الوحيد لدقائق الغدر**
 3. **تحليل الشموع:** افحص آخر 5-7 شموع (الأجسام، الذيول، الألوان، الأحجام)
 4. **رسم المستويات:** حدد الدعم/المقاومة، الفجوات، مناطق السيولة، القمم والقيعان التاريخية
-5. **التطبيق العملي:** طبق كل القواعد أدناه على البيانات المستخرجة من الصورة فقط
+5. **التطبيق العملي:** طبق جميع القواعد أدناه على البيانات المستخرجة من الصورة فقط
 
 {previous_context_info}
 
 {all_updates_section}
 
-⚠️ **قاعدة الجوكر المنضبط (Disciplined Joker):**
+⚠️ **قاعدة الجوكر المنضبط (Disciplined Joker) V7.5 FINAL:**
 - لا يُسمح بتجاهل الوقت (الجوكر) إلا إذا كانت الشمعة تخترق "مستوى مغلق" (Closed Level) وبجسم شمعة ممتلئ بنسبة >90%.
-- يجب أن يتجاوز السعر المستوى المخترق بـ 3 نقاط على الأقل (تأكيد الاندفاع).
-- إذا كان الاختراق لقمة تاريخية، انتظر 'الثالوث المؤسسي' (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%) (V7.4). إذا لم يتحقق الشرط، اعتبره سحب سيولة (Liquidity Grab) وألغِ إشارة الجوكر.
-- عندما تكون المعطيات المرسلة لك هي market_mode: AGGRESSIVE، ولديك momentum_boost: True، يُسمح لك بتجاهل تحذير "الوقت المتبقي" (seconds_remaining) وفق الشروط أعلاه.
+- يجب أن يتجاوز السعر المستوى المخترق بـ 5 نقاط على الأقل للقمم التاريخية (تأكيد الاندفاع المؤسسي).
+- إذا كان الاختراق لقمة تاريخية، انتظر 'الثالوث المؤسسي' (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%). إذا لم يتحقق الشرط، اعتبره سحب سيولة (Liquidity Grab) وألغِ إشارة الجوكر فوراً مع تحويل للانعكاس.
+- عندما تكون المعطيات المرسلة لك هي market_mode: AGGRESSIVE، ولديك momentum_boost: True، يُسمح لك بتجاهل تحذير "الوقت المتبقي" وفق الشروط أعلاه، ولكن لا يمكنك تجاهل "فلتر القمم التاريخية" أبداً.
 
-⚠️ **تفويض الجوكر النهائي:**
-إذا كان 'momentum_boost' مفعلاً وتوفر شرط اختراق مستوى مغلق بـ 3 نقاط على الأقل (أو 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية)، فأنت تمتلك صلاحية "كسر القواعد". إذا رأيت اختراقاً حقيقياً لمستوى (Breakout) مدعوماً بجسم شمعة قوي، أعطِ إشارة دخول فورية حتى لو تبقت ثانية واحدة على نهاية الوقت. الزخم الحقيقي أقوى من الساعة.
+🚨 **نظام الأولوية النهائي V7.5 FINAL:**
 
-🚨 **نظام الأولوية للأنجح النهائي (Success Priority System) - V7.4 PRO النهائي:**
+【قاعدة المسح الاستبعادي الكامل - تطبق بالترتيب】
+يجب تطبيق هذا المسح بالترتيب قبل أي قرار. **ابحث عن أي سبب للمنع أولاً:**
 
-【قاعدة المسح الاستبعادي الكامل (Complete Exclusion Scan)】
-يجب تطبيق هذا المسح بالترتيب قبل أي قرار. **الأولوية الرقمية: ابحث عن أي سبب للمنع أولاً:**
-
-🛑 **الحاجز الأول والأهم: أمان السيولة وقاعدة الـ 5 نقاط الرقمية**
-- إذا كان السعر ضمن نطاق 5 نقاط من قمة تاريخية:
-  * فحص الثالوث المؤسسي: (حجم ≥ 1.5x + جسم > 90% + FVG)
+🛑 **الحاجز 1: فلتر القمم التاريخية (5 نقاط)**
+- إذا كان السعر ضمن 5 نقاط من قمة تاريخية:
+  * فحص الثالوث المؤسسي: (حجم ≥ 1.5x + جسم > 90% + FVG + مسافة ≥ 5 نقاط)
   * إذا لم يتحقق الثالوث ← القرار: فخ سيولة - بيع انعكاسي 🔴 (نسبة نجاح 95%)
   * إذا تحقق الثالوث بالكامل ← القرار: كسر هيكلي - شراء 💥🟢 (نسبة نجاح 98%)
 
-🛑 **الحاجز الثاني: إجهاد الموجة (Exhaustion)**
+🛑 **الحاجز 2: قانون الابتلاع (50% Kill Switch)**
+- إذا ظهرت شمعة عكسية تبتلع ≥ 50% من الشمعة السابقة:
+  * القرار: انعكاس فوري 🔄 (نسبة نجاح 85-90%)
+  * إلغاء أي صفقة مع الاتجاه القديم
+
+🛑 **الحاجز 3: فلتر إجهاد الموجة (Exhaustion)**
 - إذا كانت الشمعة الحالية > 3 أضعاف متوسط آخر 5 شموع:
   * القرار: احتفاظ 🟡 - انتظر تصحيح (نسبة نجاح 80%)
 
-🛑 **الحاجز الثالث: دقائق الغدر ونافذة التنفيذ الذهبية (Trap Minutes & Golden Window)**
-- إذا كنت في دقيقة غدر (14,29,44,59) مع <15 ثانية متبقية:
-  * إذا كان الزخم غير كافٍ ← القرار: احتفاظ صارم 🟡 (نسبة نجاح 90%)
-  * إذا كان هناك اختراق حقيقي بـ ≥ 5 نقاط ← تحقق من نافذة التنفيذ (5-25 ثانية)
-- نافذة التنفيذ الذهبية: يُسمح بالدخول فقط بين الثانية 05 والثانية 25 من عمر الشمعة
-
-🛑 **الحاجز الرابع: الرفض السعري (Price Rejection)**
+🛑 **الحاجز 4: فلتر الرفض السعري (Price Rejection)**
 - إذا كانت نسبة الذيل > 60% من الشمعة:
   * القرار: احتفاظ 🟡 - انتظر تأكيد (نسبة نجاح 85%)
 
-✅ **إذا اجتاز السعر جميع الحواجز الأربعة:**
-- دخول مع الاتجاه بحجم قوي 🟢 (نسبة نجاح 98%)
+🛑 **الحاجز 5: نافذة التنفيذ الذهبية (Golden Window)**
+- فريمات الثواني: الدخول مسموح فقط بين الثانية 5 والثانية 25
+- فريمات الدقائق: الدخول مسموح فقط بين الثانية 10 والثانية 40
+- خارج هذه النوافذ: احتفاظ إلزامي 🟡 (نسبة نجاح 70%)
 
-【معادلة ترجيح النجاح المتقدمة (Weighted Success Score) - V7.4 النهائي】
-احسب نسبة نجاح كل صفقة بناءً على الأهمية وليس العدد:
-• **40% لمسافة الأمان عن القمم والقيعان** (الأولوية القصوى)
-• **30% لقوة الحجم المؤسسي (Breakout Force)** (سيولة الحيتان)
-• **20% لاتجاه الفريم الأكبر (Higher Timeframe)** (توافق الإطارات)
-• **10% فقط لشكل الشمعة الحالية** (الزخم البصري)
+🛑 **الحاجز 6: دقائق الغدر (Trap Minutes)**
+- إذا كنت في دقيقة غدر (14,29,44,59) مع <15 ثانية متبقية وبدون زخم كافي:
+  * القرار: احتفاظ صارم 🟡 (نسبة نجاح 90%)
 
-🎯 **القاعدة الذهبية V7.4 النهائية:**
-يُمنع إصدار أي إشارة شراء (Buy) إذا كان السعر ضمن نطاق 5 نقاط من قمة تاريخية، حتى لو كانت الشمعة خضراء قوية. الأولوية هنا هي لصفقة 'الارتداد العكسي' (Reversal) لأنها الأكثر نجاحاً إحصائياً في هذه المناطق. لا تعتمد الزخم كدليل وحيد؛ الحجم (Volume) والمسافة الرقمية هما القادة.
+✅ **إذا اجتاز السعر جميع الحواجز الستة:**
+- دخول مع الاتجاه بحجم قوي 🟢/🔴 (نسبة نجاح 90-98%)
 
-🚨 **تنبيه فخ السيولة (Liquidity Trap Alert) - يجب تفعيله فوراً عند اكتشاف الحالات التالية:**
+【معادلة ترجيح النجاح المتقدمة V7.5 FINAL】
+احسب نسبة نجاح كل صفقة بناءً على الأهمية المعدلة:
+• **35% لمسافة الأمان عن القمم والقيعان** (الأولوية القصوى)
+• **25% لقوة الحجم المؤسسي (Breakout Force)** (سيولة الحيتان)
+• **20% لإمكانية الانعكاس المحتمل** (جديد - يعطي وزن للصفقات الانعكاسية)
+• **10% لاتجاه الفريم الأكبر (Higher Timeframe)** (توافق الإطارات)
+• **10% لشكل الشمعة الحالية** (الزخم البصري)
+
+🎯 **القاعدة الذهبية V7.5 FINAL:**
+يُمنع إصدار أي إشارة شراء (Buy) إذا كان السعر ضمن نطاق 5 نقاط من قمة تاريخية، حتى لو كانت الشمعة خضراء قوية. الأولوية هنا هي لصفقة 'الارتداد العكسي' (Reversal) لأنها الأكثر نجاحاً إحصائياً في هذه المناطق. لا تعتمد الزخم كدليل وحيد؛ المسافة الرقمية (5 نقاط) والحجم هما القادة.
+
+🚨 **تنبيه فخ السيولة (Liquidity Trap Alert) V7.5 FINAL - يجب تفعيله فوراً عند اكتشاف الحالات التالية:**
 
 إذا اكتشفت أن السعر يحاول اختراق قمة تاريخية ولكن:
 1. **المسافة من القمة:** أقل من 5 نقاط (أي +1 إلى +4.9 نقاط)
@@ -3422,15 +3517,15 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 قم فوراً بإصدار التنبيه التالي في بداية التحليل:
 
-🚨 **⚠️ تنبيه عالي الخطورة - V7.4 PRO النهائي ⚠️**
+🚨 **⚠️ تنبيه عالي الخطورة - V7.5 FINAL النهائي ⚠️**
 
 ━━━━━━━━━━━━━━━━━━━━━━
 **الموقع:** قمة تاريخية (Historical Peak) 🏔️
-**الحالة:** تم رصد "زخم وهمي" - اختراق كاذب.
+**الحالة:** تم رصد "فخ سيولة" - اختراق كاذب.
 
 **التحليل الرقمي:**
 • **المسافة من القمة:** +[X.X] نقطة (فشل شرط الـ 5 نقاط ❌)
-• **حجم الشمعة:** [X.X]x (ضعف السيولة المؤسسية ❌)
+• **حجم الشمعة:** [X.X]x (أقل من 1.5x ❌)
 • **شكل الشمعة:** [فتيلة علوية طويلة / جسم ضعيف] (رفض سعري ❌)
 • **نسبة الجسم:** [XX]% (أقل من 90% ❌)
 
@@ -3438,103 +3533,112 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 إلغاء فكرة الشراء / بيع فوراً. السعر الآن يسحب السيولة لضرب أوامر الوقف.
 
 🔄 **الإجراء القادم:**
-انتظر إغلاق الشمعة الحالية؛ إذا عادت تحت القمة، ادخل بيع 🔴 (انعكاس فوري) بمجرد لمس مستوى الـ -2 نقطة.
+انتظر إغلاق الشمعة الحالية؛ إذا عادت تحت القمة، ادخل بيع 🔴 فوراً بمجرد لمس مستوى الـ -2 نقطة تحت القمة.
 
 📊 **نقطة الدخول المقترحة للبيع:**
 • الدخول: [القمة - 2] (بعد تأكيد الارتداد)
-• الهدف: [القمة - 10] (أول سيولة داخلية)
+• الهدف 1: [القمة - 5] (أول سيولة داخلية)
+• الهدف 2: [القمة - 10] (منطقة طلب)
 • وقف الخسارة: [القمة + 3] (فوق القمة)
 ━━━━━━━━━━━━━━━━━━━━━━
 
-📜 **قواعد السيادة العشر (The 10 Supremacy Rules) - النسخة الهجومية V7.4 النهائية:**
+📜 **قواعد السيادة العشر المعدلة (The 10 Supremacy Rules) - V7.5 FINAL:**
 
-1. **الزخم المشروط (Conditional Momentum Supremacy):**
+1. **الزخم المشروط مع فلتر القمم (Conditional Momentum with Peak Filter):**
    إذا كانت آخر 3 شموع ممتلئة بنسبة >85%، بشرط:
    - عدم وجود قمة/قاع سيولة (Liquidity Pool) قريب جداً (أقل من 5 نقاط)
    - عدم ظهور أي شمعة رفض (Wick) تتجاوز 30% من الشمعة السابقة
-   - السعر ليس عند قمة تاريخية أو تجاوزها بأقل من 5 نقاط مع "الثالوث المؤسسي" (V7.4)
+   - السعر ليس عند قمة تاريخية أو تجاوزها بأقل من 5 نقاط مع "الثالوث المؤسسي"
    إذا ظهرت شمعة عكسية تبتلع 50% من شمعة الزخم، يُلغى 'مود القطار' فوراً ويتحول التحليل لنظام الانعكاس (SMC Reversal).
 
-2. **بروتوكول الانفجار السعري المشروط:**
+2. **بروتوكول الانفجار السعري المشروط مع مسافة الأمان:**
    لا ترفض أي صفقة في الثواني الأخيرة (55-59) إذا كان الزخم مفرطاً (>90%)، بشرط:
    - اختراق مستوى مغلق حقيقي
-   - تجاوز المستوى بـ 3 نقاط على الأقل (أو 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية)
+   - تجاوز المستوى بـ 5 نقاط على الأقل للقمم التاريخية (مع الثالوث المؤسسي)
 
-3. **فحص الذيول (The 15/60 Rule):**
+3. **فحص الذيول (The 15/60 Rule) مع تعديل V7.5:**
    - أي ذيل يمثل أقل من 15% من حجم الشمعة يُعتبر "قوة دافعة" (Marubozu Mode).
    - أي ذيل يمثل أكثر من 60% من حجم الشمعة هو "رفض سعري" قطعي؛ امنع الصفقة فوراً (احتفاظ 🟡).
+   - أي ذيل يمثل 30-60% عند قمة تاريخية = فخ سيولة محتمل (انعكاس 🔄)
 
-4. **مغناطيس الأرقام المستديرة (Round Numbers):**
-   الأرقام التي تنتهي بـ (.000) أو (.500) هي أهداف سيولة. إذا كان السعر قريباً منها والزخم صاعد، استهدف الرقم ولا تعتبره مقاومة. للدخول مع الاتجاه، انتظر تجاوز الرقم بـ 3 نقاط على الأقل.
+4. **مغناطيس الأرقام المستديرة (Round Numbers) مع فلتر الأمان:**
+   الأرقام التي تنتهي بـ (.000) أو (.500) هي أهداف سيولة. إذا كان السعر قريباً منها والزخم صاعد، استهدف الرقم ولا تعتبره مقاومة. للدخول مع الاتجاه، انتظر تجاوز الرقم بـ 3 نقاط على الأقل (أو 5 نقاط مع الثالوث المؤسسي للقمم).
 
-5. **هندسة السيولة (SMC/ICT):**
-   ابحث عن Liquidity Sweep (ضرب قمة/قاع سابق). إذا سحب السعر السيولة (لمس القمة وارتد) ثم أغلق داخل النطاق، فالدخول يكون انعكاسياً (Reversal).
+5. **هندسة السيولة (SMC/ICT) مع الأولوية للانعكاس:**
+   ابحث عن Liquidity Sweep (ضرب قمة/قاع سابق). إذا سحب السعر السيولة (لمس القمة وارتد) ثم أغلق داخل النطاق، فالدخول يكون انعكاسياً (Reversal) وليس استمرارياً.
 
-6. **معامل الفجوات (FVG/Imbalance):**
-   تأكد من وجود فجوات سعرية غير مملوءة. السعر ينجذب دائماً لملء الـ Imbalance قبل تغيير الاتجاه. لا تدخل عند القمة، انتظر عودة السعر لملء 50% من الفجوة.
+6. **معامل الفجوات (FVG/Imbalance) مع تأكيد الكسر:**
+   تأكد من وجود فجوات سعرية غير مملوءة. السعر ينجذب دائماً لملء الـ Imbalance قبل تغيير الاتجاه. لا تدخل عند القمة، انتظر عودة السعر لملء 50% من الفجوة. وجود FVG خلف الكسر هو شرط أساسي للثالوث المؤسسي.
 
-7. **فلتر سحب السيولة (Liquidity Sweep Filter):**
-   قبل تأكيد أي قرار شراء عند القمة، ابحث عن قمة تاريخية قريبة. إذا لمسها السعر وارتد بفتيلة أو ظهرت شمعة حمراء سريعة، يتم إلغاء الشراء فوراً والتحول للبيع (انعكاس).
+7. **فلتر سحب السيولة (Liquidity Sweep Filter) مع قاعدة 5 نقاط:**
+   قبل تأكيد أي قرار شراء عند القمة، ابحث عن قمة تاريخية قريبة. إذا لمسها السعر وارتد بفتيلة أو ظهرت شمعة حمراء سريعة، يتم إلغاء الشراء فوراً والتحول للبيع (انعكاس). إذا كان الاختراق بـ ≥5 نقاط مع الثالوث المؤسسي، يتم تأكيد الشراء.
 
-8. **قانون الابتلاع القاتل (The Kill Switch - Rule 8):**
-   بمجرد ظهور شمعة عكسية تبتلع 50% من الشمعة الاندفاعية السابقة، يُعتبر الزخم "منتهياً" أو "خداعياً" ويمنع الدخول مع الاتجاه القديم. السعر الآن في مرحلة تغيير هيكل (Market Structure Shift).
-   إذا ظهرت شمعة عكسية حجمها أكبر من الشمعة السابقة بـ 1.2x، يُلغى الاتجاه السابق بالكامل.
+8. **قانون الابتلاع القاتل (The Kill Switch - Rule 8) مع التفعيل الإلزامي:**
+   بمجرد ظهور شمعة عكسية تبتلع 50% من الشمعة الاندفاعية السابقة، يُعتبر الزخم "منتهياً" أو "خداعياً" ويمنع الدخول مع الاتجاه القديم. السعر الآن في مرحلة تغيير هيكل (Market Structure Shift). هذا الشرط إلزامي وليس اختيارياً.
 
-9. **مغناطيس الفجوات السعرية (FVG Magnet):**
+9. **مغناطيس الفجوات السعرية (FVG Magnet) مع احترام السيولة:**
    إذا ترك السعر خلفه فجوة سعرية (Imbalance) تزيد عن 5 نقاط:
    - يرفض البوت الدخول عند القمة أبداً
    - ينتظر عودة السعر لملء 50% على الأقل من الفجوة (منطقة الخصم) قبل إصدار أي توصية استمرار
    - إذا كسر السعر نقطة المنشأ، فالصفقة ملغاة
 
-10. **التقييم النهائي المرجح:**
+10. **التقييم النهائي المرجح مع الأولوية للانعكاس:**
     تذكر دائماً: "السيولة تسبق الزخم".
     - إذا رأيت زخماً قوياً يقترب من قمة سيولة، فكر في "الارتداد" أولاً
-    - لا تدخل صفقة استمرارية إلا إذا أغلق السعر "فوق" القمة المخترقة بشمعتين على الأقل (تأكيد الكسر) مع "الثالوث المؤسسي" (V7.4)
+    - لا تدخل صفقة استمرارية إلا إذا أغلق السعر "فوق" القمة المخترقة بشمعتين على الأقل (تأكيد الكسر) مع "الثالوث المؤسسي"
     - إذا كان الزخم مفرطاً (>90%) ولكن الذيول طويلة، فهذا دليل على "خروج المؤسسات" وليس دخولها
+    - الأولوية الرقمية: ابحث عن سبب للانعكاس قبل البحث عن سبب للاستمرار
 
-⚠️ **نظام حساب الثقة المتقدم (Confidence Score Calculation) مع ترجيح الأولوية للأنجح النهائي**
+⚠️ **نظام حساب الثقة المتقدم (Confidence Score Calculation) V7.5 FINAL**
   
-  📊 **معادلة حساب الثقة النهائية (V7.4 PRO النهائي):**
+  📊 **معادلة حساب الثقة النهائية (V7.5 FINAL):**
   
-  الثقة = (مسافة_الأمان × 40%) + (قوة_الحجم × 30%) + (توافق_الإطارات × 20%) + (شكل_الشمعة × 10%)
+  الثقة = (مسافة_الأمان × 35%) + (قوة_الحجم × 25%) + (إمكانية_الانعكاس × 20%) + (توافق_الإطارات × 10%) + (شكل_الشمعة × 10%)
   
-  **معايير التقييم:**
+  **معايير التقييم المعدلة:**
   
-  1. **مسافة الأمان (40 نقطة كحد أقصى) - الأولوية القصوى:**
-     - 35-40: مسافة آمنة > 10 نقاط من القمم/القيعان
-     - 25-34: مسافة آمنة 5-10 نقاط
-     - 15-24: مسافة متوسطة 3-5 نقاط
-     - 5-14: مسافة خطرة < 3 نقاط
+  1. **مسافة الأمان (35 نقطة كحد أقصى) - الأولوية القصوى:**
+     - 30-35: مسافة آمنة > 10 نقاط من القمم/القيعان
+     - 20-29: مسافة آمنة 5-10 نقاط
+     - 10-19: مسافة متوسطة 3-5 نقاط
+     - 5-9: مسافة خطرة < 3 نقاط
      - 0: عند القمة/القاع مباشرة
   
-  2. **قوة الحجم (30 نقطة كحد أقصى):**
-     - 25-30: حجم ≥ 2x المتوسط (قوة مؤسسية عالية)
-     - 20-24: حجم ≥ 1.5x المتوسط (قوة مؤسسية جيدة)
-     - 15-19: حجم ≥ 1.2x المتوسط (قوة متوسطة)
-     - 10-14: حجم ≥ 0.8x المتوسط (قوة ضعيفة)
-     - 0-9: حجم < 0.5x المتوسط (بدون سيولة)
+  2. **قوة الحجم (25 نقطة كحد أقصى):**
+     - 20-25: حجم ≥ 2x المتوسط (قوة مؤسسية عالية)
+     - 15-19: حجم ≥ 1.5x المتوسط (قوة مؤسسية جيدة)
+     - 10-14: حجم ≥ 1.2x المتوسط (قوة متوسطة)
+     - 5-9: حجم ≥ 0.8x المتوسط (قوة ضعيفة)
+     - 0: حجم < 0.5x المتوسط (بدون سيولة)
   
-  3. **توافق الإطارات (20 نقطة كحد أقصى):**
-     - 20: توافق كامل (H4, H1, M15, M5 بنفس الاتجاه)
-     - 15: توافق جيد (3 من 4 إطارات)
-     - 10: توافق متوسط (2 من 4 إطارات)
-     - 5: توافق ضعيف (إطار واحد فقط)
+  3. **إمكانية الانعكاس (20 نقطة كحد أقصى) - معيار جديد:**
+     - 15-20: دلائل قوية على انعكاس (ذيل طويل عند قمة + ابتلاع)
+     - 10-14: دلائل متوسطة (لمس قمة + ارتداد)
+     - 5-9: دلائل ضعيفة (اقتراب من قمة)
+     - 0: لا توجد دلائل انعكاس
+  
+  4. **توافق الإطارات (10 نقطة كحد أقصى):**
+     - 10: توافق كامل (H4, H1, M15, M5 بنفس الاتجاه)
+     - 7: توافق جيد (3 من 4 إطارات)
+     - 5: توافق متوسط (2 من 4 إطارات)
+     - 3: توافق ضعيف (إطار واحد فقط)
      - 0: تضارب كامل
   
-  4. **شكل الشمعة (10 نقطة كحد أقصى) - الأقل أهمية:**
+  5. **شكل الشمعة (10 نقطة كحد أقصى):**
      - 9-10: ماروبوزو > 90%
      - 7-8: جسم قوي 70-90%
      - 5-6: جسم متوسط 50-70%
      - 3-4: جسم ضعيف 30-50%
      - 0-2: دوجي أو شمعة غير واضحة
   
-  📈 **مستويات الثقة ومعناها (مع الأولوية للأنجح النهائي):**
+  📈 **مستويات الثقة ومعناها (V7.5 FINAL):**
   
-  - **💥 90-100%: ثقة عالية جداً** - دخول بقوة (نسبة نجاح > 95%)
-  - **🔥 75-89%: ثقة عالية** - دخول بحجم جيد (نسبة نجاح 85-95%)
-  - **⚡ 60-74%: ثقة متوسطة** - دخول بحجم متوسط (نسبة نجاح 70-85%)
-  - **❄️ 40-59%: ثقة منخفضة** - احتفاظ أو دخول صغير (نسبة نجاح 50-70%)
-  - **🚫 أقل من 40%: لا توجد ثقة** - احتفاظ إلزامي (نسبة نجاح < 50%)
+  - **💥 90-100%: ثقة عالية جداً** - دخول بقوة (كسر هيكلي حقيقي)
+  - **🔥 75-89%: ثقة عالية** - دخول بحجم جيد (زخم مع تأكيد)
+  - **⚡ 60-74%: ثقة متوسطة** - دخول بحذر أو احتفاظ
+  - **🔄 50-59%: ثقة انعكاس** - فرصة انعكاس جيدة
+  - **❄️ 40-49%: ثقة منخفضة** - احتفاظ إلزامي
+  - **🚫 أقل من 40%: لا توجد ثقة** - خطر مرتفع
 
 [1] تنبيه الربط البرمجي الإلزامي - المعطيات المستلمة من المستخدم
 
@@ -3548,7 +3652,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • حجم الصفقة: {position_sizing}
 • نمط السوق: {market_mode}
 • وصف التوقيت: {time_status}
-• الوضع الديناميكي: {"تجاهل القيود الزمنية وادخل مع الزخم (بشرط اختراق مستوى مغلق بـ 3 نقاط، أو 5 نقاط مع الثالوث المؤسسي للقمم التاريخية)" if momentum_boost else "التزم بالقواعد القياسية"}
+• الوضع الديناميكي: {"تجاهل القيود الزمنية مع الالتزام بفلتر القمم" if momentum_boost else "التزم بالقواعد القياسية"}
 
 📌 **تأثير الأخبار والتوقيت:**
 • تأثير الأخبار: {news_impact} (معامل ×{news_risk_multiplier})
@@ -3557,6 +3661,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • حالة السوق: {last_minute_status}
 • حالة إغلاق الشمعة: {candle_closing_status}
 • الوقت المتبقي للإغلاق: {seconds_remaining} ثانية
+• الثواني المنقضية: {60 - seconds_remaining} ثانية
 • توقيت التحليل: {local_time.strftime('%Y-%m-%d %H:%M:%S')} (بالتوقيت المحلي)
 
 📌 **سياق التحليل السابق:**
@@ -3564,7 +3669,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 ✅ **جميع المتغيرات مستلمة ومعرّفة بشكل صحيح.**
 
-[2] نظام الاستخراج البصري المتقدم
+[2] نظام الاستخراج البصري المتقدم (مع تركيز على القمم التاريخية)
 
 🔍 **المرحلة 1: مسح الصورة الشامل**
 1. ابدأ بمسح شامل للصورة من الأعلى إلى الأسفل، ومن اليسار إلى اليمين
@@ -3572,41 +3677,53 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 3. استخرج البيانات التالية بالترتيب:
    - **الأسعار:** السعر الحالي، أعلى سعر، أدنى سعر، مستويات الدعم/المقاومة، القمم التاريخية، القيعان التاريخية
    - **الزمن:** الوقت الحالي على الشارت، إطار الشموع ({candle})
-   - **الشموع:** آخر 5 شموع (فتحة، إغلاق، أعلى، أدنى، الجسم، الذيول)
+   - **الشموع:** آخر 5 شموع (فتحة، إغلاق، أعلى، أدنى، الجسم، الذيول، الألوان)
    - **المؤشرات:** أي مؤشرات مرئية (إن وجدت)
 
-🔍 **مصفوفة فحص المناطق الحرجة (Critical Zone Check):**
-   - **المرحلة 2.1: تحديد موقع السعر بدقة**
-     * هل السعر عند قمة تاريخية أو قاع تاريخي؟
+🔍 **المرحلة 2: مصفوفة فحص المناطق الحرجة (Critical Zone Check) - موسعة:**
+   - **2.1: تحديد موقع السعر بدقة مطلقة**
+     * هل السعر عند قمة تاريخية؟ (أعلى نقطة في آخر 20-30 شمعة على الأقل)
+     * هل السعر عند قاع تاريخي؟ (أدنى نقطة في آخر 20-30 شمعة على الأقل)
+     * هل السعر ضمن 5 نقاط من قمة تاريخية؟ (منطقة خطر)
+     * هل السعر ضمن 5 نقاط من قاع تاريخي؟ (منطقة خطر)
      * هل السعر يلامس مستوى دعم أو مقاومة رئيسي؟
      * هل السعر عند رقم مستدير (.000, .500)؟
-   - **المرحلة 2.2: تحليل سلوك السعر حول المستوى**
+   
+   - **2.2: تحليل سلوك السعر حول المستوى بدقة**
      * كم نقطة ابتعد السعر عن المستوى؟ (أقل من 3 نقاط = منطقة حرجة، أقل من 5 نقاط للقمم التاريخية = منطقة خطر)
      * ما هو سلوك الشمعة الحالية على المستوى؟ (اختراق، لمس وارتداد، تذبذب)
-   - **المرحلة 2.3: تطبيق منطق الاحتمالات المزدوجة مع V7.4 PRO النهائي**
+     * هل يوجد ذيل علوي طويل (>40%) يشير إلى رفض سعري؟
+     * هل يوجد ابتلاع عكسي (50%) للشمعة السابقة؟
+   
+   - **2.3: تطبيق منطق الاحتمالات المزدوجة مع V7.5 FINAL**
      * في المنطقة الحرجة، للسعر احتمالان فقط: إما **كسر هيكلي حقيقي** (حجم ≥ 1.5x + استقرار ≥ 5 نقاط + FVG + ماروبوزو > 90%) أو **فخ وانعكاس**.
      * لا يوجد خيار "الانتظار" في المناطق الحرجة؛ القرار إما كسر هيكلي أو انعكاس بناءً على سلوك الـ 5 نقاط والحجم.
-     * **الأولوية للأنجح:** في المنطقة الحرجة، فكر في الانعكاس أولاً، ثم تحقق من الكسر.
+     * **الأولوية للأنجح V7.5:** في المنطقة الحرجة، ابحث عن دلائل الانعكاس أولاً (ذيل طويل، ابتلاع، ارتداد)، ثم تحقق من الكسر.
 
-🔍 **المرحلة 3: التحليل الاستبعادي البصري**
+🔍 **المرحلة 3: التحليل الاستبعادي البصري (مع قياس دقيق)**
 1. **الوصف الإلزامي قبل التحليل:** ابدأ بوصف الشموع الثلاث الأخيرة بدقة:
-   • **الشمعة -1:** [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]، الحجم النسبي: [x من المتوسط]
-   • **الشمعة -2:** [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]، الحجم النسبي: [x من المتوسط]
-   • **الشمعة -3:** [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]، الحجم النسبي: [x من المتوسط]
+   • **الشمعة -1:** [اللون]، [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]، الحجم النسبي: [x من المتوسط]، الابتلاع: [نعم/لا/بكم%]
+   • **الشمعة -2:** [اللون]، [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]، الحجم النسبي: [x من المتوسط]
+   • **الشمعة -3:** [اللون]، [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]، الحجم النسبي: [x من المتوسط]
 
-2. **تحليل سرعة تغير الزخم (Momentum Decay):**
+2. **تحليل سرعة تغير الزخم (Momentum Decay) مع قياس دقيق:**
    • قارن حجم الشمعة الحالية بمتوسط آخر 5 شموع
    • إذا كانت الشمعة الحالية > 3 أضعاف المتوسط = "إجهاد سعري" (Exhaustion)
    • الإجراء: لا تدخل مع الاتجاه، انتظر انعكاساً فورياً (احتفاظ 🟡)
 
+3. **تحليل الابتلاع (Engulfing Analysis) مع قياس دقيق:**
+   • قارن الشمعة الحالية بالشمعة السابقة
+   • إذا كانت شمعة حمراء ابتلعت ≥50% من الشمعة الخضراء السابقة = إشارة انعكاس بيع 🔴
+   • إذا كانت شمعة خضراء ابتلعت ≥50% من الشمعة الحمراء السابقة = إشارة انعكاس شراء 🟢
+
 🔍 **المرحلة 4: الفحص الرياضي الدقيق مع معامل الانزلاق السعري**
    • **السعر الحالي الملاحظ:** [قراءة مباشرة من المحور Y]
-   • **سعر الهدف الملاحظ:** [قراءة مباشرة من المستوى المستهدف]
-   • **المعادلة الحسابية الأساسية:** |السعر الحالي - سعر الهدف| = [النقاط]
-   • **المسافة إلى أقرب قمة تاريخية:** [نقاط] - هل هي ≥ 5 نقاط مع "الثالوث المؤسسي"؟ (V7.4)
+   • **سعر القمة التاريخية:** [قراءة مباشرة من أعلى نقطة]
+   • **المسافة إلى القمة التاريخية:** |السعر الحالي - القمة| = [نقاط] - هل هي ≥ 5 نقاط؟
    • **حجم الشمعة الحالية:** [الحجم] - هل هو ≥ 1.5x من متوسط آخر 3 شموع؟
-   • **في فريمات S5, S10:** أضف "معامل الانزلاق السعري" = خصم نقطة أمان واحدة من نقطة الدخول
-   • **نقطة الدخول المعدلة:** [السعر الحالي + (نقطة أمان في اتجاه الصفقة)]
+   • **نسبة جسم الشمعة:** [جسم/إجمالي الشمعة] - هل هو ≥ 90% للثالوث المؤسسي؟
+   • **نسبة الذيل العلوي:** [ذيل علوي/إجمالي الشمعة] - هل هو > 40% (رفض سعري)؟
+   • **نسبة الابتلاع:** [حجم الشمعة العكسية / حجم الشمعة السابقة] - هل هو ≥ 50%؟
 
 🔍 **المرحلة 5: كشف التناقضات البصرية ودقة القراءة**
    • إذا كانت المسافة المحسوبة ≠ المسافة المقدرة بالعين → أعد المسح
@@ -3622,135 +3739,140 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 ✅ **الإجراء الإلزامي:** "الصورة غير صالحة للتحليل - يرجى إرسال صورة أوضح مع شموع ومحور أسعار واضحين."
 
-[4] قوانين السيادة الجديدة (V7.4 ELITE SNIPER MODE النهائي - الأولوية للأنجح)
+[4] قوانين السيادة الجديدة (V7.5 FINAL ELITE SNIPER MODE - الحل النهائي)
 
-【الرتبة 0】 بروتوكول التشريح الهيكلي والسيولة العميقة (Structural Autopsy) مع تحديث V7.4 PRO النهائي
-   ✅ **0.1 الكسر الهيكلي الرقمي (Digital MSB):**
+【الرتبة 0】 بروتوكول التشريح الهيكلي والسيولة العميقة (Structural Autopsy) مع تحديث V7.5 FINAL
+   ✅ **0.1 الكسر الهيكلي الرقمي (Digital MSB) مع قياس دقيق:**
       - قياس قوة الكسر = حجم شمعة الكسر / متوسط حجم آخر 3 شموع
       - شرط القوة: ≥ 1.5x للكسر الحقيقي
       - شرط الاستقرار: ≥ 5 نقاط للفريمات السريعة
    
-   ✅ **0.2 خرائط السيولة المتدرجة:**
+   ✅ **0.2 خرائط السيولة المتدرجة مع تحديد الأولويات:**
       - السيولة الداخلية (Internal): FVGs الصغيرة - تملأ 50% قبل الاستمرار
-      - السيولة الخارجية (External): القمم/القيعان التاريخية - تتطلب "الثالوث المؤسسي"
+      - السيولة الخارجية (External): القمم/القيعان التاريخية - تتطلب "الثالوث المؤسسي" (الأولوية القصوى)
       - سيولة التجزئة (Retail): Equal Highs/Lows - يجب ضربها قبل الانطلاق
    
-   ✅ **0.3 فلتر الأمان المعزز للقمم التاريخية (V7.4 PRO النهائي):**
+   ✅ **0.3 فلتر الأمان المعزز للقمم التاريخية (V7.5 FINAL):**
       - القاعدة الصارمة: ممنوع الشراء عند القمم التاريخية إلا بشرط "الثالوث المؤسسي":
         * شمعة ماروبوزو (Marubozu) تخترق القمة بنسبة > 90%
-        * الإغلاق فوق القمة بـ ≥ 5 نقاط
+        * الإغلاق فوق القمة بـ ≥ 5 نقاط (وليس 3 نقاط)
         * حجم ≥ 1.5x من متوسط آخر 3 شموع
         * وجود FVG خلفي يؤكد الاندفاع المؤسسي
-      - **الأولوية:** إذا لم يتحقق الثالوث، القرار الإلزامي هو بيع انعكاسي 🔴
+      - **الأولوية V7.5:** إذا لم يتحقق الثالوث، ابحث عن دلائل الانعكاس (ذيل، ابتلاع) واتخذ قرار انعكاسي فوري 🔴
    
-   ✅ **0.4 مصفوفة القرار الهيكلي النهائية (V7.4 PRO النهائي):**
+   ✅ **0.4 مصفوفة القرار الهيكلي النهائية (V7.5 FINAL):**
       - كسر حقيقي: حجم ≥ 1.5x + استقرار ≥ 5 نقاط + FVG + ماروبوزو > 90% = دخول فوري 💥 (نجاح 98%)
       - سحب سيولة: لمس + ارتداد + عدم استقرار = انعكاس فوري 🔄 (نجاح 95%)
-      - فخ سيولة: قمة تاريخية + شمعة ضعيفة = دخول عكسي 🔄 (نجاح 95%)
+      - فخ سيولة: قمة تاريخية + شمعة ضعيفة + ذيل طويل = انعكاس فوري مع تنبيه 🚨 (نجاح 95%)
+      - ابتلاع عكسي: شمعة عكسية تبتلع ≥50% = انعكاس فوري 🔄 (نجاح 85-90%)
       - تذبذب: عدم وضوح = احتفاظ 🟡 (نجاح 70%)
 
-【الرتبة 1】 الزخم المشروط مع فلتر القمم (Conditional Momentum with Peak Filter)
+【الرتبة 1】 الزخم المشروط مع فلتر القمم (Conditional Momentum with Peak Filter) - V7.5 FINAL
    ✅ إذا كانت آخر 3 شموع ممتلئة بنسبة >85%، بشرط:
-      - عدم وجود قمة/قاع سيولة (Liquidity Pool) قريب جداً (<5 نقاط)
+      - عدم وجود قمة/قاع سيولة (Liquidity Pool) قريب جداً (<5 نقاط) - (شرط إلزامي)
       - عدم ظهور أي شمعة رفض (Wick) تتجاوز 30% من الشمعة السابقة
-      - السعر ليس عند قمة تاريخية أو تجاوزها بأقل من 5 نقاط مع "الثالوث المؤسسي" (V7.4)
-   ✅ إذا ظهرت شمعة عكسية تبتلع 50% من شمعة الزخم، يُلغى 'مود القطار' فوراً ويتحول التحليل لنظام الانعكاس (SMC Reversal).
+      - السعر ليس عند قمة تاريخية أو تجاوزها بأقل من 5 نقاط مع "الثالوث المؤسسي"
+   ✅ إذا ظهرت شمعة عكسية تبتلع 50% من شمعة الزخم، يُلغى 'مود القطار' فوراً ويتحول التحليل لنظام الانعكاس (SMC Reversal) فوراً.
 
-【الرتبة 2】 السيولة المغناطيسية مع فلتر الفخاخ (Targeting with Trap Filter)
+【الرتبة 2】 السيولة المغناطيسية مع فلتر الفخاخ (Targeting with Trap Filter) - V7.5 FINAL
    ✅ إذا كان السعر متجهاً لقمة/قاع تاريخي أو رقم مستدير
    ✅ افحص أولاً: هل سبق للسعر أن لمس هذا المستوى وارتد؟ إذا نعم، احذره كـ "فخ سيولة" محتمل
-   ✅ يُمنع الشراء/البيع حتى يتم اختراق حقيقي (تجاوز المستوى بـ ≥ 5 نقاط مع حجم ≥ 1.5x + ماروبوزو > 90%) أو رفض بفتيلة
+   ✅ يُمنع الشراء/البيع حتى يتم اختراق حقيقي (تجاوز المستوى بـ ≥ 5 نقاط مع حجم ≥ 1.5x + ماروبوزو > 90%) أو رفض بفتيلة (انعكاس)
 
-【الرتبة 3】 الهيكل الزمني
+【الرتبة 3】 الهيكل الزمني مع تأكيد الاتجاه
    ✅ يُطبق فقط في الأسواق العرضية (Side-way)
    ✅ عندما يكون الزخم ضعيف (<50%) والسيولة غير نشطة
 
-【الرتبة 4】 الفجوات السعرية
+【الرتبة 4】 الفجوات السعرية مع تأكيد الكسر
    ✅ مناطق imbalance تُملأ بعد ضرب السيولة الخارجية
    ✅ لا تدخل عند القمة، انتظر عودة السعر لملء 50% من الفجوة
+   ✅ وجود FVG خلف الكسر شرط أساسي للثالوث المؤسسي
 
-【الرتبة 5】 الفتيلة
-   ✅ تُستخدم فقط مع زخم ضعيف (أجسام <40%) وابتلاع 50%
-   ✅ تُلغى في حالة سيادة الجسم (>90%)
+【الرتبة 5】 الفتيلة مع تفعيل الانعكاس
+   ✅ تُستخدم مع زخم ضعيف (أجسام <40%) وابتلاع 50% لتفعيل الانعكاس
+   ✅ عند القمم التاريخية، الفتيلة الطويلة (>40%) = انعكاس إلزامي
 
 【الرتبة 6】 المؤشرات الفنية
    ✅ تأتي في المرتبة الأخيرة عند التعارض مع السلوك السعري
 
-[5] قانون الفتيلة العالمي (The Universal Wick Filter)
+[5] قانون الفتيلة العالمي المعدل (The Universal Wick Filter) V7.5 FINAL
 
-1. **الذيل الصاعد (في اتجاه التريند):** يُعتبر "استمراراً" طالما أن الشمعة التالية لم تبتلع 50% من جسم الشمعة السابقة لأسفل
-2. **الذيل المعاكس للاتجاه:** يحتاج تأكيد بابتلاع 50%
-3. **تجاهل الذيول المجهرية:** أي ذيل يمثل أقل من 15% من طول الشمعة يُعامل كأنه غير موجود (Marubozu Mode)
-4. **نسبة الذيل >60%:** احتفاظ 🟡 ومراقبة فقط، وليس دخول فوري (رفض سعري)
-5. **ممنوع إصدار إشارة انعكاس بناءً على الذيل وحده تحت أي ظرف**
+1. **الذيل الصاعد (في اتجاه التريند):** يُعتبر "استمراراً" طالما أن الشمعة التالية لم تبتلع 50% من جسم الشمعة السابقة لأسفل، بشرط ألا يكون السعر عند قمة تاريخية.
+2. **الذيل المعاكس للاتجاه:** يحتاج تأكيد بابتلاع 50%، وعند القمم التاريخية يعتبر إشارة انعكاس فورية.
+3. **تجاهل الذيول المجهرية:** أي ذيل يمثل أقل من 15% من طول الشمعة يُعامل كأنه غير موجود (Marubozu Mode).
+4. **نسبة الذيل >60%:** احتفاظ 🟡 ومراقبة فقط، وليس دخول فوري (رفض سعري قطعي).
+5. **نسبة الذيل 30-60% عند قمة تاريخية:** انعكاس فوري 🔄 (فخ سيولة).
+6. **ممنوع إصدار إشارة انعكاس بناءً على الذيل وحده تحت أي ظرف** إلا إذا كان الذيل >40% عند قمة تاريخية.
 
-[6] فلتر المسافة المرن (Dynamic Distance Filter)
+[6] فلتر المسافة المرن (Dynamic Distance Filter) مع قاعدة 5 نقاط الصارمة
 
-• **القاعدة الأساسية:** يُمنع رفض الصفقات القريبة من الهدف إذا كانت سرعة الشموع (Volatility) عالية
-• **المعادلة:** إذا كان الهدف على بُعد 3 نقاط والزخم قوي، ادخل؛ لأن الانزلاق السعري في الـ OTC سيجلب لك الربح في ثانية
-• **استثناء المغناطيس السعري:** 
+• **القاعدة الأساسية V7.5 FINAL:** يُمنع الشراء عند القمم التاريخية إذا كانت المسافة < 5 نقاط، حتى لو كان الزخم قوياً.
+• **المعادلة:** إذا كان الهدف على بُعد 3 نقاط والزخم قوي، ادخل فقط إذا كان السعر في منتصف الطريق (وليس عند قمة).
+• **استثناء المغناطيس السعري مع قاعدة 5 نقاط:** 
    - إذا كانت المسافة < 5 نقاط
    - والشمعة الحالية تمتلك زخماً انفجارياً (تتحرك بسرعة عالية نحو الهدف)
    - والهدف رقم مستدير أو مستوى سيولة واضح
-   - **بشرط:** أن يكون الاختراق حقيقياً (تجاوز المستوى بـ ≥ 3 نقاط، أو ≥ 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية)
-   - **القرار:** دخول سريع (Scalp) للمس الهدف
+   - **بشرط صارم:** أن يكون الاختراق حقيقياً (تجاوز المستوى بـ ≥ 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية)
+   - **القرار:** دخول سريع (Scalp) للمس الهدف فقط إذا تحقق الشرط، وإلا فهو فخ سيولة.
 
-[7] قوانين إضافية متقدمة (مع تحديثات V7.0 و V7.3 و V7.4 النهائي)
+[7] قوانين إضافية متقدمة (مع تحديثات V7.5 FINAL)
 
-💰 **7.1 قاعدة الأرقام المستديرة مع تأكيد الاختراق**
+💰 **7.1 قاعدة الأرقام المستديرة مع تأكيد الاختراق وفلتر القمم**
 • الرقم المستدير (.000/.500) = مغناطيس وليس مقاومة
-• لا تدخل عكسه إلا بعد لمسه بذيل ثم العودة
+• لا تدخل عكسه إلا بعد لمسه بذيل ثم العودة (انعكاس)
 • للدخول مع الاتجاه، انتظر تجاوز الرقم بـ 3 نقاط على الأقل (أو 5 نقاط مع "الثالوث المؤسسي" للقمم)
 
-🚀 **7.2 الزخم الثلاثي المشروط**
+🚀 **7.2 الزخم الثلاثي المشروط مع فلتر القمم**
 • 3 شموع متتالية بنفس اللون بأجسام >80% = استمرار فقط
-• بشرط عدم وجود قمة سيولة قريبة (<5 نقاط)
-• في OTC، الزخم الحقيقي (مع اختراق مستوى) يغلب الهيكل
+• بشرط إلزامي: عدم وجود قمة سيولة قريبة (<5 نقاط)
+• إذا كان هناك قمة قريبة، ابحث عن انعكاس بدلاً من استمرار
 
-💪 **7.3 سيادة الجسم - Marubozu Supremacy**
+💪 **7.3 سيادة الجسم - Marubozu Supremacy مع شرط الموقع**
 • إذا كان الجسم >90% والذيل <20% = الذيل "جس نبض" وليس انعكاساً
 • يُلغى قانون الفتيلة في هذه الحالة
-• بشرط أن يكون الاختراق لمستوى مغلق
+• بشرط أن يكون الاختراق لمستوى مغلق وليس عند قمة تاريخية (إلا مع الثالوث المؤسسي)
 
-🔄 **7.4 قاعدة معالجة الشموع الانعكاسية الصغيرة (Micro-Rejection)**
+🔄 **7.4 قاعدة معالجة الشموع الانعكاسية الصغيرة (Micro-Rejection) مع تفعيل الانعكاس**
 • إذا ظهرت شمعة عكس الاتجاه حجمها <25% من الشمعة الاندفاعية السابقة → تُهمل تماماً (تجميع سيولة)
+• إذا ظهرت شمعة عكس الاتجاه حجمها >50% من الشمعة الاندفاعية السابقة → انعكاس فوري
 
-🏢 **7.5 الاندفاع المؤسسي**
+🏢 **7.5 الاندفاع المؤسسي مع قياس القوة**
 • تغطية هبوط 10 دقائق بصعود دقيقتين = اندفاع - يُمنع البيع
+• يجب أن يكون الحجم ≥ 1.5x لتأكيد الاندفاع المؤسسي
 
-⚡ **7.6 قانون اختراق المقاومة الصامت مع التأكيد**
+⚡ **7.6 قانون اختراق المقاومة الصامت مع التأكيد وفلتر القمم**
 • إذا اقترب السعر من منطقة عرض (Supply) أو رقم مستدير بشموع خضراء متزايدة الحجم
-• يُحظر توقع الارتداد تماماً
-• **الإجراء:** تحول التوصية إلى "شراء" مع كسر المستوى بشرط تجاوزه بـ ≥ 3 نقاط (أو ≥ 5 نقاط مع "الثالوث المؤسسي" للقمم)
+• يُحظر توقع الارتداد تماماً إذا كان السعر في منتصف الطريق
+• **الإجراء:** تحول التوصية إلى "شراء" مع كسر المستوى بشرط تجاوزه بـ ≥ 3 نقاط (أو ≥ 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية)
 
-🧲 **7.7 قانون الفجوة المغناطيسية (FVG Magnet)**
+🧲 **7.7 قانون الفجوة المغناطيسية (FVG Magnet) مع تأكيد الكسر**
 • أي حركة انفجارية تترك فجوة (Imbalance) > 5 نقاط، تجعل الشراء عند القمة "مخاطرة انتحارية"
 • انتظر عودة السعر لمنطقة 'الخصم' (50% من الفجوة) قبل أي توصية استمرار
 • لا تشتري أبداً عند رأس الانفجار
 
-🚀 **7.8 قاعدة السمكة الكبيرة (Higher Timeframe Alignment)**
+🚀 **7.8 قاعدة السمكة الكبيرة (Higher Timeframe Alignment) مع تأكيد الاتجاه**
 • قبل إصدار أي إشارة على فريم الثواني (S5, S10, S15)، يجب النظر إلى هيكل فريم الدقيقة (M1) أو (M5)
-• إذا كان الفريم الكبير صاعداً، تُقبل صفقات الشراء بـ 3 نقاط اختراق (أو 5 نقاط مع "الثالوث المؤسسي" للقمم)
+• إذا كان الفريم الكبير صاعداً، تُقبل صفقات الشراء بشرط عدم وجود قمة قريبة (<5 نقاط)
 • إذا كان الفريم الكبير هابطاً، يُمنع الشراء تماماً عند القمم ويُستبدل ببحث فوري عن "إشارة انعكاس"
 
-🔄 **7.9 مصفوفة القرار القطعي النهائية (إلغاء الاحتفاظ 🟡) V7.4 PRO النهائي**
-• الحالة (أ): السعر يلمس المقاومة + اندفاع سريع (+3 نقاط) + حجم ≥ 1.3x = شراء فوري 🟢 (نجاح 90%)
+🔄 **7.9 مصفوفة القرار القطعي النهائية (إلغاء الاحتفاظ 🟡) V7.5 FINAL**
+• الحالة (أ): السعر يلمس المقاومة + اندفاع سريع (+3 نقاط) + حجم ≥ 1.3x + لا توجد قمة قريبة = شراء فوري 🟢 (نجاح 90%)
 • الحالة (ب): السعر يلمس المقاومة + ظهور فتيلة علوية بـ 2 نقطة = بيع فوري (انعكاس) 🔴 (نجاح 95%)
 • الحالة (ج): السعر عند قمة تاريخية + "الثالوث المؤسسي" (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%) = كسر هيكلي - شراء 💥🟢 (نجاح 98%)
-• الحالة (د): السعر عند قمة تاريخية + شمعة ضعيفة (<50%) = بيع "فخ سيولة" 🔴 (نجاح 95%)
+• الحالة (د): السعر عند قمة تاريخية + شمعة ضعيفة (<50%) أو ذيل طويل (>40%) = بيع "فخ سيولة" 🔴 (نجاح 95%)
 
-⚡ **7.10 تحليل سرعة تغير الزخم (Momentum Decay) مع تحديث V7.4 النهائي**
+⚡ **7.10 تحليل سرعة تغير الزخم (Momentum Decay) مع تحديث V7.5 FINAL**
 • إذا كانت الشمعة الحالية أكبر من متوسط حجم آخر 5 شموع بـ 3 أضعاف (300%) = حالة "إجهاد" (Exhaustion)
 • الإجراء: لا تدخل مع الاتجاه؛ احتفاظ 🟡 وانتظر ظهور إشارة "انعكاس فوري 🔄"
 
-⏰ **7.11 بروتوكول "الجوكر الهجومي" (تجاوز دقائق الغدر) مع تحديث V7.4 النهائي**
+⏰ **7.11 بروتوكول "الجوكر الهجومي" (تجاوز دقائق الغدر) مع نافذة التنفيذ الذهبية**
 • في الدقائق (14, 29, 44, 59)، إذا تبقى أقل من 15 ثانية
 • مسافة الأمان: {safety_buffer} نقاط (حسب وضع السوق)
-• نافذة التنفيذ الذهبية: يُسمح بالدخول فقط بين الثانية 05 والثانية 25 من عمر الشمعة
+• نافذة التنفيذ الذهبية: يُسمح بالدخول فقط بين الثانية 5 والثانية 25 (لفريمات الثواني) أو 10-40 (لفريمات الدقائق)
 • القرار: مسموح بالدخول فقط إذا كان السعر في حالة "اندفاع حر" (تجاوز آخر مستوى بـ {safety_buffer} نقاط، أو ≥ 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية) **وكان في نافذة التنفيذ الذهبية**
-• المنطق: الاندفاع في آخر ثوانٍ يعني أن الشمعة القادمة ستفتح بـ "Gap" أو استمرار قوي، لكن الدخول في الثواني الأخيرة خطير
+• المنطق: الاندفاع في آخر ثوانٍ يعني أن الشمعة القادمة ستفتح بـ "Gap" أو استمرار قوي، لكن الدخول خارج النافذة الذهبية خطير
 
-🔴 **7.12 منطق الاحتمالات المزدوجة (Double Probability Logic) مع تحديث V7.4 النهائي:**
+🔴 **7.12 منطق الاحتمالات المزدوجة (Double Probability Logic) مع تحديث V7.5 FINAL:**
    🔴 **سيناريو الانفجار (Breakout):**
    - إذا كسر السعر القاع بـ 5 نقاط كاملة + جسم شمعة > 90% + حجم ≥ 1.5x + FVG = كسر هيكلي - بيع 💥🔴 (نجاح 98%)
    - الهدف: ملاحقة الزخم المؤسسي.
@@ -3759,44 +3881,45 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
    - إذا لمس السعر القاع وارتد بـ 2 نقطة للأعلى + أو ظهر ذيل طويل + أو ابتلعت الشمعة التالية 50% من الهابطة = شراء انعكاسي فوري 🔄🟢 (نجاح 95%)
    - الهدف: ضرب ستوبات البائعين الضعفاء.
 
-🛡️ **7.13 فلتر الأمان الرقمي النهائي (تعديل الـ 5 نقاط V7.4 النهائي):**
-   - **القاعدة الصارمة:** يُمنع البيع عند منطقة الدعم إلا إذا كان السعر قد تجاوز الدعم فعلياً بمسافة أمان (5 نقاط) مع حجم ≥ 1.5x + FVG. 
-   - إذا كان السعر 'فوق' الدعم مباشرة، فكر في الشراء الانعكاسي أولاً لأن نسبة نجاحه عند القيعان تصل لـ 95%.
+🛡️ **7.13 فلتر الأمان الرقمي النهائي (تعديل الـ 5 نقاط V7.5 FINAL):**
+   - **القاعدة الصارمة:** يُمنع الشراء عند منطقة القمة إلا إذا كان السعر قد تجاوز القمة فعلياً بمسافة أمان (5 نقاط) مع حجم ≥ 1.5x + FVG. 
+   - إذا كان السعر 'تحت' القمة مباشرة، فكر في البيع الانعكاسي أولاً لأن نسبة نجاحه عند القمم تصل لـ 95%.
 
-🚨 **7.14 تنبيه فخ السيولة (Liquidity Trap Alert) V7.4 النهائي:**
+🚨 **7.14 تنبيه فخ السيولة (Liquidity Trap Alert) V7.5 FINAL:**
    - إذا اكتشف البوت أن السعر يحاول اختراق قمة تاريخية ولكن:
      * المسافة من القمة: أقل من 5 نقاط (أي +1 إلى +4.9 نقاط)
      * حجم الشمعة: أقل من 1.5x من المتوسط
      * شكل الشمعة: وجود فتيلة علوية طويلة (>40%) أو جسم ضعيف (<50%)
    - **الإجراء:** إصدار تنبيه فوري في بداية التحليل وإلغاء أي فكرة شراء، مع اقتراح دخول بيع انعكاسي بعد الارتداد (نقطة الدخول: القمة - 2) (نسبة نجاح 95%).
 
-**7.15 نقطة دخول إعادة الاختبار (The Retest Entry) - V7.4 النهائي:**
+**7.15 نقطة دخول إعادة الاختبار (The Retest Entry) مع تعديل V7.5 FINAL:**
    - لا تدخل مع رأس الشمعة المنطلقة؛ نقطة الدخول المثالية هي ملامسة السعر لخط القمة المكسور مرة أخرى (القبلة الأخيرة).
    - الهدف: الدخول من أدنى سعر ممكن (Zero Drawdown) وتقليل نسبة الانعكاس إلى الصفر.
-   - تطبق هذه القاعدة بعد تأكيد الكسر الحقيقي بـ 5 نقاط.
+   - تطبق هذه القاعدة بعد تأكيد الكسر الحقيقي بـ 5 نقاط والثالوث المؤسسي.
 
-[8] فلاتر الرفض الإلزامية وأسباب المنع الثمانية
+[8] فلاتر الرفض الإلزامية وأسباب المنع التسعة (V7.5 FINAL)
 
-💰 **8.1 فلتر المسافة الحقيقية مع معامل الانزلاق**
+💰 **8.1 فلتر المسافة الحقيقية مع معامل الانزلاق وقاعدة 5 نقاط**
 • المسافة الصافية = المسافة - (السبريد × 2)
 • المسافة الصافية < 3 نقاط = احتفاظ 🟡 (إلا مع استثناء المغناطيس السعري)
 • للقمم التاريخية: المسافة الصافية < 5 نقاط = احتفاظ 🟡 (إلا مع "الثالوث المؤسسي")
 
-📰 **8.2 فلتر الأخبار**
+📰 **8.2 فلتر الأخبار مع قياس الإجهاد**
 • شمعة حجمها >300% من المتوسط = احتفاظ 🟡 لمدة 3 شموع (إجهاد سعري)
 • ذيول الأخبار لا تُحتسب في التحليل
 
-⚠️ **8.3 قائمة أسباب المنع الثمانية النهائية (إذا وُجد سبب واحد → احتفاظ)**
-1. **زخم معاكس:** آخر 3 شموع >80% عكس الاتجاه
-2. **فخ سيولة محتمل:** السعر عند قمة تاريخية أو رقم مستدير مع ارتداد سابق (<5 نقاط)
-3. **اختراق غير حقيقي:** المسافة إلى الهدف >3 نقاط بدون تجاوز المستوى بـ 3 نقاط (أو 5 نقاط مع "الثالوث المؤسسي" للقمم)
-4. **دقيقة الغدر + خارج نافذة التنفيذ:** داخل (55-59) أو (25-29) أو (40-44) أو (10-14) وليس في نافذة 5-25 ثانية
-5. **زخم منهك:** الشمعة الحالية >300% من المتوسط (إجهاد سعري)
-6. **غياب التأكيد:** عدم ابتلاع 50% (إلا مع سيادة الجسم)
-7. **تضارب الإطارات:** تعارض {candle} مع {verification_timeframe}
-8. **أخبار نشطة:** ±30 دقيقة من خبر قوي
+⚠️ **8.3 قائمة أسباب المنع التسعة النهائية (إذا وُجد سبب واحد → احتفاظ أو انعكاس)**
+1. **قمة تاريخية بدون ثالوث مؤسسي:** السعر ضمن 5 نقاط من قمة بدون شروط الكسر → انعكاس 🔄
+2. **زخم معاكس:** آخر 3 شموع >80% عكس الاتجاه
+3. **فخ سيولة محتمل:** السعر عند قمة تاريخية أو رقم مستدير مع ارتداد سابق (<5 نقاط)
+4. **اختراق غير حقيقي:** المسافة إلى الهدف >3 نقاط بدون تجاوز المستوى بـ 3 نقاط (أو 5 نقاط مع الثالوث)
+5. **دقيقة الغدر + خارج نافذة التنفيذ:** داخل (55-59) أو (25-29) أو (40-44) أو (10-14) وليس في نافذة 5-25/10-40 ثانية
+6. **زخم منهك:** الشمعة الحالية >300% من المتوسط (إجهاد سعري)
+7. **غياب التأكيد:** عدم ابتلاع 50% للانعكاس (إلا مع سيادة الجسم)
+8. **تضارب الإطارات:** تعارض {candle} مع {verification_timeframe}
+9. **أخبار نشطة:** ±30 دقيقة من خبر قوي
 
-[9] النظام الزمني الذكي مع دقائق التحول
+[9] النظام الزمني الذكي مع دقائق التحول ونافذة التنفيذ الذهبية
 
 【استخراج الوقت والمسافة بدقة فائقة (بكسل by بكسل)】
 
@@ -3849,77 +3972,124 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • نقطة الدخول المعدلة = السعر الحالي + نقطة أمان في اتجاه الصفقة
 • المسافة الفعلية = المسافة - 1 نقطة
 
-⚠️ **بروتوكول دقائق التحول والنافذة الذهبية (The Pivot Minutes & Golden Window):**
+⚠️ **بروتوكول دقائق التحول والنافذة الذهبية (The Pivot Minutes & Golden Window) V7.5 FINAL:**
 • في الدقائق الحرجة (14, 29, 44, 59):
    - إذا تبقى أقل من 15 ثانية وكان السعر في اندفاع حر (تجاوز مستوى بـ {safety_buffer} نقاط، أو ≥ 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية)
-   - **يجب أن تكون الثواني المنقضية بين 5 و 25 ثانية (نافذة التنفيذ الذهبية)**
+   - **يجب أن تكون الثواني المنقضية بين 5 و 25 ثانية (نافذة التنفيذ الذهبية) لفريمات الثواني**
+   - **يجب أن تكون الثواني المنقضية بين 10 و 40 ثانية (نافذة التنفيذ الذهبية) لفريمات الدقائق**
    - الاستثناء الوحيد: اختراق حقيقي لمستوى مغلق بـ ≥ {safety_buffer} نقاط (أو ≥ 5 نقاط مع "الثالوث المؤسسي")
 • التفسير: الشمعة الجديدة في الدقائق (15, 30, 45, 00) غالباً ما تعكس الاتجاه بفتيلة طويلة
 
-[10] مفتاح الطوارئ - The Momentum Override
+[10] مفتاح الطوارئ - The Momentum Override مع فلتر القمم
 
-🚨 **【مفتاح تجاوز النظام - Momentum Override】**
+🚨 **【مفتاح تجاوز النظام - Momentum Override V7.5 FINAL】**
 
 إذا تحقق الشرط التالي:
-• الشمعة الحالية تخترق مستوى مغلق بـ ≥ 3 نقاط (أو ≥ 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية)
+• الشمعة الحالية تخترق مستوى مغلق بـ ≥ 5 نقاط (للقمم التاريخية) أو ≥ 3 نقاط (للمستويات العادية)
 • الشمعة ممتلئة >90% (Marubozu)
-• حجم الشمعة ≥ 1.5x من متوسط آخر 3 شموع (V7.4)
+• حجم الشمعة ≥ 1.5x من متوسط آخر 3 شموع
 • ابتلعت آخر 3 شموع معاكسة في أقل من 30 ثانية
+• **السعر ليس ضمن 5 نقاط من قمة تاريخية بدون الثالوث المؤسسي**
 
 ✅ **الإجراء الإلزامي:**
 1. تُلغى فوراً جميع الفلاتر التالية:
    - دقيقة الغدر (إذا كانت نافذة التنفيذ غير مثالية)
    - السبريد
-   - المسافة الحقيقية
-   - الفتيلة
+   - المسافة الحقيقية (إذا كانت ≥ 5 نقاط)
+   - الفتيلة (إذا كانت < 20%)
    - أسباب المنع (عدا فحص الفخاخ)
 2. **الإجراء:** دخول فوري مع الاتجاه الانفجاري (نسبة نجاح 98%)
 
-[11] خوارزمية القرار النهائي (Final Decision Matrix) - النسخة الهجومية المتكاملة V7.4 النهائي
+[11] خوارزمية القرار النهائي (Final Decision Matrix) - V7.5 FINAL
 
-🚨 **منطق القرار النهائي لتغطية جميع السيناريوهات (مع بروتوكول الأولوية للأنجح النهائي V7.4):**
+🚨 **منطق القرار النهائي لتغطية جميع السيناريوهات (مع بروتوكول الأولوية للانعكاس V7.5):**
 
-# الأولوية الرقمية: ابحث عن أي سبب للمنع أولاً
-if is_near_historical_level: # إذا كان السعر قريب من قمة أو قاع تاريخي (ضمن 5 نقاط)
-    # قياس قوة الكسر
+# الأولوية الرقمية: ابحث عن أي سبب للانعكاس أولاً، ثم ابحث عن الكسر
+if is_near_historical_peak or distance_to_peak < 8: # إذا كان السعر قريب من قمة تاريخية
+    # قياس قوة الكسر والانعكاس
     breakout_force = candle_volume / avg_volume if avg_volume > 0 else 1.0
     has_institutional_fvg = check_for_fvg_behind()
     is_marubozu = candle_body_ratio > 0.9 and candle_wick_ratio < 0.2
+    has_long_wick = candle_wick_ratio > 0.4
+    has_engulfing = engulfing_ratio > 0.5
     
-    if breakout_points >= 5 and is_marubozu and breakout_force >= 1.5 and has_institutional_fvg:
-        # السيناريو 1: كسر هيكلي حقيقي مع الثالوث المؤسسي (V7.4)
-        final_decision = "STRUCTURAL BREAKOUT - ENTRY WITH MOMENTUM (Buy/Sell) 💥"
+    # فحص الانعكاس أولاً (الأولوية V7.5)
+    if has_long_wick or has_engulfing or candle_body_ratio < 0.5:
+        if distance_to_peak < 5:
+            # السيناريو 1: فخ سيولة مؤكد - انعكاس فوري
+            final_decision = "LIQUIDITY TRAP - IMMEDIATE REVERSAL (SELL) 🔴"
+            confidence = 95
+            reason = f"فخ سيولة مؤكد: قمة تاريخية مع { 'ذيل طويل' if has_long_wick else 'ابتلاع عكسي' if has_engulfing else 'جسم ضعيف' }"
+            success_rate = "95%"
+            entry_type = "REVERSAL_AT_PEAK_MINUS_2"
+        else:
+            # سيناريو انعكاس عادي
+            final_decision = "REVERSAL SIGNAL - SELL 🔴"
+            confidence = 85
+            reason = f"إشارة انعكاس: { 'ذيل طويل' if has_long_wick else 'ابتلاع عكسي' }"
+            success_rate = "85%"
+            entry_type = "REVERSAL_ENTRY"
+    
+    # فحص الكسر (الثانوية)
+    elif breakout_points >= 5 and is_marubozu and breakout_force >= 1.5 and has_institutional_fvg:
+        # السيناريو 2: كسر هيكلي حقيقي مع الثالوث المؤسسي
+        final_decision = "STRUCTURAL BREAKOUT - BUY WITH MOMENTUM 💥🟢"
         confidence = 98
-        reason = "كسر هيكلي حقيقي: ثالوث مؤسسي (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%)"
+        reason = "كسر هيكلي حقيقي: ثالوث مؤسسي مكتمل (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%)"
         success_rate = "98%"
-        entry_type = "RETEST_ENTRY"  # دخول عند إعادة الاختبار
-    elif breakout_points >= 3 and breakout_points < 5 and candle_wick_ratio > 0.40:
-        # السيناريو 2: سحب سيولة (Liquidity Sweep)
-        final_decision = "LIQUIDITY SWEEP - REVERSAL ENTRY (Opposite Direction) 🔄"
-        confidence = 95
-        reason = "سحب سيولة: لمس القمة وارتداد بدون استقرار ≥ 5 نقاط"
-        success_rate = "95%"
-        entry_type = "IMMEDIATE_REVERSAL"
-    elif candle_wick_ratio > 0.40 or engulfing_ratio > 0.50:
-        # السيناريو 3: فخ سيولة وانعكاس - تشغيل تنبيه فخ السيولة
-        final_decision = "LIQUIDITY TRAP - REVERSAL ENTRY (SELL) 🔴"
-        confidence = 95
-        reason = "فخ سيولة: شمعة ضعيفة عند القمة التاريخية - إصدار تنبيه فوري"
-        success_rate = "95%"
-        entry_type = "REVERSAL_AT_PEAK_MINUS_2"
+        entry_type = "RETEST_ENTRY"
+    
     else:
-        # السيناريو 4: تذبذب غير واضح
-        final_decision = "HOLD 🟡 - Waiting for 'Institutional Trinity' confirmation (V7.4)"
+        # السيناريو 3: تذبذب غير واضح
+        final_decision = "HOLD 🟡 - Waiting for clear signal"
         confidence = 60
-        reason = "تذبذب: لم تتحقق شروط الكسر أو الانعكاس"
+        reason = "تذبذب: لم تتحقق شروط الكسر أو الانعكاس بشكل قاطع"
         success_rate = "70%"
         entry_type = "NO_ENTRY"
+
+elif is_near_historical_bottom or distance_to_bottom < 8:
+    # نفس المنطق للقيعان (معكوس)
+    breakout_force = candle_volume / avg_volume if avg_volume > 0 else 1.0
+    has_institutional_fvg = check_for_fvg_behind()
+    is_marubozu = candle_body_ratio > 0.9 and candle_wick_ratio < 0.2
+    has_long_wick = candle_wick_ratio > 0.4
+    has_engulfing = engulfing_ratio > 0.5
+    
+    # فحص الانعكاس أولاً
+    if has_long_wick or has_engulfing or candle_body_ratio < 0.5:
+        if distance_to_bottom < 5:
+            final_decision = "LIQUIDITY TRAP - IMMEDIATE REVERSAL (BUY) 🟢"
+            confidence = 95
+            reason = f"فخ سيولة مؤكد: قاع تاريخي مع { 'ذيل طويل' if has_long_wick else 'ابتلاع عكسي' if has_engulfing else 'جسم ضعيف' }"
+            success_rate = "95%"
+            entry_type = "REVERSAL_AT_BOTTOM_PLUS_2"
+        else:
+            final_decision = "REVERSAL SIGNAL - BUY 🟢"
+            confidence = 85
+            reason = f"إشارة انعكاس: { 'ذيل طويل' if has_long_wick else 'ابتلاع عكسي' }"
+            success_rate = "85%"
+            entry_type = "REVERSAL_ENTRY"
+    
+    elif breakout_points >= 5 and is_marubozu and breakout_force >= 1.5 and has_institutional_fvg:
+        final_decision = "STRUCTURAL BREAKOUT - SELL WITH MOMENTUM 💥🔴"
+        confidence = 98
+        reason = "كسر هيكلي حقيقي: ثالوث مؤسسي مكتمل"
+        success_rate = "98%"
+        entry_type = "RETEST_ENTRY"
+    
+    else:
+        final_decision = "HOLD 🟡"
+        confidence = 60
+        reason = "تذبذب غير واضح"
+        success_rate = "70%"
+        entry_type = "NO_ENTRY"
+
 else:
     # السعر في منتصف الطريق، اتبع الزخم العادي مع قياس قوة الحجم
     breakout_force = candle_volume / avg_volume if avg_volume > 0 else 1.0
     
     if momentum > 85 and distance_to_level > 3 and breakout_force >= 1.3:
-        final_decision = "Action (Buy/Sell) with Volume Confirmation 🟢"
+        final_decision = "MOMENTUM ENTRY (Buy/Sell) with Volume Confirmation 🟢"
         confidence = 90
         success_rate = "90%"
         entry_type = "RETEST_ENTRY"
@@ -3934,13 +4104,13 @@ else:
         success_rate = "75%"
         entry_type = "HOLD"
 
-**التطبيق العملي للمناطق الحرجة (الدعم/المقاومة) مع V7.4 النهائي:**
-- **عند مستوى الدعم:**
-  * إذا تحقق "الثالوث المؤسسي" (اختراق للأسفل بـ ≥ 5 نقاط + جسم > 90% + حجم ≥ 1.5x + FVG) ← القرار: **كسر هيكلي - بيع 💥🔴** (نجاح 98%).
-  * إذا لمس السعر الدعم وارتد (ذيل أو ابتلاع) ← القرار: **سحب سيولة - شراء انعكاسي 🔄🟢** (نجاح 95%).
-- **عند مستوى المقاومة:**
-  * إذا تحقق "الثالوث المؤسسي" (اختراق للأعلى بـ ≥ 5 نقاط + جسم > 90% + حجم ≥ 1.5x + FVG) ← القرار: **كسر هيكلي - شراء 💥🟢** (نجاح 98%).
-  * إذا لمس السعر المقاومة وارتد (ذيل أو ابتلاع) ← القرار: **فخ سيولة - بيع انعكاسي 🔄🔴 مع تنبيه فوري** (نجاح 95%).
+**التطبيق العملي للمناطق الحرجة (الدعم/المقاومة) مع V7.5 FINAL:**
+- **عند مستوى المقاومة / قمة تاريخية:**
+  * ابحث عن دلائل الانعكاس أولاً (ذيل طويل، ابتلاع عكسي، جسم ضعيف) ← القرار: **فخ سيولة - بيع انعكاسي 🔄🔴 مع تنبيه فوري** (نجاح 95%).
+  * إذا لم توجد دلائل انعكاس، افحص الثالوث المؤسسي (اختراق للأعلى بـ ≥ 5 نقاط + جسم > 90% + حجم ≥ 1.5x + FVG) ← القرار: **كسر هيكلي - شراء 💥🟢** (نجاح 98%).
+- **عند مستوى الدعم / قاع تاريخي:**
+  * ابحث عن دلائل الانعكاس أولاً (ذيل طويل سفلي، ابتلاع عكسي صاعد، جسم ضعيف) ← القرار: **فخ سيولة - شراء انعكاسي 🔄🟢** (نجاح 95%).
+  * إذا لم توجد دلائل انعكاس، افحص الثالوث المؤسسي (اختراق للأسفل بـ ≥ 5 نقاط + جسم > 90% + حجم ≥ 1.5x + FVG) ← القرار: **كسر هيكلي - بيع 💥🔴** (نجاح 98%).
 - **إذا شككت (<90% ثقة)** → احتفاظ 🟡
 
 🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصر:
@@ -3950,6 +4120,7 @@ else:
 • الوقت على المنصة (المرجع): [الوقت المستخرج من الصورة]
 • حالة الهيكل: [صاعد/هابط/متذبذب] + (توافق 4/4 إطارات: نعم / لا)
 • خريطة السيولة: [أقرب فخ سيولة Inducement] + [مناطق السيولة المستهدفة]
+• الثواني المنقضية: [X] ثانية (نافذة التنفيذ: [داخل/خارج] النافذة الذهبية)
 
 🎯 الإشارة التنفيذية:
 • السعر الحالي: [السعر الدقيق من الشارت]
@@ -3958,7 +4129,8 @@ else:
 • القرار الفني: [شراء 🟢 / بيع 🔴 / كسر هيكلي 💥 / سحب سيولة 🔄 / انعكاس فوري 🔄 / فخ سيولة 🚨]
 • قوة الإشارة: [عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️]
 • نقطة الدخول: [السعر الدقيق + شرط الدخول - يفضل إعادة اختبار المستوى]
-• وقت الدخول: [الآن / فوري (Flash) / بعد إغلاق الشمعة الحالية / بعد إعادة اختبار المستوى]
+• نوع الدخول 🚨: [دخول مباشر / إعادة اختبار / انعكاس فوري]
+• وقت الدخول: [ فوري (Flash) / بعد إغلاق الشمعة الحالية / بعد إعادة اختبار المستوى]
 • الأهداف الربحية:
   🎯 TP1: [السعر] - [سحب أول سيولة داخلية] - [احتمالية الوصول: عالية/متوسطة/منخفضة]
   🎯 TP2: [السعر] - [الهدف الرئيسي - منطقة عرض/طلب قوية] - [احتمالية الوصول: عالية/متوسطة/منخفضة]
@@ -3968,19 +4140,18 @@ else:
 • وقت الذروة المتوقع: [خلال الـ X شموع القادمة / بعد X دقيقة]
 
 ⚠️ إدارة المخاطر:
-• مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/❄️/🚫]
-• نسبة نجاح الصفقة المتوقعة (V7.4 النهائي): [XX]% - [التقييم: ممتاز/جيد/متوسط/ضعيف]
+• مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/🔄/❄️/🚫]
+• نسبة نجاح الصفقة المتوقعة (V7.5 FINAL): [XX]% - [التقييم: ممتاز/جيد/متوسط/ضعيف]
 • نقطة الإلغاء: [السعر الذي يفسد التحليل]
-• 🚨 تنبيه فخ السيولة: [نشط / غير نشط]
-• نوع الدخول: [دخول مباشر / إعادة اختبار / انعكاس فوري]
+• 🚨 تنبيه فخ السيولة: [نشط / غير نشط] - [إذا نشط: تفاصيل التنبيه]
 
-الآن قم بتحليل الشارت المرفق **بتركيز كامل على استخراج البيانات من الصورة** بتطبيق جميع التعديلات والتحديثات (V7.4 النهائي - الأولوية للأنجح) وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
+الآن قم بتحليل الشارت المرفق **بتركيز كامل على استخراج البيانات من الصورة** بتطبيق جميع التعديلات والتحديثات (V7.5 FINAL - الحل النهائي) وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
 """
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         # --- الخطوة 1: التحليل الأولي الأساسي ---
-        await wait_msg.edit_text("🔍 انتظار قليلا جاري تحليل 🤌🤌🤌...")
+        await wait_msg.edit_text("🔍 جاري التحليل انتظار قليلآ 🤌🤌🤌...")
         
         payload_1 = {
             "model": MISTRAL_MODEL,
@@ -4005,12 +4176,12 @@ else:
         
         initial_analysis = response_1.json()['choices'][0]['message']['content'].strip()
         
-        # تطبيق بروتوكول التشريح الهيكلي V7.4 النهائي على التحليل
+        # تطبيق بروتوكول التشريح الهيكلي V7.5 FINAL على التحليل
         if "historical_peak" in initial_analysis.lower() or "قمة تاريخية" in initial_analysis or "قاع تاريخي" in initial_analysis:
             # التحقق من شروط الأمان المعزز
             if "breakout_points" in locals() and breakout_points < 5:
                 # إضافة تحذير إضافي
-                enhanced_warning = "\n\n⚠️ **تنبيه Obeida Trading (V7.4 النهائي):**\nالسعر عند قمة/قاع تاريخي بدون 'الثالوث المؤسسي' (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%). يُمنع الدخول إلا مع توفر جميع الشروط. الأولوية للصفقة الانعكاسية (نسبة نجاح 95%)."
+                enhanced_warning = "\n\n⚠️ **تنبيه Obeida Trading (V7.5 FINAL):**\n⚠️⚠️⚠️ **تنبيه عالي الخطورة** ⚠️⚠️⚠️\nالسعر عند قمة/قاع تاريخي بدون 'الثالوث المؤسسي' (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%).\n✅ **القرار الإلزامي:** انعكاس فوري (نسبة نجاح 95%) بدلاً من الشراء.\n🚫 يُمنع الدخول مع الاتجاه في هذه المنطقة."
                 initial_analysis += enhanced_warning
         
         # تنظيف النصوص من التكرار
@@ -4029,19 +4200,22 @@ else:
         # حساب نافذة التنفيذ الذهبية
         in_golden_window = is_in_golden_execution_window(current_second, candle)
         golden_window_status = "داخل النافذة الذهبية ✅" if in_golden_window else "خارج النافذة الذهبية ❌"
+        seconds_passed = 60 - seconds_remaining
         
         # إعداد النص النهائي
         full_result = (
-            f"✅ **تم التحليل بنجاح - بالإصدار الجديد 🚨** \n"
-            f"━━━━━━━━━━━━━━━━\n"
+            f"✅ **تم التحليل بنجاح - الإصدار النهائي 🚀** \n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{initial_analysis}\n\n"
-            f"━━━━━━━━━━━━━━━━\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"🔧 **الإعدادات المستخدمة:**\n"
             f"• 🕧 فريم التحقق للكسر: {verification_timeframe}\n"
             f"• 🕧 جلسة السوق: {session_name} ({session_time})\n"
             f"• 🕧 نمط السوق: {market_mode}\n"
-            f"━━━━━━━━━━━━━━━━━\n"
-            f"🤖 **Powered by - 🤯 Obeida Trading 🤯 **"
+            f"• ⏱️ الثواني المنقضية: {seconds_passed} ثانية\n"
+            f"• ⏱️ نافذة التنفيذ: {golden_window_status}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🤖 **Powered by - 🤯 Obeida Trading  🤯 **"
         )
         
         # تنظيف النهائي من التكرارات
@@ -4845,7 +5019,7 @@ LOGIN_PAGE_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>تسجيل الدخول - Obeida Trading</title>
+    <title>🛑 لوحة تسجيل الدخول 🛑</title>
     <style>
         * {
             margin: 0;
@@ -4954,7 +5128,7 @@ LOGIN_PAGE_HTML = """
         <div class="login-header">
             <div class="logo">🤖</div>
             <h1>Obeida Trading</h1>
-            <p>نظام إدارة الاشتراكات المتطور</p>
+            <p>نظام إدارة البوت المتطور</p>
         </div>
         
         {% if error %}
@@ -4970,11 +5144,11 @@ LOGIN_PAGE_HTML = """
                 <label>🔑 كلمة المرور</label>
                 <input type="password" name="password" required>
             </div>
-            <button type="submit" class="btn-login">تسجيل الدخول</button>
+            <button type="submit" class="btn-login">تسجيل الدخول </button>
         </form>
         
         <div class="footer">
-            <p>© 2024 Obeida Trading - جميع الحقوق محفوظة</p>
+            <p>© 2026 Obeida Trading - جميع الحقوق محفوظة</p>
         </div>
     </div>
 </body>
@@ -4988,7 +5162,7 @@ ADMIN_PANEL_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>لوحة التحكم - Obeida Trading V2</title>
+    <title>🛑 لوحة التحكم المتطورة 🛑</title>
     <style>
         * {
             margin: 0;
@@ -5346,23 +5520,23 @@ ADMIN_PANEL_HTML = """
     <div class="container">
         <div class="header">
             <div>
-                <h1>🤖 لوحة تحكم Obeida Trading - V2</h1>
+                <h1>🤖 لوحة تحكم المنصورة عبيدة للتداول 🤖</h1>
                 <p class="subtitle">نظام إدارة الاشتراكات المتطور - المشرف: @Sz2zv</p>
             </div>
             <div>
-                <span style="margin-right: 20px; color: #666;">مرحباً، المشرف</span>
+                <span style="margin-right: 20px; color: #666;">مرحباً، المالك</span>
                 <a href="/logout" class="logout-btn">تسجيل الخروج</a>
             </div>
         </div>
 
         <div class="stats-grid">
             <div class="stat-card">
-                <h3>👥 إجمالي المستخدمين</h3>
+                <h3>👥 جميع المستخدمين </h3>
                 <div class="number">{{ stats.total_users }}</div>
                 <div class="trend">+{{ stats.new_users_today if stats.new_users_today else 0 }} اليوم</div>
             </div>
             <div class="stat-card">
-                <h3>✅ المشتركين النشطين</h3>
+                <h3>✅ المشتركين الموجودين</h3>
                 <div class="number">{{ stats.active_users }}</div>
                 <div class="trend">{{ (stats.active_users / stats.total_users * 100)|round(1) if stats.total_users > 0 else 0 }}% من الإجمالي</div>
             </div>
@@ -5931,7 +6105,7 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>🤯 Obeida Trading 🤯</title>
+        <title>🤖 لوحة تحكم المتطورة في بوت عبيدة للتداول 🤖</title>
         <style>
             body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
             h1 { font-size: 3em; margin-bottom: 20px; }
@@ -5942,9 +6116,9 @@ def home():
     <body>
         <h1> 📊 Obeida Trading - Subscription System 📊</h1>
         <p>Chat & Technical Analysis Bot with Advanced Subscription System</p>
-        <div class="status">🌍 نظام المناطق الزمنية للمستخدمين نشط ✅</div>
+        <div class="status">✅ جميع الأنظمة قيد التشغيل ✅</div>
         <p>Last Ping: """ + time.strftime("%Y-%m-%d %H:%M:%S") + """</p>
-        <a href="/admin" class="admin-link">🔐 الدخول للوحة التحكم</a>
+        <a href="/admin" class="admin-link">🔐 انقر هنا لدخول الى لوحة التحكم 🔐</a>
     </body>
     </html>
     """
@@ -6271,9 +6445,9 @@ def main():
             print(f"✅ تم حذف {deleted_count} ملف مؤقت عند بدء التشغيل")
         else:
             os.makedirs(IMAGE_CACHE_DIR)
-            print(f"📁 تم إنشاء مجلد الصور المؤقتة: {IMAGE_CACHE_DIR}")
+            print(f"📁 تم إنشاء مجلد الصور: {IMAGE_CACHE_DIR}")
     except Exception as e:
-        print(f"⚠️ خطأ في تنظيف الملفات عند بدء التشغيل: {e}")
+        print(f"⚠️ خطأ في تنظيف الملفات: {e}")
     
     # إنشاء تطبيق Telegram
     application = Application.builder().token(TOKEN).build()
@@ -6352,3 +6526,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+    
