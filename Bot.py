@@ -2770,6 +2770,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         market_mode = "AGGRESSIVE" if candle.startswith('S') or (is_trap_minute and seconds_remaining < 15 and momentum_boost) else "CONSERVATIVE"
         
         # دوال مساعدة لبروتوكول التشريح الهيكلي V7.5
+                # دوال مساعدة لبروتوكول التشريح الهيكلي V7.4
         def calculate_breakout_force(candle_volume, avg_volume):
             """حساب قوة الكسر الهيكلي"""
             if avg_volume > 0:
@@ -2794,6 +2795,24 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 "retail": []     # القيعان المتساوية والقمم المتساوية
             }
             return liquidity_layers
+
+        # ============================================
+        # [تعديل V7.4 PRO] - فلتر نافذة الوقت الذهبية (Execution Window)
+        # ============================================
+        def is_in_golden_execution_window(current_second, candle_type):
+            """
+            نافذة الوقت الذهبية للتنفيذ
+            حصر تنفيذ الصفقة فقط بين الثانية 05 والثانية 25 من عمر الشمعة
+            الهدف: تجنب "تذبذب البداية" العشوائي و"غدر النهاية" في آخر ثوانٍ
+            """
+            seconds_in_candle = 60 - current_second  # الثواني المنقضية من الشمعة
+            
+            if candle_type.startswith('S'):  # فريمات الثواني
+                # النافذة الذهبية: من 5 إلى 25 ثانية
+                return 5 <= seconds_in_candle <= 25
+            else:  # فريمات الدقائق
+                # النافذة الذهبية: من 10 إلى 40 ثانية
+                return 10 <= seconds_in_candle <= 40
             
         # ============================================
         # [تعديل V7.5 FINAL] - خوارزمية المسح الاستبعادي الكامل (Complete Exclusion Scan)
