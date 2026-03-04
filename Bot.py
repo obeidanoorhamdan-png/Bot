@@ -3106,6 +3106,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         is_at_historical_peak = False
         is_at_historical_bottom = False
         has_long_wick = False
+        has_engulfing = False
         current_direction = "UP"  # قيمة افتراضية
         
         # ربط معطيات الإعدادات
