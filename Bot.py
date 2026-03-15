@@ -30,11 +30,11 @@ import pytz
 # --- الإعدادات الأساسية ---
 TOKEN = os.environ.get('TOKEN', "8583903565:AAFveu3KYGkPsC8L6WyermoaZ1tI_EtFHHs")
 
-MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "FcKi7dASoXlT5aLDHS1IzlOmFUEPmyWZ")
-MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
-MISTRAL_MODEL = "pixtral-large-latest"          # للرؤية والاستخراج البصري
-MISTRAL_MODEL_AUDIT = "mistral-large-latest"        # للتحليل المنطقي
-MODEL_SUMMARY = "mistral-medium-latest"        # للتلخيص السريع
+MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "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")
+MISTRAL_URL = "https://api.openai.com/v1/chat/completions"
+MISTRAL_MODEL = "gpt-4o"          # للرؤية والاستخراج البصري
+MISTRAL_MODEL_AUDIT = "gpt-4o"        # للتحليل المنطقي
+MODEL_SUMMARY = "gpt-4o"        # للتلخيص السريع
 
 DB_NAME = "abood-gpt.db"
 BACKUP_DIR = "backups"
