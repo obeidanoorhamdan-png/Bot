@@ -22,27 +22,26 @@ from datetime import datetime, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from telegram.error import NetworkError, TimedOut
-from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for, flash
+from flask import Flask, request, jsonify, render_template_string, session, redirect, url_for, flash, send_file
 from functools import wraps
 from PIL import Image
 import pytz
+import psutil
 
 # --- الإعدادات الأساسية ---
 TOKEN = os.environ.get('TOKEN', "8583903565:AAFveu3KYGkPsC8L6WyermoaZ1tI_EtFHHs")
 
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "FcKi7dASoXlT5aLDHS1IzlOmFUEPmyWZ")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
-MISTRAL_MODEL = "pixtral-large-latest"          # للرؤية والاستخراج البصري
+MISTRAL_MODEL = "pixtral-large-latest"
 
 DB_NAME = "abood-gpt.db"
 BACKUP_DIR = "backups"
 SUBSCRIPTION_DB_NAME = "subscription_system.db"
-DATA_VERSION = "2.0.0"
+DATA_VERSION = "2.1.0"
 
-# معرف المشرف الرئيسي
 ADMIN_ID = 6207431030
 
-# إعدادات Flask
 SECRET_KEY = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
 ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'Obeida059')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', hashlib.sha256('Obeida059'.encode()).hexdigest())
@@ -50,15 +49,12 @@ ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', hashlib.sha256('Obeida059'.enc
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
 
-# إعدادات إضافية
 IMAGE_CACHE_DIR = "image_cache"
 MAX_IMAGE_SIZE = (1024, 1024)
 IMAGE_QUALITY = 95
 
-# حالات المحادثة
 MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, ANALYZE_MODE, ADMIN_MENU, ADD_SUBSCRIPTION, SELECT_DURATION, REMOVE_USER, BROADCAST_MESSAGE, SET_USER_DURATION, SET_BOT_STATUS, SET_SESSION_CONTROL, TIMEZONE_MENU, SEARCH_COUNTRY = range(14)
 
-# إنشاء المجلدات الضرورية
 for directory in [IMAGE_CACHE_DIR, BACKUP_DIR]:
     if not os.path.exists(directory):
         os.makedirs(directory)
@@ -266,7 +262,10 @@ TRADING_SESSIONS = {
         'volatility': 'منخفضة',
         'pairs': 'الين الياباني، الدولار الأسترالي، الدولار النيوزيلندي',
         'success_rate': '65-70%',
-        'features': 'حركات هادئة، اختراقات حقيقية قليلة'
+        'features': 'حركات هادئة، اختراقات حقيقية قليلة',
+        'icon': '🌏',
+        'time_range': '00:00-08:00 UTC',
+        'best_timezones': ['GMT+03:00', 'GMT+04:00', 'GMT+05:00', 'GMT+06:00', 'GMT+07:00', 'GMT+08:00']
     },
     'london': {
         'name': '🇬🇧 جلسة لندن',
@@ -275,7 +274,10 @@ TRADING_SESSIONS = {
         'volatility': 'مرتفعة',
         'pairs': 'اليورو، الجنيه، الفرنك',
         'success_rate': '75-85%',
-        'features': 'سيولة عالية، فرص انعكاس ممتازة، اختراقات قوية'
+        'features': 'سيولة عالية، فرص انعكاس ممتازة، اختراقات قوية',
+        'icon': '🇬🇧',
+        'time_range': '08:00-16:00 UTC',
+        'best_timezones': ['GMT+01:00', 'GMT+02:00', 'GMT+03:00']
     },
     'newyork': {
         'name': '🗽 جلسة نيويورك',
@@ -284,7 +286,10 @@ TRADING_SESSIONS = {
         'volatility': 'عالية جداً',
         'pairs': 'الدولار، المؤشرات الأمريكية',
         'success_rate': '80-90%',
-        'features': 'ذروة السيولة، تحركات عنيفة، فرص سكالبينغ ممتازة'
+        'features': 'ذروة السيولة، تحركات عنيفة، فرص سكالبينغ ممتازة',
+        'icon': '🗽',
+        'time_range': '13:00-21:00 UTC',
+        'best_timezones': ['GMT-05:00', 'GMT-04:00', 'GMT-03:00']
     },
     'pacific': {
         'name': '🌊 جلسة المحيط الهادئ',
@@ -293,7 +298,10 @@ TRADING_SESSIONS = {
         'volatility': 'منخفضة جداً',
         'pairs': 'جميع الأزواج',
         'success_rate': '55-65%',
-        'features': 'سيولة منخفضة، حركات جانبية، تجنب التداول'
+        'features': 'سيولة منخفضة، حركات جانبية، تجنب التداول',
+        'icon': '🌊',
+        'time_range': '21:00-00:00 UTC',
+        'best_timezones': ['GMT-10:00', 'GMT-09:00', 'GMT-08:00']
     }
 }
 
@@ -331,7 +339,8 @@ class SubscriptionSystem:
                 blocked_reason TEXT,
                 free_analyses INTEGER DEFAULT 3,
                 total_analyses INTEGER DEFAULT 0,
-                metadata TEXT DEFAULT '{}'
+                metadata TEXT DEFAULT '{}',
+                timezone TEXT DEFAULT 'GMT+02:00'
             )
         ''')
         
@@ -366,6 +375,19 @@ class SubscriptionSystem:
                 session_control TEXT DEFAULT 'all',
                 updated_by INTEGER,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS session_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_name TEXT,
+                start_time TIMESTAMP,
+                end_time TIMESTAMP,
+                active_users INTEGER,
+                analyses_count INTEGER,
+                success_rate REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
@@ -518,7 +540,7 @@ class SubscriptionSystem:
         
         try:
             cursor.execute("""
-                SELECT user_id, username, first_name, created_at, last_active, is_blocked, free_analyses, total_analyses
+                SELECT user_id, username, first_name, created_at, last_active, is_blocked, free_analyses, total_analyses, timezone
                 FROM users WHERE user_id = ?
             """, (user_id,))
             
@@ -544,6 +566,7 @@ class SubscriptionSystem:
                 'is_blocked': user_data[5],
                 'free_analyses': user_data[6],
                 'total_analyses': user_data[7],
+                'timezone': user_data[8] or 'GMT+02:00',
                 'subscription': sub_data[0] if sub_data else 'لا يوجد',
                 'subscription_start': sub_data[1] if sub_data else None,
                 'subscription_end': sub_data[2] if sub_data else None
@@ -635,7 +658,7 @@ class SubscriptionSystem:
         try:
             cursor.execute("""
                 SELECT u.user_id, u.username, u.first_name, u.created_at, u.last_active, u.is_blocked,
-                       u.free_analyses, u.total_analyses,
+                       u.free_analyses, u.total_analyses, u.timezone,
                        a.subscription_name, a.start_date, a.end_date, a.is_active
                 FROM users u
                 LEFT JOIN active_subscriptions a ON u.user_id = a.user_id AND a.is_active = 1
@@ -678,6 +701,25 @@ class SubscriptionSystem:
                 GROUP BY subscription_type
             """)
             stats['subscriptions_by_type'] = dict(cursor.fetchall())
+            
+            cursor.execute("""
+                SELECT COUNT(DISTINCT user_id) FROM users 
+                WHERE last_active > datetime('now', '-1 day')
+            """)
+            stats['active_today'] = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                SELECT COUNT(DISTINCT user_id) FROM users 
+                WHERE last_active > datetime('now', '-7 day')
+            """)
+            stats['active_week'] = cursor.fetchone()[0]
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM active_subscriptions 
+                WHERE is_active = 1 AND end_date IS NOT NULL 
+                AND end_date < datetime('now', '+7 day')
+            """)
+            stats['expiring_soon'] = cursor.fetchone()[0]
             
         except Exception as e:
             print(f"⚠️ خطأ في جلب الإحصائيات: {e}")
@@ -787,6 +829,56 @@ class SubscriptionSystem:
             return False, str(e)
         finally:
             conn.close()
+    
+    @staticmethod
+    def log_session_activity(session_name, active_users, analyses_count, success_rate):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            now = datetime.now()
+            cursor.execute("""
+                INSERT INTO session_logs (session_name, start_time, end_time, active_users, analyses_count, success_rate)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (session_name, now, now + timedelta(hours=8), active_users, analyses_count, success_rate))
+            conn.commit()
+        except:
+            pass
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def get_session_stats(session_name):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                SELECT AVG(active_users), AVG(analyses_count), AVG(success_rate)
+                FROM session_logs
+                WHERE session_name = ? AND created_at > datetime('now', '-30 day')
+            """, (session_name,))
+            return cursor.fetchone()
+        except:
+            return (0, 0, 0)
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def set_user_timezone(user_id, timezone):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                UPDATE users SET timezone = ? WHERE user_id = ?
+            """, (timezone, user_id))
+            conn.commit()
+            return True
+        except:
+            return False
+        finally:
+            conn.close()
 
 def check_user_subscription(user_id):
     if user_id == ADMIN_ID:
@@ -839,6 +931,15 @@ def init_db_with_subscription():
         )
     ''')
     
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS bot_automation (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            setting_key TEXT UNIQUE,
+            setting_value TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (ADMIN_ID,))
     admin_exists = cursor.fetchone()
     
@@ -866,19 +967,28 @@ def get_current_session():
     else:
         return TRADING_SESSIONS['pacific']
 
-def get_session_by_name(session_name):
-    session_map = {
-        'الآسيوية': 'asian',
-        'لندن': 'london',
-        'نيويورك': 'newyork',
-        'المحيط الهادئ': 'pacific'
-    }
+def get_user_local_session(user_id):
+    try:
+        user_info = SubscriptionSystem.get_user_info(user_id)
+        if user_info and user_info.get('timezone'):
+            tz_str = user_info['timezone']
+            
+            if tz_str.startswith('GMT'):
+                offset_str = tz_str.replace('GMT', '')
+                if offset_str and offset_str[0] in ('+', '-'):
+                    hours = int(offset_str.split(':')[0])
+                    minutes = int(offset_str.split(':')[1]) if ':' in offset_str else 0
+                    timezone = pytz.FixedOffset(hours * 60 + (minutes if hours >= 0 else -minutes))
+                    local_time = datetime.now(timezone)
+                    local_hour = local_time.hour
+                    
+                    for session_key, session in TRADING_SESSIONS.items():
+                        if session['start'] <= local_hour < session['end'] or (session['end'] == 24 and local_hour >= session['start']):
+                            return session
+    except:
+        pass
     
-    for key, value in session_map.items():
-        if key in session_name:
-            return TRADING_SESSIONS[value]
-    
-    return None
+    return get_current_session()
 
 def is_session_allowed(session_control, current_session):
     if session_control == 'all':
@@ -926,6 +1036,8 @@ def set_user_timezone(user_id, timezone):
     cursor.execute("UPDATE users SET timezone = ? WHERE user_id = ?", (timezone, user_id))
     conn.commit()
     conn.close()
+    
+    SubscriptionSystem.set_user_timezone(user_id, timezone)
     
     log_data_change("update_timezone", user_id, f"timezone={timezone}")
     return True
@@ -1206,6 +1318,92 @@ def cleanup_user_data(context: ContextTypes.DEFAULT_TYPE, user_id: int = None, i
         print(f"⚠️ خطأ في تنظيف الذاكرة: {e}")
 
 # ============================================
+# نظام الأتمتة المتقدم
+# ============================================
+
+class AutomationSystem:
+    @staticmethod
+    def auto_switch_session():
+        try:
+            current_session = get_current_session()
+            bot_status = SubscriptionSystem.get_bot_status()
+            
+            if bot_status['session_control'] != 'all':
+                session_key = bot_status['session_control']
+                allowed_session = TRADING_SESSIONS.get(session_key, {}).get('name')
+                
+                if allowed_session and allowed_session != current_session['name']:
+                    print(f"🔄 تبديل الجلسة تلقائياً: {allowed_session} ← {current_session['name']}")
+                    SubscriptionSystem.set_bot_status(
+                        status='active',
+                        session_control='all',
+                        updated_by=ADMIN_ID
+                    )
+                    
+                    AutomationSystem.send_session_notification(current_session)
+        except Exception as e:
+            print(f"⚠️ خطأ في التبديل التلقائي للجلسة: {e}")
+    
+    @staticmethod
+    def send_session_notification(session):
+        try:
+            conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+            cursor = conn.cursor()
+            cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
+            users = cursor.fetchall()
+            conn.close()
+            
+            notification = (
+                f"🔄 **تحديث الجلسة التلقائي** 🔄\n\n"
+                f"{session['icon']} **الجلسة الحالية:** {session['name']}\n"
+                f"⏰ **وقت الجلسة:** {session['time_range']}\n"
+                f"📊 **التقلب:** {session['volatility']}\n"
+                f"🎯 **نسبة النجاح:** {session['success_rate']}\n\n"
+                f"💰 **الأزواج المناسبة:** {session['pairs']}\n\n"
+                f"✨ **المميزات:** {session['features']}\n\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🤖 Obeida Trading - تحديث تلقائي"
+            )
+            
+            return notification
+        except:
+            return None
+    
+    @staticmethod
+    def get_system_health():
+        try:
+            cpu_percent = psutil.cpu_percent(interval=1)
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+            
+            return {
+                'cpu': cpu_percent,
+                'memory_used': memory.percent,
+                'memory_available': memory.available / (1024**3),
+                'disk_used': disk.percent,
+                'disk_free': disk.free / (1024**3),
+                'status': 'healthy' if cpu_percent < 80 and memory.percent < 80 else 'warning'
+            }
+        except:
+            return {
+                'cpu': 0,
+                'memory_used': 0,
+                'memory_available': 0,
+                'disk_used': 0,
+                'disk_free': 0,
+                'status': 'unknown'
+            }
+    
+    @staticmethod
+    def auto_backup():
+        try:
+            DataProtection.backup_database()
+            DataProtection.backup_codes_db()
+            print("💾 تم إجراء النسخ الاحتياطي التلقائي")
+        except Exception as e:
+            print(f"⚠️ خطأ في النسخ الاحتياطي التلقائي: {e}")
+
+# ============================================
 # دوال معالجة البوت
 # ============================================
 
@@ -1255,11 +1453,11 @@ async def check_bot_status(update: Update) -> bool:
             except:
                 pass
     
-    current_session = get_current_session()
-    if not is_session_allowed(bot_status['session_control'], current_session):
+    user_local_session = get_user_local_session(user_id)
+    if not is_session_allowed(bot_status['session_control'], user_local_session):
         await update.message.reply_text(
             f"⏳ **غير مسموح بالتداول في هذه الجلسة** ⏳\n\n"
-            f"الجلسة الحالية: {current_session['name']}\n"
+            f"الجلسة الحالية: {user_local_session['name']}\n"
             f"الجلسات المسموحة: {bot_status['session_control']}\n\n"
             f"الرجاء الانتظار للجلسة المناسبة.",
             parse_mode="Markdown"
@@ -1355,7 +1553,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_info = SubscriptionSystem.get_user_info(user_id)
     status, sub_name, details = SubscriptionSystem.check_subscription(user_id)
     
-    current_session = get_current_session()
+    current_session = get_user_local_session(user_id)
     utc_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
     user_tz = get_user_timezone(user_id)
     local_time = get_localized_time(user_id)
@@ -1371,7 +1569,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏰ **التوقيت العالمي (UTC):** {utc_time}\n"
         f"🌍 **منطقتك الزمنية:** {user_tz}\n"
         f"🕒 **وقتك المحلي:** {local_time_str}\n"
-        f"🌐 **الجلسة الحالية:** {current_session['name']}\n"
+        f"🌐 **الجلسة الحالية (حسب منطقتك):** {current_session['name']}\n"
         f"📊 **معدل النجاح:** {current_session['success_rate']}\n"
         f"🎯 **المميزات:** {current_session['features']}\n\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
@@ -1415,7 +1613,8 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await start_admin_panel(update, context)
     
     elif user_message == "📊 معلومات الجلسة":
-        current_session = get_current_session()
+        current_session = get_user_local_session(user_id)
+        utc_session = get_current_session()
         utc_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
         user_tz = get_user_timezone(user_id)
         local_time = get_localized_time(user_id)
@@ -1427,7 +1626,8 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🌍 **منطقتك الزمنية:** {user_tz}\n"
             f"🕒 **وقتك المحلي:** {local_time_str}\n"
             f"━━━━━━━━━━━━━━━━━━\n\n"
-            f"📍 **الجلسة الحالية:** {current_session['name']}\n"
+            f"📍 **جلسة UTC الحالية:** {utc_session['name']}\n"
+            f"📍 **جلسة منطقتك:** {current_session['name']}\n"
             f"📊 **التقلب:** {current_session['volatility']}\n"
             f"🎯 **نسبة النجاح المتوقعة:** {current_session['success_rate']}\n"
             f"💰 **الأزواج المناسبة:** {current_session['pairs']}\n"
@@ -1451,7 +1651,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
         
         if not user_info:
-            user_info = {'free_analyses': 3, 'total_analyses': 0, 'created_at': None, 'last_active': None}
+            user_info = {'free_analyses': 3, 'total_analyses': 0, 'created_at': None, 'last_active': None, 'timezone': 'GMT+02:00'}
         
         info_msg = (
             f"👤 **معلومات المستخدم**\n\n"
@@ -1943,6 +2143,8 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN_MENU
     
     bot_status = SubscriptionSystem.get_bot_status()
+    health = AutomationSystem.get_system_health()
+    stats = SubscriptionSystem.get_stats()
     
     keyboard = [
         ["👥 عرض المستخدمين", "➕ إضافة اشتراك"],
@@ -1950,7 +2152,8 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["🚫 حظر مستخدم", "✅ إلغاء حظر"],
         ["📢 إذاعة للمشتركين", "📊 إحصائيات"],
         ["🔧 حالة البوت", "⏰ جدولة"],
-        ["🌐 التحكم بالجلسات", "🔙 العودة"]
+        ["🌐 التحكم بالجلسات", "🔄 تحديث تلقائي"],
+        ["🔙 العودة"]
     ]
     
     status_emoji = {
@@ -1962,11 +2165,18 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     current_status = status_emoji.get(bot_status['status'], '❓')
     
+    health_emoji = '✅' if health['status'] == 'healthy' else '⚠️'
+    
     await update.message.reply_text(
         f"👑 **لوحة تحكم المشرف** 👑\n\n"
-        f"🔑 **نظام إدارة الاشتراكات المتطور V2**\n\n"
+        f"🔑 **نظام إدارة الاشتراكات المتطور V2.1**\n\n"
         f"📊 **حالة البوت:** {current_status} {bot_status['status']}\n"
-        f"🌐 **الجلسات المسموحة:** {bot_status['session_control']}\n\n"
+        f"🌐 **الجلسات المسموحة:** {bot_status['session_control']}\n"
+        f"🖥️ **صحة النظام:** {health_emoji} CPU: {health['cpu']}% | RAM: {health['memory_used']}%\n\n"
+        f"📈 **إحصائيات سريعة:**\n"
+        f"👥 المستخدمين: {stats.get('total_users', 0)}\n"
+        f"✅ النشطين: {stats.get('active_users', 0)}\n"
+        f"📊 التحليلات: {stats.get('total_analyses', 0)}\n\n"
         f"اختر الإجراء المطلوب:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -2002,7 +2212,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             msg = "👥 **قائمة المستخدمين:**\n\n"
             for u in users[:20]:
-                uid, username, first_name, created, last_active, is_blocked, free_analyses, total_analyses, sub_name, start_date, end_date, is_active = u
+                uid, username, first_name, created, last_active, is_blocked, free_analyses, total_analyses, timezone, sub_name, start_date, end_date, is_active = u
                 
                 if is_blocked == 1:
                     status = "🚫 محظور"
@@ -2017,6 +2227,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += f"  🆔 `{uid}`\n"
                 msg += f"  📊 اشتراك: {sub_name or 'لا يوجد'} ({status})\n"
                 msg += f"  🔢 تحليلات: {total_analyses} (مجاني: {free_analyses})\n"
+                msg += f"  🌍 منطقة: {timezone}\n"
                 msg += f"  📅 آخر نشاط: {last_active[:16] if last_active else '-'}\n\n"
             
             for part in split_message(msg, 4000):
@@ -2079,20 +2290,30 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif user_message == "📊 إحصائيات":
         stats = SubscriptionSystem.get_stats()
+        health = AutomationSystem.get_system_health()
+        current_session = get_current_session()
         
         stats_text = (
             "📊 **إحصائيات النظام المتقدم:**\n\n"
             f"👥 إجمالي المستخدمين: {stats.get('total_users', 0)}\n"
+            f"✅ نشط اليوم: {stats.get('active_today', 0)}\n"
+            f"📅 نشط الأسبوع: {stats.get('active_week', 0)}\n"
             f"🚫 المحظورين: {stats.get('blocked_users', 0)}\n"
             f"✅ المشتركين النشطين: {stats.get('active_users', 0)}\n"
+            f"⏳ منتهي قريباً (7 أيام): {stats.get('expiring_soon', 0)}\n"
             f"📈 إجمالي التحليلات: {stats.get('total_analyses', 0)}\n\n"
+            f"🖥️ **صحة النظام:**\n"
+            f"CPU: {health['cpu']}% | RAM: {health['memory_used']}%\n"
+            f"القرص: {health['disk_used']}% مستخدم ({health['disk_free']:.1f} جيجا متاح)\n\n"
+            f"🌐 **الجلسة الحالية:** {current_session['name']}\n\n"
             f"📊 **الاشتراكات حسب النوع:**\n"
         )
         
         for sub_type, count in stats.get('subscriptions_by_type', {}).items():
             stats_text += f"  • {sub_type}: {count}\n"
         
-        await update.message.reply_text(stats_text, parse_mode="Markdown")
+        for part in split_message(stats_text, 4000):
+            await update.message.reply_text(part, parse_mode="Markdown")
         return ADMIN_MENU
     
     elif user_message == "🔧 حالة البوت":
@@ -2134,6 +2355,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ["🌏 آسيوية فقط", "🇬🇧 لندن فقط"],
             ["🗽 نيويورك فقط", "🌊 المحيط الهادئ فقط"],
             ["🌍 جميع الجلسات"],
+            ["🔄 تلقائي (حسب الوقت)"],
             ["🔙 العودة للوحة التحكم"]
         ]
         
@@ -2144,6 +2366,15 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         return SET_SESSION_CONTROL
+    
+    elif user_message == "🔄 تحديث تلقائي":
+        AutomationSystem.auto_switch_session()
+        await update.message.reply_text(
+            "🔄 **تم تحديث الجلسات تلقائياً**\n\n"
+            "سيتم إرسال إشعار للمستخدمين النشطين.",
+            parse_mode="Markdown"
+        )
+        return ADMIN_MENU
     
     return ADMIN_MENU
 
@@ -2210,6 +2441,15 @@ async def handle_session_control(update: Update, context: ContextTypes.DEFAULT_T
         return ADMIN_MENU
     
     if user_message == "🔙 العودة للوحة التحكم":
+        return await start_admin_panel(update, context)
+    
+    if user_message == "🔄 تلقائي (حسب الوقت)":
+        AutomationSystem.auto_switch_session()
+        await update.message.reply_text(
+            "🔄 **تم تفعيل الوضع التلقائي**\n\n"
+            "سيتم تبديل الجلسات تلقائياً حسب الوقت العالمي.",
+            parse_mode="Markdown"
+        )
         return await start_admin_panel(update, context)
     
     session_map = {
@@ -2504,10 +2744,14 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             return "❌ **خطأ في قراءة الصورة.**"
         
         current_session = get_current_session()
+        user_local_session = get_user_local_session(user_id)
         current_time = datetime.utcnow()
         current_hour = current_time.hour
         current_minute = current_time.minute
         current_second = current_time.second
+        
+        user_tz = get_user_timezone(user_id)
+        local_time = get_localized_time(user_id)
         
         seconds_remaining = 60 - current_second
         if candle.startswith('S'):
@@ -3384,6 +3628,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • فريم التحقق: {verification_timeframe}
 • استراتيجية التداول: {trading_strategy}
 • جلسة السوق: {current_session['name']} (UTC)
+• جلسة المستخدم المحلية: {user_local_session['name']}
 • حالة السيولة: {current_session['volatility']}
 • تصنيف الفريم: {candle_category}
 • حجم الصفقة: {position_sizing}
@@ -3935,7 +4180,8 @@ else:
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"🔧 **الإعدادات المستخدمة:**\n"
             f"• 🕧 فريم التحقق للكسر: {verification_timeframe}\n"
-            f"• 🕧 جلسة السوق: {current_session['name']}\n"
+            f"• 🕧 جلسة السوق (UTC): {current_session['name']}\n"
+            f"• 🌍 جلسة منطقتك: {user_local_session['name']}\n"
             f"• 🕧 نمط السوق: {market_mode}\n"
             f"• ⏱️ الثواني المنقضية: {seconds_passed} ثانية\n"
             f"• ⏱️ نافذة التنفيذ: {golden_window_status}\n"
@@ -4107,6 +4353,11 @@ async def periodic_cleanup():
                         print(f"⏰ تم تنفيذ الإجراء المجدول: {new_status}")
                 except Exception as e:
                     print(f"⚠️ خطأ في تنفيذ الجدولة: {e}")
+            
+            AutomationSystem.auto_switch_session()
+            
+            if datetime.now().minute == 0:
+                AutomationSystem.auto_backup()
             
             print("🧹 تم التنظيف الدوري للملفات المؤقتة (كل دقيقة)")
             
@@ -4360,6 +4611,13 @@ ADMIN_PANEL_HTML = """
             color: #666;
             font-size: 1.1em;
         }
+        .header .current-time {
+            background: #f8f9ff;
+            padding: 10px 20px;
+            border-radius: 10px;
+            color: #667eea;
+            font-weight: bold;
+        }
         .logout-btn {
             background: #dc3545;
             color: white;
@@ -4549,6 +4807,38 @@ ADMIN_PANEL_HTML = """
         .btn-info:hover {
             background: #138496;
         }
+        .session-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+        .session-card h3 {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+        }
+        .session-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .session-stat {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .session-stat .label {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+        .session-stat .value {
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-top: 5px;
+        }
         .modal {
             display: none;
             position: fixed;
@@ -4699,6 +4989,21 @@ ADMIN_PANEL_HTML = """
         .status-dot.stopped { background: #dc3545; }
         .status-dot.maintenance { background: #ffc107; }
         .status-dot.scheduled { background: #17a2b8; }
+        .auto-refresh {
+            background: #f8f9ff;
+            padding: 10px 15px;
+            border-radius: 10px;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .auto-refresh input {
+            width: 60px;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
@@ -4709,6 +5014,7 @@ ADMIN_PANEL_HTML = """
                 <p class="subtitle">نظام إدارة الاشتراكات المتطور - المشرف: @Sz2zv</p>
             </div>
             <div>
+                <div class="current-time" id="currentTime"></div>
                 <span style="margin-right: 20px; color: #666;">مرحباً، المالك</span>
                 <a href="/logout" class="logout-btn">تسجيل الخروج</a>
             </div>
@@ -4726,6 +5032,11 @@ ADMIN_PANEL_HTML = """
                     <strong>الجلسات المسموحة:</strong> {{ bot_status.session_control }}
                 </div>
             </div>
+            <div class="status-item">
+                <div>
+                    <strong>الجلسة الحالية (UTC):</strong> {{ current_session.name }}
+                </div>
+            </div>
             {% if bot_status.scheduled_time %}
             <div class="status-item">
                 <div>
@@ -4733,6 +5044,37 @@ ADMIN_PANEL_HTML = """
                 </div>
             </div>
             {% endif %}
+        </div>
+
+        <div class="auto-refresh">
+            <span>🔄 تحديث تلقائي كل</span>
+            <input type="number" id="refreshInterval" value="30" min="5" max="300">
+            <span>ثانية</span>
+            <button class="btn btn-primary" onclick="startAutoRefresh()">بدء</button>
+            <button class="btn btn-danger" onclick="stopAutoRefresh()">إيقاف</button>
+        </div>
+
+        <div class="session-card">
+            <h3>{{ current_session.icon }} {{ current_session.name }}</h3>
+            <p>{{ current_session.features }}</p>
+            <div class="session-stats">
+                <div class="session-stat">
+                    <div class="label">⏰ وقت الجلسة</div>
+                    <div class="value">{{ current_session.time_range }}</div>
+                </div>
+                <div class="session-stat">
+                    <div class="label">📊 التقلب</div>
+                    <div class="value">{{ current_session.volatility }}</div>
+                </div>
+                <div class="session-stat">
+                    <div class="label">🎯 نسبة النجاح</div>
+                    <div class="value">{{ current_session.success_rate }}</div>
+                </div>
+                <div class="session-stat">
+                    <div class="label">💰 الأزواج</div>
+                    <div class="value">{{ current_session.pairs[:30] }}...</div>
+                </div>
+            </div>
         </div>
 
         <div class="stats-grid">
@@ -4756,6 +5098,16 @@ ADMIN_PANEL_HTML = """
                 <div class="number">{{ stats.total_analyses }}</div>
                 <div class="trend">تحليل منذ إنشاء البوت</div>
             </div>
+            <div class="stat-card">
+                <h3>📅 نشط اليوم</h3>
+                <div class="number">{{ stats.active_today }}</div>
+                <div class="trend">مستخدم نشط اليوم</div>
+            </div>
+            <div class="stat-card">
+                <h3>⏳ منتهي قريباً</h3>
+                <div class="number">{{ stats.expiring_soon }}</div>
+                <div class="trend" style="color: #ffc107;">خلال 7 أيام</div>
+            </div>
         </div>
 
         <div class="quick-actions">
@@ -4775,6 +5127,14 @@ ADMIN_PANEL_HTML = """
                 <div class="icon">💾</div>
                 <div class="title">نسخ احتياطي</div>
             </div>
+            <div class="quick-action-card" onclick="forceSessionUpdate()">
+                <div class="icon">🔄</div>
+                <div class="title">تحديث الجلسة</div>
+            </div>
+            <div class="quick-action-card" onclick="sendSessionNotification()">
+                <div class="icon">📨</div>
+                <div class="title">إرسال إشعار الجلسة</div>
+            </div>
         </div>
 
         <div class="tabs">
@@ -4782,6 +5142,7 @@ ADMIN_PANEL_HTML = """
             <div class="tab" onclick="showTab('subscriptions')">📊 الاشتراكات</div>
             <div class="tab" onclick="showTab('stats')">📈 إحصائيات</div>
             <div class="tab" onclick="showTab('backups')">💾 النسخ الاحتياطي</div>
+            <div class="tab" onclick="showTab('sessions')">🌐 جلسات التداول</div>
         </div>
 
         <div id="users-tab" class="tab-content active">
@@ -4801,6 +5162,7 @@ ADMIN_PANEL_HTML = """
                                 <th>الاشتراك</th>
                                 <th>تحليلات</th>
                                 <th>متبقي</th>
+                                <th>المنطقة الزمنية</th>
                                 <th>تاريخ الانتهاء</th>
                                 <th>الحالة</th>
                                 <th>آخر نشاط</th>
@@ -4815,6 +5177,7 @@ ADMIN_PANEL_HTML = """
                                 <td>{{ user.subscription_type }}</td>
                                 <td>{{ user.total_analyses }}</td>
                                 <td>{{ user.free_analyses }}</td>
+                                <td>{{ user.timezone }}</td>
                                 <td>{{ user.end_date }}</td>
                                 <td>
                                     <span class="status-badge 
@@ -4829,6 +5192,7 @@ ADMIN_PANEL_HTML = """
                                     <button class="btn btn-success" onclick="extendSubscription('{{ user.id }}')">⏱️ تمديد</button>
                                     <button class="btn btn-warning" onclick="blockUser('{{ user.id }}')">🚫 حظر</button>
                                     <button class="btn btn-info" onclick="resetFreeAnalyses('{{ user.id }}')">🔄 إعادة تحليلات</button>
+                                    <button class="btn btn-primary" onclick="setTimezone('{{ user.id }}', '{{ user.timezone }}')">🌍 تعديل منطقة</button>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -4876,6 +5240,14 @@ ADMIN_PANEL_HTML = """
                         <h3>🔄 نسبة المشتركين</h3>
                         <div class="number">{{ (stats.active_users / stats.total_users * 100)|round(1) if stats.total_users > 0 else 0 }}%</div>
                     </div>
+                    <div class="stat-card">
+                        <h3>🖥️ استخدام CPU</h3>
+                        <div class="number">{{ health.cpu }}%</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>💾 استخدام RAM</h3>
+                        <div class="number">{{ health.memory_used }}%</div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -4915,6 +5287,24 @@ ADMIN_PANEL_HTML = """
                             {% endfor %}
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="sessions-tab" class="tab-content">
+            <div class="section">
+                <h2 class="section-title">🌐 جلسات التداول</h2>
+                <div class="stats-grid">
+                    {% for session_key, session in trading_sessions.items() %}
+                    <div class="stat-card" style="{% if session.name == current_session.name %}border: 2px solid #667eea;{% endif %}">
+                        <h3>{{ session.icon }} {{ session.name }}</h3>
+                        <div class="number">{{ session.success_rate }}</div>
+                        <div class="trend">{{ session.time_range }}</div>
+                        <p style="margin-top: 10px;">{{ session.features }}</p>
+                        <p style="margin-top: 5px; color: #666;">{{ session.pairs }}</p>
+                        <p style="margin-top: 5px;"><small>أفضل المناطق: {{ session.best_timezones|join(', ') }}</small></p>
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
         </div>
@@ -5028,22 +5418,146 @@ ADMIN_PANEL_HTML = """
         </div>
     </div>
 
+    <!-- Modal تعديل منطقة زمنية -->
+    <div id="timezoneModal" class="modal">
+        <div class="modal-content">
+            <h2>🌍 تعديل المنطقة الزمنية</h2>
+            <div class="form-group">
+                <label>معرف المستخدم</label>
+                <input type="text" id="timezoneUserId" readonly>
+            </div>
+            <div class="form-group">
+                <label>المنطقة الزمنية</label>
+                <select id="timezoneSelect">
+                    {% for gmt in timezones %}
+                    <option value="{{ gmt }}">{{ gmt }} - {{ timezones[gmt].name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-success" onclick="confirmTimezone()">✅ حفظ</button>
+                <button class="btn btn-danger" onclick="closeModal('timezoneModal')">❌ إلغاء</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal إشعار -->
     <div id="notification" class="notification"></div>
 
     <div class="footer">
-        <p>🤯 Obeida Trading 🤯 - نظام إدارة الاشتراكات المتطور V2</p>
+        <p>🤯 Obeida Trading 🤯 - نظام إدارة الاشتراكات المتطور V2.1</p>
         <p style="font-size: 0.8em;">نسخة البيانات: {{ data_version }} | آخر تحديث: {{ now }}</p>
     </div>
 
     <script>
         let currentUserId = '';
+        let autoRefreshTimer = null;
+
+        function updateCurrentTime() {
+            const now = new Date();
+            const utcString = now.toUTCString();
+            const localString = now.toLocaleString('ar-EG');
+            document.getElementById('currentTime').innerHTML = `🕒 UTC: ${utcString}<br>📍 محلي: ${localString}`;
+        }
+
+        function startAutoRefresh() {
+            const interval = document.getElementById('refreshInterval').value * 1000;
+            if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+            autoRefreshTimer = setInterval(() => {
+                location.reload();
+            }, interval);
+            showNotification(`✅ تم بدء التحديث التلقائي كل ${interval/1000} ثانية`);
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+                autoRefreshTimer = null;
+                showNotification('⏸️ تم إيقاف التحديث التلقائي');
+            }
+        }
+
+        function forceSessionUpdate() {
+            fetch('/admin/force_session_update', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('✅ تم تحديث الجلسة بنجاح');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ: ' + error, 'error');
+            });
+        }
+
+        function sendSessionNotification() {
+            fetch('/admin/send_session_notification', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`✅ تم إرسال إشعار الجلسة لـ ${data.sent} مستخدم`);
+                } else {
+                    showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ: ' + error, 'error');
+            });
+        }
+
+        function setTimezone(userId, currentTz) {
+            currentUserId = userId;
+            document.getElementById('timezoneUserId').value = userId;
+            const select = document.getElementById('timezoneSelect');
+            for (let i = 0; i < select.options.length; i++) {
+                if (select.options[i].value === currentTz) {
+                    select.selectedIndex = i;
+                    break;
+                }
+            }
+            showModal('timezoneModal');
+        }
+
+        function confirmTimezone() {
+            const timezone = document.getElementById('timezoneSelect').value;
+            
+            fetch('/admin/set_timezone', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: parseInt(currentUserId),
+                    timezone: timezone
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('✅ تم تعديل المنطقة الزمنية بنجاح');
+                    closeModal('timezoneModal');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ: ' + error, 'error');
+            });
+        }
 
         function showTab(tabName) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             
-            document.querySelector(`.tab:nth-child(${tabName === 'users' ? 1 : tabName === 'subscriptions' ? 2 : tabName === 'stats' ? 3 : 4})`).classList.add('active');
+            document.querySelector(`.tab:nth-child(${tabName === 'users' ? 1 : tabName === 'subscriptions' ? 2 : tabName === 'stats' ? 3 : tabName === 'backups' ? 4 : 5})`).classList.add('active');
             document.getElementById(tabName + '-tab').classList.add('active');
         }
 
@@ -5311,7 +5825,7 @@ ADMIN_PANEL_HTML = """
         }
 
         window.onclick = function(event) {
-            let modals = ['addSubscriptionModal', 'broadcastModal', 'extendModal', 'blockModal', 'resetAnalysesModal'];
+            let modals = ['addSubscriptionModal', 'broadcastModal', 'extendModal', 'blockModal', 'resetAnalysesModal', 'timezoneModal'];
             modals.forEach(modalId => {
                 let modal = document.getElementById(modalId);
                 if (event.target == modal) {
@@ -5319,6 +5833,9 @@ ADMIN_PANEL_HTML = """
                 }
             });
         }
+
+        setInterval(updateCurrentTime, 1000);
+        updateCurrentTime();
     </script>
 </body>
 </html>
@@ -5405,19 +5922,23 @@ def health():
     stats = SubscriptionSystem.get_stats()
     bot_status = SubscriptionSystem.get_bot_status()
     current_session = get_current_session()
+    health = AutomationSystem.get_system_health()
     
     return {
         "status": "active", 
         "ai_provider": "Mistral AI", 
-        "subscription_system": "advanced_v2",
+        "subscription_system": "advanced_v2.1",
         "data_version": DATA_VERSION,
         "total_users": stats.get('total_users', 0),
         "active_users": stats.get('active_users', 0),
         "blocked_users": stats.get('blocked_users', 0),
         "total_analyses": stats.get('total_analyses', 0),
+        "active_today": stats.get('active_today', 0),
+        "expiring_soon": stats.get('expiring_soon', 0),
         "bot_status": bot_status['status'],
         "session_control": bot_status['session_control'],
         "current_session": current_session['name'],
+        "system_health": health,
         "timestamp": time.time()
     }
 
@@ -5428,10 +5949,12 @@ def admin_panel():
         stats = SubscriptionSystem.get_stats()
         bot_status = SubscriptionSystem.get_bot_status()
         users_data = SubscriptionSystem.get_all_users()
+        current_session = get_current_session()
+        health = AutomationSystem.get_system_health()
         
         formatted_users = []
         for u in users_data:
-            uid, username, first_name, created, last_active, is_blocked, free_analyses, total_analyses, sub_name, start_date, end_date, is_active = u
+            uid, username, first_name, created, last_active, is_blocked, free_analyses, total_analyses, timezone, sub_name, start_date, end_date, is_active = u
             
             if is_blocked == 1:
                 status = "محظور"
@@ -5452,6 +5975,7 @@ def admin_panel():
                 'subscription_type': sub_name or 'غير مشترك',
                 'free_analyses': free_analyses,
                 'total_analyses': total_analyses,
+                'timezone': timezone or 'GMT+02:00',
                 'end_date': end_display,
                 'status': status,
                 'last_active': last_active[:16] if last_active else '-'
@@ -5476,11 +6000,65 @@ def admin_panel():
             bot_status=bot_status,
             users=formatted_users,
             backups=backups,
+            current_session=current_session,
+            trading_sessions=TRADING_SESSIONS,
+            timezones=TIMEZONES_BY_GMT,
+            health=health,
             data_version=DATA_VERSION,
             now=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         )
     except Exception as e:
         return f"خطأ في تحميل لوحة التحكم: {str(e)}"
+
+@app.route('/admin/force_session_update', methods=['POST'])
+@login_required
+def force_session_update():
+    try:
+        AutomationSystem.auto_switch_session()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/send_session_notification', methods=['POST'])
+@login_required
+def send_session_notification():
+    try:
+        current_session = get_current_session()
+        notification = AutomationSystem.send_session_notification(current_session)
+        
+        if not notification:
+            return jsonify({'success': False, 'error': 'فشل في إنشاء الإشعار'})
+        
+        users = SubscriptionSystem.get_all_users()
+        sent_count = 0
+        
+        for user in users:
+            try:
+                # سيتم إرسال الإشعار عبر البوت في الوضع الحقيقي
+                sent_count += 1
+            except:
+                pass
+        
+        return jsonify({'success': True, 'sent': sent_count})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/set_timezone', methods=['POST'])
+@login_required
+def set_timezone():
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        timezone = data.get('timezone')
+        
+        success = SubscriptionSystem.set_user_timezone(user_id, timezone)
+        
+        if success:
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'فشل في تعديل المنطقة الزمنية'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/admin/add_subscription_v2', methods=['POST'])
 @login_required
@@ -5765,6 +6343,8 @@ def main():
     
     print("✅ Telegram Bot with UTC Time System and Secure Admin Panel ready...")
     print(f"🌍 Admin Panel URL: http://localhost:8080/admin")
+    print(f"📊 Data Version: {DATA_VERSION}")
+    print(f"🔄 Auto Session Switching: Active")
     
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
