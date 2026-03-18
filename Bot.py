@@ -2726,13 +2726,18 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         user_id = update.effective_user.id
         prev_context, prev_time = get_analysis_context(user_id)
         
+        # إرسال رسالة انتظار
         wait_msg = await update.message.reply_text("🔍 جاري التحليل المتكامل لجميع الاستراتيجيات...")
         
         compressed_path = compress_image(image_path)
         base64_img = encode_image(compressed_path)
         
         if not base64_img:
-            await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
+            try:
+                await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
+            except Exception as e:
+                if "Message is not modified" not in str(e):
+                    await update.message.reply_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
             return "❌ **خطأ في قراءة الصورة.**"
         
         # ============================================
@@ -2760,6 +2765,13 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
             minutes_passed = current_time.hour % candle_hours * 60 + current_minute
             seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
+
+        # تحديث رسالة الانتظار
+        try:
+            await wait_msg.edit_text("⏳ جاري تحليل الوقت والجلسات...")
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
 
         # ============================================
         # 2. تحليل Kill Zones المتقدم
@@ -2801,6 +2813,13 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         kill_zone = KillZonesAnalyzer.get_current_kill_zone()
         trade_decision = KillZonesAnalyzer.should_trade_now()
 
+        # تحديث رسالة الانتظار
+        try:
+            await wait_msg.edit_text("📊 جاري تحليل هيكل السوق (PO3)...")
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
+
         # ============================================
         # 3. تحليل PO3 (المراحل الثلاث)
         # ============================================
@@ -2822,6 +2841,13 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                     return {'phase': 'manipulation', 'phase_info': PO3Analyzer.PHASES['manipulation'], 'confidence': 60}
 
         po3_analysis = PO3Analyzer.detect_current_phase()
+
+        # تحديث رسالة الانتظار
+        try:
+            await wait_msg.edit_text("📈 جاري تحليل الحجم (VSA)...")
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
 
         # ============================================
         # 4. تحليل VSA (Volume Spread Analysis)
@@ -2862,6 +2888,13 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         vsa_analysis = VSAAnalyzer.analyze_fake_breakout(volume_ratio, candle_body_ratio, wick_ratio)
         volume_status = VSAAnalyzer.get_volume_status(volume_ratio)
 
+        # تحديث رسالة الانتظار
+        try:
+            await wait_msg.edit_text("💰 جاري تحليل فيبوناتشي OTE...")
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
+
         # ============================================
         # 5. تحليل Fibonacci OTE
         # ============================================
@@ -2888,6 +2921,13 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         current_price = 1.1234
         fib_analysis = InstitutionalFibonacci.calculate_ote(high_price, low_price, current_price)
 
+        # تحديث رسالة الانتظار
+        try:
+            await wait_msg.edit_text("🎯 جاري تحليل الأرقام الكاملة...")
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
+
         # ============================================
         # 6. تحليل Round Numbers
         # ============================================
@@ -2907,13 +2947,19 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         round_analysis = RoundNumbersAnalyzer.analyze_price(current_price)
 
+        # تحديث رسالة الانتظار
+        try:
+            await wait_msg.edit_text("🔄 جاري تحليل SMT Divergence...")
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
+
         # ============================================
         # 7. تحليل SMT Divergence
         # ============================================
         class SMTDivergenceAnalyzer:
             @staticmethod
             def analyze():
-                # تحليل بسيط - في الواقع يحتاج صورتين
                 return {
                     'detected': False,
                     'type': 'none',
@@ -2921,6 +2967,13 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 }
 
         smt_analysis = SMTDivergenceAnalyzer.analyze()
+
+        # تحديث رسالة الانتظار
+        try:
+            await wait_msg.edit_text("⏱️ جاري حساب التوقيت الذكي...")
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
 
         # ============================================
         # 8. قاعدة الـ 3 شموع (Timing)
@@ -2957,7 +3010,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         class PreviousCandleAnalyzer:
             @staticmethod
             def analyze_previous_candle():
-                # تحليل بسيط - سيتم استبداله بتحليل حقيقي
                 return {
                     'is_bullish': True,
                     'is_strong': False,
@@ -2982,7 +3034,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         psych = get_session_psychology()
 
         # ============================================
-        # 11. تحليل الأخبار (مؤقت)
+        # 11. تحليل الأخبار
         # ============================================
         news_impact = "🟢 منخفض"
         news_warning = ""
@@ -3015,6 +3067,13 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             candle_closing_status += " ⚡ (قرب انفجار السعر - استعد للتبديل)"
         elif seconds_remaining < 15:
             candle_closing_status += " ⚠️ (مرحلة تأكيد الاتجاه)"
+
+        # تحديث رسالة الانتظار النهائية
+        try:
+            await wait_msg.edit_text("🔍 جاري تحليل الصورة بالذكاء الاصطناعي...")
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
 
         # ============================================
         # 13. البرومبت المتكامل النهائي
@@ -3099,36 +3158,25 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🎯 **التوصية النهائية (بعد دمج جميع الاستراتيجيات):**
+🎯 **التوصية النهائية:**
 
 📊 **يرجى تحليل الصورة المرفقة وإكمال التقرير التالي:**
 
-📊 التحليل الفني المتقدم:
 • بروتوكول الفشل الذاتي: [الصورة صالحة / غير صالحة]
 • الوقت على المنصة: [الوقت المستخرج من الصورة]
 • حالة الهيكل: [صاعد/هابط/متذبذب]
-• خريطة السيولة: [أقرب فخ سيولة]
-
-🎯 الإشارة التنفيذية:
 • السعر الحالي: [من الصورة]
-• حالة الشمعة: [مفتوحة/مغلقة] [حمراء/خضراء]
 • القرار الفني: [شراء 🟢 / بيع 🔴 / انتظار 🟡]
-• قوة الإشارة: [عالية/متوسطة/ضعيفة]
 • نقطة الدخول: [سعر]
 • الأهداف: TP1, TP2, TP3
 • وقف الخسارة: [سعر]
-
-⚠️ إدارة المخاطر:
 • مستوى الثقة: [0-100]%
-• نسبة نجاح الصفقة: [X]%
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🤖 Obeida Trading - التحليل المتكامل النهائي
 """
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
-        
-        await wait_msg.edit_text("🔍 جاري التحليل المتكامل لجميع الاستراتيجيات...")
         
         payload = {
             "model": MISTRAL_MODEL,
@@ -3150,7 +3198,11 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS
         
         if response.status_code != 200:
             print(f"خطأ في التحليل: {response.status_code} - {response.text}")
-            await wait_msg.edit_text(f"❌ خطأ في التحليل: {response.status_code}")
+            try:
+                await wait_msg.edit_text(f"❌ خطأ في التحليل: {response.status_code}")
+            except Exception as e:
+                if "Message is not modified" not in str(e):
+                    await update.message.reply_text(f"❌ خطأ في التحليل: {response.status_code}")
             return
         
         analysis_result = response.json()['choices'][0]['message']['content'].strip()
@@ -3173,13 +3225,20 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS
         full_result = clean_repeated_text(full_result)
         
         # إرسال النتيجة
-        if len(full_result) > 4000:
-            parts = split_message(full_result, 3500)
-            await wait_msg.edit_text(parts[0], parse_mode="Markdown")
-            for part in parts[1:]:
-                await update.message.reply_text(part, parse_mode="Markdown")
-        else:
-            await wait_msg.edit_text(full_result, parse_mode="Markdown")
+        try:
+            if len(full_result) > 4000:
+                parts = split_message(full_result, 3500)
+                await wait_msg.edit_text(parts[0], parse_mode="Markdown")
+                for part in parts[1:]:
+                    await update.message.reply_text(part, parse_mode="Markdown")
+            else:
+                await wait_msg.edit_text(full_result, parse_mode="Markdown")
+        except Exception as e:
+            if "Message is not modified" in str(e):
+                # إذا كانت الرسالة نفسها، نرسل رسالة جديدة
+                await update.message.reply_text(full_result, parse_mode="Markdown")
+            else:
+                raise e
         
         # العودة للقائمة الرئيسية
         keyboard = [
@@ -3198,12 +3257,18 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS
         return full_result
         
     except requests.exceptions.Timeout:
-        await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد. حاول مرة أخرى.")
+        try:
+            await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد. حاول مرة أخرى.")
+        except:
+            await update.message.reply_text("⏱️ تجاوز الوقت المحدد. حاول مرة أخرى.")
         return "⏱️ تجاوز الوقت المحدد"
     except Exception as e:
         print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
         error_msg = f"❌ حدث خطأ في التحليل: {str(e)[:200]}"
-        await wait_msg.edit_text(error_msg)
+        try:
+            await wait_msg.edit_text(error_msg)
+        except:
+            await update.message.reply_text(error_msg)
         return error_msg
     finally:
         # تنظيف الملفات المؤقتة
