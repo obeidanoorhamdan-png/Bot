@@ -2727,7 +2727,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         prev_context, prev_time = get_analysis_context(user_id)
         
         # إرسال رسالة انتظار
-        wait_msg = await update.message.reply_text("🔍 جاري التحليل المتكامل لجميع الاستراتيجيات...")
+        wait_msg = await update.message.reply_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
         
         compressed_path = compress_image(image_path)
         base64_img = encode_image(compressed_path)
@@ -2768,7 +2768,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         # تحديث رسالة الانتظار
         try:
-            await wait_msg.edit_text("⏳ جاري تحليل الوقت والجلسات...")
+            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
         except Exception as e:
             if "Message is not modified" not in str(e):
                 print(f"⚠️ خطأ في تحديث الرسالة: {e}")
@@ -2815,7 +2815,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         # تحديث رسالة الانتظار
         try:
-            await wait_msg.edit_text("📊 جاري تحليل هيكل السوق (PO3)...")
+            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
         except Exception as e:
             if "Message is not modified" not in str(e):
                 print(f"⚠️ خطأ في تحديث الرسالة: {e}")
@@ -2844,7 +2844,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         # تحديث رسالة الانتظار
         try:
-            await wait_msg.edit_text("📈 جاري تحليل الحجم (VSA)...")
+            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
         except Exception as e:
             if "Message is not modified" not in str(e):
                 print(f"⚠️ خطأ في تحديث الرسالة: {e}")
@@ -2890,7 +2890,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         # تحديث رسالة الانتظار
         try:
-            await wait_msg.edit_text("💰 جاري تحليل فيبوناتشي OTE...")
+            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
         except Exception as e:
             if "Message is not modified" not in str(e):
                 print(f"⚠️ خطأ في تحديث الرسالة: {e}")
@@ -2923,7 +2923,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         # تحديث رسالة الانتظار
         try:
-            await wait_msg.edit_text("🎯 جاري تحليل الأرقام الكاملة...")
+            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
         except Exception as e:
             if "Message is not modified" not in str(e):
                 print(f"⚠️ خطأ في تحديث الرسالة: {e}")
@@ -2949,7 +2949,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         # تحديث رسالة الانتظار
         try:
-            await wait_msg.edit_text("🔄 جاري تحليل SMT Divergence...")
+            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
         except Exception as e:
             if "Message is not modified" not in str(e):
                 print(f"⚠️ خطأ في تحديث الرسالة: {e}")
@@ -2970,7 +2970,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         # تحديث رسالة الانتظار
         try:
-            await wait_msg.edit_text("⏱️ جاري حساب التوقيت الذكي...")
+            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
         except Exception as e:
             if "Message is not modified" not in str(e):
                 print(f"⚠️ خطأ في تحديث الرسالة: {e}")
@@ -3070,7 +3070,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         # تحديث رسالة الانتظار النهائية
         try:
-            await wait_msg.edit_text("🔍 جاري تحليل الصورة بالذكاء الاصطناعي...")
+            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
         except Exception as e:
             if "Message is not modified" not in str(e):
                 print(f"⚠️ خطأ في تحديث الرسالة: {e}")
@@ -3083,10 +3083,26 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS
 مهمتك تحليل الشارت المرفق بدقة متناهية وإصدار تقرير شامل موحد.
 
+
+وانتا ايضا خبير في قراءة الوقت من صور الشارتات. مهمتك استخراج الوقت بدقة متناهية.
+
+🔍 **تعليمات دقيقة:**
+1. ابحث عن ساعة المنصة في الزوايا (يسار سفلي أو يمين سفلي)
+2. اقرأ الوقت بصيغة HH:MM:SS بدقة
+3. إذا لم توجد الثواني، افترض xx للثواني
+4. حدد نوع الوقت (Server Time / UTC / Local)
+
+📊 **التنسيق المطلوب:**
+• الوقت المستخرج: [HH:MM:SS]
+• نوع الوقت: [Server/UTC/Local]
+• دقة القراءة: [عالية/متوسطة/منخفضة]
+• مصدر الوقت: [موقع الساعة في الصورة]
+
 🎯 **البيانات الأساسية:**
 • إطار الشموع: {candle}
 • استراتيجية التداول: {trade_time}
 • الوقت الحالي (UTC): {current_time.strftime('%H:%M:%S')}
+• جلسة السوق الحالية (تقديرية): {current_session['name']}
 
 ⏰ **تحليل الوقت والجلسات (Kill Zones):**
 • منطقة القتل الحالية: {kill_zone['name']}
@@ -5371,9 +5387,6 @@ def main():
     loop.create_task(periodic_cleanup())
     loop.create_task(backup_scheduler())
     
-    print("✅ Telegram Bot with UTC Time System and Secure Admin Panel ready...")
-    print(f"🌍 Admin Panel URL: http://localhost:8080/admin")
-    print(f"📊 Data Version: {DATA_VERSION}")
     print(f"🔄 Auto Session Switching: Active")
     
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
