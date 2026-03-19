@@ -63,6 +63,36 @@ for directory in [IMAGE_CACHE_DIR, BACKUP_DIR]:
         print(f"📁 تم إنشاء المجلد: {directory}")
 
 # ============================================
+# دوال مساعدة للتنسيق والنسخ
+# ============================================
+
+def escape_markdown(text):
+    """تنظيف النص من الأحرف الخاصة في Markdown"""
+    if not text:
+        return text
+    
+    # قائمة الأحرف الخاصة في Markdown
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    
+    # هروب الأحرف الخاصة
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    
+    return text
+
+def format_analysis_with_copy_button(analysis_text):
+    """تنسيق التحليل مع زر نسخ"""
+    # إزالة أي تنسيق Markdown مزدوج
+    analysis_text = re.sub(r'```[\w]*\n?', '', analysis_text)
+    analysis_text = re.sub(r'```\n?', '', analysis_text)
+    
+    # تنسيق النص داخل كود block للنسخ السهل
+    formatted_text = f"```\n{analysis_text}\n```\n\n"
+    formatted_text += "📋 **لنسخ التحليل:** اضغط على الرمز أعلاه ثم اختر Copy"
+    
+    return formatted_text
+
+# ============================================
 # قائمة العملات العالمية الشاملة
 # ============================================
 
@@ -1001,6 +1031,43 @@ class SubscriptionSystem:
             return True
         except:
             return False
+        finally:
+            conn.close()
+    
+    @staticmethod
+    def add_free_analyses(user_id, count=1, performed_by=ADMIN_ID):
+        """إضافة عدد محدد من التحليلات المجانية لمستخدم"""
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                UPDATE users 
+                SET free_analyses = free_analyses + ?,
+                    last_active = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+            """, (count, user_id))
+            
+            if cursor.rowcount > 0:
+                conn.commit()
+                
+                # تسجيل العملية
+                log_data_change("add_free_analyses", user_id, f"added {count} free analyses by admin {performed_by}")
+                
+                # جلب العدد الجديد
+                cursor.execute("SELECT free_analyses FROM users WHERE user_id = ?", (user_id,))
+                new_count = cursor.fetchone()[0]
+                
+                return True, f"تم إضافة {count} تحليلات مجانية. العدد الجديد: {new_count}"
+            else:
+                # إذا المستخدم غير موجود، نضيفه أولاً
+                cursor.execute("INSERT INTO users (user_id, free_analyses) VALUES (?, ?)", (user_id, count))
+                conn.commit()
+                return True, f"تم إنشاء مستخدم جديد وإضافة {count} تحليلات مجانية"
+                
+        except Exception as e:
+            conn.rollback()
+            return False, str(e)
         finally:
             conn.close()
     
@@ -2287,8 +2354,14 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
     except Exception as e:
         print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
-        keyboard = [["📊 تحليل صورة"], ["الرجوع للقائمة الرئيسية"]]
-        await wait_msg.edit_text(f"❌ **حدث خطأ في تحليل الصورة:** {str(e)[:200]}\nيرجى المحاولة مرة أخرى.")
+        error_msg = f"❌ حدث خطأ في تحليل الصورة: {str(e)[:200]}\nيرجى المحاولة مرة أخرى."
+        
+        # تجنب مشكلة Markdown في رسالة الخطأ
+        safe_error = escape_markdown(error_msg)
+        try:
+            await wait_msg.edit_text(safe_error)
+        except:
+            await update.message.reply_text(safe_error)
     finally:
         for filepath in [original_path, compressed_path]:
             if os.path.exists(filepath):
@@ -2298,1025 +2371,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     print(f"⚠️ خطأ في حذف الملف المؤقت: {e}")
     
     return MAIN_MENU
-
-async def timezone_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    current_tz = get_user_timezone(user_id)
-    
-    local_time = get_localized_time(user_id)
-    time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
-    
-    gmt_keys = list(TIMEZONES_BY_GMT.keys())
-    
-    def gmt_sort_key(gmt):
-        try:
-            sign = 1 if '+' in gmt else -1
-            hours = int(gmt.split(':')[0].replace('GMT', '').replace('+', '').replace('-', ''))
-            return sign * hours
-        except:
-            return 0
-    
-    gmt_keys.sort(key=gmt_sort_key)
-    
-    keyboard = []
-    row = []
-    
-    for i, gmt in enumerate(gmt_keys):
-        display_name = gmt
-        if gmt in TIMEZONES_BY_GMT:
-            display_name = f"{gmt} ({TIMEZONES_BY_GMT[gmt]['name']})"
-        
-        row.append(display_name[:20])
-        
-        if len(row) == 2:
-            keyboard.append(row)
-            row = []
-    
-    if row:
-        keyboard.append(row)
-    
-    keyboard.append(["🔍 بحث عن دولة", "🌍 جميع الدول"])
-    keyboard.append(["🕒 منطقتي الحالية", "الرجوع للقائمة الرئيسية"])
-    
-    await update.message.reply_text(
-        f"🌍 **المناطق الزمنية**\n\n"
-        f"🕒 **منطقتك الحالية:** {current_tz}\n"
-        f"⏰ **الوقت المحلي:** {time_str}\n\n"
-        f"اختر المنطقة الزمنية المناسبة لك من القائمة:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    return TIMEZONE_MENU
-
-async def handle_timezone_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "الرجوع للقائمة الرئيسية":
-        keyboard = [
-            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["📊 معلومات الجلسة", "👤 معلوماتي"],
-            ["🌍 المناطق الزمنية"]
-        ]
-        if user_id == ADMIN_ID:
-            keyboard.append(["👑 لوحة التحكم"])
-        
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    elif user_message == "🕒 منطقتي الحالية":
-        current_tz = get_user_timezone(user_id)
-        local_time = get_localized_time(user_id)
-        time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
-        
-        countries_in_tz = []
-        for country, tz in COUNTRY_TIMEZONE_MAP.items():
-            if tz == current_tz:
-                countries_in_tz.append(country)
-        
-        countries_text = "\n".join([f"• {country}" for country in countries_in_tz[:10]])
-        if len(countries_in_tz) > 10:
-            countries_text += f"\n• ... و {len(countries_in_tz) - 10} دولة أخرى"
-        
-        await update.message.reply_text(
-            f"📍 **معلومات منطقتك الزمنية**\n\n"
-            f"🕒 **المنطقة:** {current_tz}\n"
-            f"⏰ **الوقت الحالي:** {time_str}\n\n"
-            f"🌍 **الدول في هذه المنطقة:**\n{countries_text if countries_text else 'لا توجد دول محددة'}",
-            parse_mode="Markdown"
-        )
-        return TIMEZONE_MENU
-    
-    elif user_message == "🔍 بحث عن دولة":
-        await update.message.reply_text(
-            "🔍 **أدخل اسم الدولة**\n\n"
-            "مثال: `مصر`، `السعودية`، `فلسطين`، `اليابان`\n\n"
-            "أو اكتب `قائمة الدول` لعرض جميع الدول المتاحة",
-            parse_mode="Markdown"
-        )
-        return SEARCH_COUNTRY
-    
-    elif user_message == "🌍 جميع الدول":
-        keyboard = []
-        row = []
-        
-        countries = list(COUNTRY_TIMEZONE_MAP.keys())
-        for i, country in enumerate(countries[:30]):
-            tz = COUNTRY_TIMEZONE_MAP[country]
-            display = f"{country} {tz}"
-            row.append(display[:20])
-            
-            if len(row) == 2:
-                keyboard.append(row)
-                row = []
-        
-        if row:
-            keyboard.append(row)
-        
-        keyboard.append(["🔙 رجوع", "الرجوع للقائمة الرئيسية"])
-        
-        await update.message.reply_text(
-            "🌍 **قائمة الدول مع مناطقها الزمنية**\n\n"
-            "اختر دولة لتعيين منطقتك الزمنية:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SEARCH_COUNTRY
-    
-    selected_gmt = None
-    for gmt in TIMEZONES_BY_GMT.keys():
-        if user_message.startswith(gmt) or gmt in user_message:
-            selected_gmt = gmt
-            break
-    
-    if selected_gmt:
-        set_user_timezone(user_id, selected_gmt)
-        
-        tz_info = TIMEZONES_BY_GMT[selected_gmt]
-        local_time = get_localized_time(user_id)
-        time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
-        
-        countries_in_tz = []
-        for country, tz in COUNTRY_TIMEZONE_MAP.items():
-            if tz == selected_gmt:
-                countries_in_tz.append(country)
-        
-        countries_text = "\n".join([f"• {country}" for country in countries_in_tz[:10]])
-        if len(countries_in_tz) > 10:
-            countries_text += f"\n• ... و {len(countries_in_tz) - 10} دولة أخرى"
-        
-        await update.message.reply_text(
-            f"✅ **تم تعيين منطقتك الزمنية بنجاح!**\n\n"
-            f"🕒 **المنطقة:** {selected_gmt}\n"
-            f"📌 **الاسم:** {tz_info['name']}\n"
-            f"⏰ **الوقت المحلي:** {time_str}\n\n"
-            f"🌍 **الدول في هذه المنطقة:**\n{countries_text if countries_text else 'لا توجد دول محددة'}",
-            parse_mode="Markdown"
-        )
-        
-        return TIMEZONE_MENU
-    
-    await update.message.reply_text(
-        "❌ لم أتمكن من العثور على المنطقة الزمنية المحددة.\n"
-        "الرجاء الاختيار من القائمة أو البحث عن دولة.",
-        reply_markup=ReplyKeyboardMarkup([["🔙 رجوع"]], resize_keyboard=True)
-    )
-    return TIMEZONE_MENU
-
-async def handle_country_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "الرجوع للقائمة الرئيسية" or user_message == "🔙 رجوع":
-        return await timezone_menu(update, context)
-    
-    if user_message == "قائمة الدول":
-        countries_list = "\n".join([f"• {country}" for country in sorted(COUNTRY_TIMEZONE_MAP.keys())])
-        
-        for part in split_message(countries_list, 3500):
-            await update.message.reply_text(
-                f"🌍 **قائمة الدول المتاحة:**\n\n{part}",
-                parse_mode="Markdown"
-            )
-        
-        return SEARCH_COUNTRY
-    
-    found_countries = []
-    for country, tz in COUNTRY_TIMEZONE_MAP.items():
-        if user_message.lower() in country.lower():
-            found_countries.append((country, tz))
-    
-    if found_countries:
-        if len(found_countries) == 1:
-            country, tz = found_countries[0]
-            set_user_timezone(user_id, tz)
-            
-            tz_info = TIMEZONES_BY_GMT.get(tz, {"name": "منطقة زمنية"})
-            local_time = get_localized_time(user_id)
-            time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
-            
-            await update.message.reply_text(
-                f"✅ **تم تعيين منطقتك الزمنية حسب {country}**\n\n"
-                f"🕒 **المنطقة:** {tz}\n"
-                f"📌 **الاسم:** {tz_info.get('name', '')}\n"
-                f"⏰ **الوقت المحلي:** {time_str}",
-                parse_mode="Markdown"
-            )
-            return await timezone_menu(update, context)
-        else:
-            keyboard = []
-            for country, tz in found_countries[:10]:
-                keyboard.append([f"{country} ({tz})"])
-            
-            keyboard.append(["🔙 رجوع", "الرجوع للقائمة الرئيسية"])
-            
-            await update.message.reply_text(
-                f"🔍 **نتائج البحث عن '{user_message}':**\n\n"
-                f"تم العثور على {len(found_countries)} دولة. اختر الدولة المناسبة:",
-                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-                parse_mode="Markdown"
-            )
-            return SEARCH_COUNTRY
-    else:
-        await update.message.reply_text(
-            f"❌ لم يتم العثور على دولة باسم '{user_message}'.\n"
-            "تأكد من كتابة الاسم بشكل صحيح أو اختر من القائمة.",
-            parse_mode="Markdown"
-        )
-        return SEARCH_COUNTRY
-
-async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ ليس لديك صلاحية الوصول للوحة التحكم.")
-        return MAIN_MENU
-    
-    bot_status = SubscriptionSystem.get_bot_status()
-    health = AutomationSystem.get_system_health()
-    stats = SubscriptionSystem.get_stats()
-    free_settings = free_analytics.get_settings()
-    
-    keyboard = [
-        ["👥 عرض المستخدمين", "➕ إضافة اشتراك"],
-        ["🗑️ إلغاء اشتراك", "⏱️ تمديد اشتراك"],
-        ["🚫 حظر مستخدم", "✅ إلغاء حظر"],
-        ["📢 إذاعة للمشتركين", "📊 إحصائيات"],
-        ["🔧 حالة البوت", "⏰ جدولة"],
-        ["🌐 التحكم بالجلسات", "🔄 تحديث تلقائي"],
-        ["🎯 التحكم بالتحليلات المجانية", "📡 رادار الأخبار"],
-        ["🔙 العودة"]
-    ]
-    
-    status_emoji = {
-        'active': '✅',
-        'stopped': '⏸️',
-        'maintenance': '🔧',
-        'scheduled': '⏰'
-    }
-    
-    current_status = status_emoji.get(bot_status['status'], '❓')
-    
-    health_emoji = '✅' if health['status'] == 'healthy' else '⚠️'
-    free_status = "✅ مفعلة" if free_settings['enabled'] else "❌ معطلة"
-    
-    await update.message.reply_text(
-        f"👑 **لوحة تحكم المشرف** 👑\n\n"
-        f"🔑 **نظام إدارة الاشتراكات المتطور V2.1**\n\n"
-        f"📊 **حالة البوت:** {current_status} {bot_status['status']}\n"
-        f"🌐 **الجلسات المسموحة:** {bot_status['session_control']}\n"
-        f"🖥️ **صحة النظام:** {health_emoji} CPU: {health['cpu']}% | RAM: {health['memory_used']}%\n"
-        f"🎯 **التحليلات المجانية:** {free_status} (العدد الافتراضي: {free_settings['default_count']})\n\n"
-        f"📈 **إحصائيات سريعة:**\n"
-        f"👥 المستخدمين: {stats.get('total_users', 0)}\n"
-        f"✅ النشطين: {stats.get('active_users', 0)}\n"
-        f"📊 التحليلات: {stats.get('total_analyses', 0)}\n"
-        f"🔢 مستخدمين مع تحليلات مجانية: {stats.get('users_with_free', 0)}\n"
-        f"🎯 تحليلات مجانية متبقية: {stats.get('total_free_remaining', 0)}\n\n"
-        f"اختر الإجراء المطلوب:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    return ADMIN_MENU
-
-async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ ليس لديك صلاحية الوصول للوحة التحكم.")
-        return MAIN_MENU
-    
-    if user_message == "🔙 العودة":
-        keyboard = [
-            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-            ["📊 معلومات الجلسة", "👤 معلوماتي"],
-            ["🌍 المناطق الزمنية"],
-            ["👑 لوحة التحكم"]
-        ]
-        await update.message.reply_text(
-            "🏠 العودة للقائمة الرئيسية",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return MAIN_MENU
-    
-    elif user_message == "👥 عرض المستخدمين":
-        users = SubscriptionSystem.get_all_users()
-        
-        if not users:
-            await update.message.reply_text("📭 لا يوجد مستخدمين بعد.")
-        else:
-            msg = "👥 **قائمة المستخدمين:**\n\n"
-            for u in users[:20]:
-                uid, username, first_name, created, last_active, is_blocked, free_analyses, total_analyses, timezone, sub_name, start_date, end_date, is_active = u
-                
-                if is_blocked == 1:
-                    status = "🚫 محظور"
-                elif is_active == 1 and (not end_date or datetime.fromisoformat(end_date) > datetime.now()):
-                    status = "✅ نشط"
-                else:
-                    status = "❌ غير نشط"
-                
-                display_name = first_name or username or str(uid)
-                
-                msg += f"• **{display_name}**\n"
-                msg += f"  🆔 `{uid}`\n"
-                msg += f"  📊 اشتراك: {sub_name or 'لا يوجد'} ({status})\n"
-                msg += f"  🔢 تحليلات: {total_analyses} (مجاني: {free_analyses})\n"
-                msg += f"  🌍 منطقة: {timezone}\n"
-                msg += f"  📅 آخر نشاط: {last_active[:16] if last_active else '-'}\n\n"
-            
-            for part in split_message(msg, 4000):
-                await update.message.reply_text(part, parse_mode="Markdown")
-        
-        return ADMIN_MENU
-    
-    elif user_message == "➕ إضافة اشتراك":
-        await update.message.reply_text(
-            "➕ **إضافة اشتراك لمستخدم**\n\n"
-            "أرسل معرف المستخدم (User ID):\n"
-            "مثال: `123456789`",
-            parse_mode="Markdown"
-        )
-        return ADD_SUBSCRIPTION
-    
-    elif user_message == "🗑️ إلغاء اشتراك":
-        await update.message.reply_text(
-            "🗑️ **إلغاء اشتراك مستخدم**\n\n"
-            "أرسل معرف المستخدم للإلغاء:\n"
-            "مثال: `123456789`",
-            parse_mode="Markdown"
-        )
-        return REMOVE_USER
-    
-    elif user_message == "⏱️ تمديد اشتراك":
-        await update.message.reply_text(
-            "⏱️ **تمديد اشتراك مستخدم**\n\n"
-            "أرسل معرف المستخدم والمدة الإضافية بالثواني:\n"
-            "مثال: `123456789 86400` لتمديد يوم",
-            parse_mode="Markdown"
-        )
-        return SET_USER_DURATION
-    
-    elif user_message == "🚫 حظر مستخدم":
-        await update.message.reply_text(
-            "🚫 **حظر مستخدم**\n\n"
-            "أرسل معرف المستخدم للحظر:\n"
-            "مثال: `123456789`",
-            parse_mode="Markdown"
-        )
-        return REMOVE_USER
-    
-    elif user_message == "✅ إلغاء حظر":
-        await update.message.reply_text(
-            "✅ **إلغاء حظر مستخدم**\n\n"
-            "أرسل معرف المستخدم لإلغاء الحظر:\n"
-            "مثال: `123456789`",
-            parse_mode="Markdown"
-        )
-        return REMOVE_USER
-    
-    elif user_message == "📢 إذاعة للمشتركين":
-        await update.message.reply_text(
-            "📢 **إذاعة للمشتركين**\n\n"
-            "أرسل الرسالة التي تريد إذاعتها لجميع المشتركين النشطين:",
-            parse_mode="Markdown"
-        )
-        return BROADCAST_MESSAGE
-    
-    elif user_message == "📊 إحصائيات":
-        stats = SubscriptionSystem.get_stats()
-        health = AutomationSystem.get_system_health()
-        current_session = get_current_session()
-        free_settings = free_analytics.get_settings()
-        
-        stats_text = (
-            "📊 **إحصائيات النظام المتقدم:**\n\n"
-            f"👥 إجمالي المستخدمين: {stats.get('total_users', 0)}\n"
-            f"✅ نشط اليوم: {stats.get('active_today', 0)}\n"
-            f"📅 نشط الأسبوع: {stats.get('active_week', 0)}\n"
-            f"🚫 المحظورين: {stats.get('blocked_users', 0)}\n"
-            f"✅ المشتركين النشطين: {stats.get('active_users', 0)}\n"
-            f"⏳ منتهي قريباً (7 أيام): {stats.get('expiring_soon', 0)}\n"
-            f"📈 إجمالي التحليلات: {stats.get('total_analyses', 0)}\n"
-            f"🔢 مستخدمين مع تحليلات مجانية: {stats.get('users_with_free', 0)}\n"
-            f"🎯 تحليلات مجانية متبقية: {stats.get('total_free_remaining', 0)}\n\n"
-            f"🎯 **إعدادات التحليلات المجانية:**\n"
-            f"الحالة: {'✅ مفعلة' if free_settings['enabled'] else '❌ معطلة'}\n"
-            f"العدد الافتراضي: {free_settings['default_count']}\n"
-            f"الحد الأقصى: {free_settings['max_count']}\n\n"
-            f"🖥️ **صحة النظام:**\n"
-            f"CPU: {health['cpu']}% | RAM: {health['memory_used']}%\n"
-            f"القرص: {health['disk_used']}% مستخدم ({health['disk_free']:.1f} جيجا متاح)\n\n"
-            f"🌐 **الجلسة الحالية:** {current_session['name']}\n\n"
-            f"📊 **الاشتراكات حسب النوع:**\n"
-        )
-        
-        for sub_type, count in stats.get('subscriptions_by_type', {}).items():
-            stats_text += f"  • {sub_type}: {count}\n"
-        
-        for part in split_message(stats_text, 4000):
-            await update.message.reply_text(part, parse_mode="Markdown")
-        return ADMIN_MENU
-    
-    elif user_message == "🔧 حالة البوت":
-        bot_status = SubscriptionSystem.get_bot_status()
-        
-        status_text = (
-            "🔧 **التحكم بحالة البوت**\n\n"
-            f"الحالة الحالية: **{bot_status['status']}**\n"
-            f"الجلسات المسموحة: **{bot_status['session_control']}**\n\n"
-            "اختر الحالة الجديدة:"
-        )
-        
-        keyboard = [
-            ["✅ تشغيل", "⏸️ إيقاف", "🔧 صيانة"],
-            ["🔙 العودة للوحة التحكم"]
-        ]
-        
-        await update.message.reply_text(
-            status_text,
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SET_BOT_STATUS
-    
-    elif user_message == "⏰ جدولة":
-        await update.message.reply_text(
-            "⏰ **جدولة تغيير حالة البوت**\n\n"
-            "أرسل الوقت والمدة والصيغة المطلوبة:\n\n"
-            "مثال: `stop 30m` (إيقاف بعد 30 دقيقة)\n"
-            "مثال: `maintenance 2h` (صيانة بعد ساعتين)\n"
-            "مثال: `active 1h` (تشغيل بعد ساعة)\n\n"
-            "الوحدات: m (دقائق), h (ساعات)",
-            parse_mode="Markdown"
-        )
-        return SET_BOT_STATUS
-    
-    elif user_message == "🌐 التحكم بالجلسات":
-        keyboard = [
-            ["🌏 آسيوية فقط", "🇬🇧 لندن فقط"],
-            ["🗽 نيويورك فقط", "🌊 المحيط الهادئ فقط"],
-            ["🌍 جميع الجلسات"],
-            ["🔄 تلقائي (حسب الوقت)"],
-            ["🔙 العودة للوحة التحكم"]
-        ]
-        
-        await update.message.reply_text(
-            "🌐 **التحكم بالجلسات المسموحة**\n\n"
-            "اختر الجلسات التي تريد السماح بها:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SET_SESSION_CONTROL
-    
-    elif user_message == "🔄 تحديث تلقائي":
-        AutomationSystem.auto_switch_session()
-        await update.message.reply_text(
-            "🔄 **تم تحديث الجلسات تلقائياً**\n\n"
-            "سيتم إرسال إشعار للمستخدمين النشطين.",
-            parse_mode="Markdown"
-        )
-        return ADMIN_MENU
-    
-    elif user_message == "🎯 التحكم بالتحليلات المجانية":
-        free_settings = free_analytics.get_settings()
-        
-        keyboard = [
-            ["✅ تفعيل التحليلات المجانية", "❌ تعطيل التحليلات المجانية"],
-            ["🔢 تغيير العدد الافتراضي", "🔄 إعادة تعيين الكل"],
-            ["🔙 العودة للوحة التحكم"]
-        ]
-        
-        await update.message.reply_text(
-            f"🎯 **التحكم بالتحليلات المجانية**\n\n"
-            f"الحالة الحالية: {'✅ مفعلة' if free_settings['enabled'] else '❌ معطلة'}\n"
-            f"العدد الافتراضي: {free_settings['default_count']}\n"
-            f"الحد الأقصى: {free_settings['max_count']}\n\n"
-            f"اختر الإجراء المطلوب:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return FREE_ANALYSES_SETTINGS
-    
-    elif user_message == "📡 رادار الأخبار":
-        groups = news_radar.get_monitored_groups()
-        settings = news_radar.get_settings()
-        
-        groups_list = "\n".join([f"• {title} (ID: {cid})" for cid, title in groups]) if groups else "لا توجد مجموعات مراقبة"
-        
-        keyboard = [
-            ["➕ إضافة مجموعة", "➖ إزالة مجموعة"],
-            ["✅ تفعيل الرادار", "❌ تعطيل الرادار"],
-            ["🔄 تشغيل فوري", "⏱️ تغيير المدة"],
-            ["🔙 العودة للوحة التحكم"]
-        ]
-        
-        await update.message.reply_text(
-            f"📡 **رادار الأخبار المتقدم**\n\n"
-            f"الحالة: {'✅ مفعل' if settings.get('enabled', 'true') == 'true' else '❌ معطل'}\n"
-            f"مدة الفحص: {settings.get('interval_minutes', '5')} دقائق\n"
-            f"عدد العملات: {len(news_radar.currencies)}\n\n"
-            f"**المجموعات المراقبة:**\n{groups_list}\n\n"
-            f"اختر الإجراء المطلوب:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return FREE_ANALYSES_SETTINGS
-    
-    return ADMIN_MENU
-
-async def handle_free_analytics_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_id != ADMIN_ID:
-        return ADMIN_MENU
-    
-    if user_message == "🔙 العودة للوحة التحكم":
-        return await start_admin_panel(update, context)
-    
-    elif user_message == "✅ تفعيل التحليلات المجانية":
-        free_analytics.set_setting('enabled', 'true', user_id)
-        await update.message.reply_text("✅ تم تفعيل التحليلات المجانية")
-    
-    elif user_message == "❌ تعطيل التحليلات المجانية":
-        free_analytics.set_setting('enabled', 'false', user_id)
-        await update.message.reply_text("✅ تم تعطيل التحليلات المجانية")
-    
-    elif user_message == "🔢 تغيير العدد الافتراضي":
-        await update.message.reply_text(
-            "🔢 **تغيير العدد الافتراضي للتحليلات المجانية**\n\n"
-            "أرسل الرقم الجديد (1-10):\n"
-            "مثال: `5`",
-            parse_mode="Markdown"
-        )
-        context.user_data['setting_action'] = 'set_default_count'
-        return FREE_ANALYSES_SETTINGS
-    
-    elif user_message == "🔄 إعادة تعيين الكل":
-        users = SubscriptionSystem.get_all_users()
-        default_count = free_analytics.get_settings()['default_count']
-        
-        count = 0
-        for user in users:
-            user_id_db = user[0]
-            if user_id_db != ADMIN_ID:
-                SubscriptionSystem.reset_free_analyses(user_id_db, default_count)
-                count += 1
-        
-        await update.message.reply_text(f"✅ تم إعادة تعيين التحليلات المجانية لـ {count} مستخدم إلى {default_count}")
-    
-    elif user_message == "➕ إضافة مجموعة":
-        await update.message.reply_text(
-            "➕ **إضافة مجموعة لرادار الأخبار**\n\n"
-            "أرسل معرف المجموعة (Chat ID):\n"
-            "مثال: `-1001234567890`",
-            parse_mode="Markdown"
-        )
-        context.user_data['radar_action'] = 'add_group'
-        return FREE_ANALYSES_SETTINGS
-    
-    elif user_message == "➖ إزالة مجموعة":
-        groups = news_radar.get_monitored_groups()
-        if not groups:
-            await update.message.reply_text("📭 لا توجد مجموعات مراقبة")
-        else:
-            groups_list = "\n".join([f"• {cid} - {title}" for cid, title in groups])
-            await update.message.reply_text(
-                f"➖ **إزالة مجموعة**\n\n"
-                f"المجموعات المتاحة:\n{groups_list}\n\n"
-                f"أرسل معرف المجموعة للإزالة:",
-                parse_mode="Markdown"
-            )
-            context.user_data['radar_action'] = 'remove_group'
-            return FREE_ANALYSES_SETTINGS
-    
-    elif user_message == "✅ تفعيل الرادار":
-        news_radar.broadcast_enabled = True
-        await update.message.reply_text("✅ تم تفعيل رادار الأخبار")
-    
-    elif user_message == "❌ تعطيل الرادار":
-        news_radar.broadcast_enabled = False
-        await update.message.reply_text("✅ تم تعطيل رادار الأخبار")
-    
-    elif user_message == "🔄 تشغيل فوري":
-        await update.message.reply_text("📡 جاري تشغيل الرادار...")
-        await news_radar.broadcast_news_to_all_groups(context)
-        await update.message.reply_text("✅ تم تشغيل الرادار وإرسال آخر الأخبار")
-    
-    elif user_message == "⏱️ تغيير المدة":
-        await update.message.reply_text(
-            "⏱️ **تغيير مدة فحص الرادار**\n\n"
-            "أرسل المدة بالدقائق:\n"
-            "مثال: `10` (كل 10 دقائق)",
-            parse_mode="Markdown"
-        )
-        context.user_data['radar_action'] = 'set_interval'
-        return FREE_ANALYSES_SETTINGS
-    
-    elif context.user_data.get('setting_action') == 'set_default_count':
-        try:
-            new_count = int(user_message)
-            if 1 <= new_count <= 10:
-                free_analytics.set_setting('default_count', new_count, user_id)
-                await update.message.reply_text(f"✅ تم تغيير العدد الافتراضي إلى {new_count}")
-            else:
-                await update.message.reply_text("❌ الرجاء إدخال رقم بين 1 و 10")
-        except:
-            await update.message.reply_text("❌ الرجاء إدخال رقم صحيح")
-        context.user_data['setting_action'] = None
-    
-    elif context.user_data.get('radar_action') == 'add_group':
-        try:
-            chat_id = int(user_message)
-            chat_title = f"Group_{chat_id}"
-            if news_radar.add_group(chat_id, chat_title, user_id):
-                await update.message.reply_text(f"✅ تم إضافة المجموعة {chat_id} بنجاح")
-            else:
-                await update.message.reply_text("❌ فشل في إضافة المجموعة")
-        except:
-            await update.message.reply_text("❌ الرجاء إدخال معرف صحيح")
-        context.user_data['radar_action'] = None
-    
-    elif context.user_data.get('radar_action') == 'remove_group':
-        try:
-            chat_id = int(user_message)
-            if news_radar.remove_group(chat_id):
-                await update.message.reply_text(f"✅ تم إزالة المجموعة {chat_id} بنجاح")
-            else:
-                await update.message.reply_text("❌ فشل في إزالة المجموعة")
-        except:
-            await update.message.reply_text("❌ الرجاء إدخال معرف صحيح")
-        context.user_data['radar_action'] = None
-    
-    elif context.user_data.get('radar_action') == 'set_interval':
-        try:
-            minutes = int(user_message)
-            if 1 <= minutes <= 60:
-                # تحديث المدة في الإعدادات
-                await update.message.reply_text(f"✅ تم تغيير مدة الفحص إلى {minutes} دقائق")
-            else:
-                await update.message.reply_text("❌ الرجاء إدخال رقم بين 1 و 60")
-        except:
-            await update.message.reply_text("❌ الرجاء إدخال رقم صحيح")
-        context.user_data['radar_action'] = None
-    
-    return await start_admin_panel(update, context)
-
-async def handle_set_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_id != ADMIN_ID:
-        return ADMIN_MENU
-    
-    if user_message == "🔙 العودة للوحة التحكم":
-        return await start_admin_panel(update, context)
-    
-    if user_message in ["✅ تشغيل", "⏸️ إيقاف", "🔧 صيانة"]:
-        status_map = {
-            "✅ تشغيل": "active",
-            "⏸️ إيقاف": "stopped",
-            "🔧 صيانة": "maintenance"
-        }
-        
-        new_status = status_map[user_message]
-        SubscriptionSystem.set_bot_status(new_status, session_control='all', updated_by=user_id)
-        
-        await update.message.reply_text(f"✅ تم تغيير حالة البوت إلى: {user_message}")
-        return await start_admin_panel(update, context)
-    
-    try:
-        parts = user_message.split()
-        if len(parts) == 2:
-            action = parts[0]
-            duration_str = parts[1]
-            
-            if action in ['stop', 'maintenance', 'active']:
-                if duration_str.endswith('m'):
-                    minutes = int(duration_str[:-1])
-                    seconds = minutes * 60
-                elif duration_str.endswith('h'):
-                    hours = int(duration_str[:-1])
-                    seconds = hours * 3600
-                else:
-                    seconds = int(duration_str)
-                
-                scheduled_time = (datetime.now() + timedelta(seconds=seconds)).isoformat()
-                SubscriptionSystem.set_bot_status('scheduled', scheduled_time, action, updated_by=user_id)
-                
-                await update.message.reply_text(
-                    f"⏰ **تمت الجدولة بنجاح**\n\n"
-                    f"الإجراء: {action}\n"
-                    f"الوقت: {datetime.fromisoformat(scheduled_time).strftime('%Y-%m-%d %H:%M:%S')}",
-                    parse_mode="Markdown"
-                )
-                return await start_admin_panel(update, context)
-    except:
-        pass
-    
-    await update.message.reply_text("❌ صيغة غير صحيحة. الرجاء المحاولة مرة أخرى.")
-    return SET_BOT_STATUS
-
-async def handle_session_control(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_id != ADMIN_ID:
-        return ADMIN_MENU
-    
-    if user_message == "🔙 العودة للوحة التحكم":
-        return await start_admin_panel(update, context)
-    
-    if user_message == "🔄 تلقائي (حسب الوقت)":
-        AutomationSystem.auto_switch_session()
-        await update.message.reply_text(
-            "🔄 **تم تفعيل الوضع التلقائي**\n\n"
-            "سيتم تبديل الجلسات تلقائياً حسب الوقت العالمي.",
-            parse_mode="Markdown"
-        )
-        return await start_admin_panel(update, context)
-    
-    session_map = {
-        "🌏 آسيوية فقط": "asian",
-        "🇬🇧 لندن فقط": "london",
-        "🗽 نيويورك فقط": "newyork",
-        "🌊 المحيط الهادئ فقط": "pacific",
-        "🌍 جميع الجلسات": "all"
-    }
-    
-    if user_message in session_map:
-        session_control = session_map[user_message]
-        SubscriptionSystem.set_bot_status('active', session_control=session_control, updated_by=user_id)
-        
-        await update.message.reply_text(f"✅ تم تعيين الجلسات المسموحة إلى: {user_message}")
-        return await start_admin_panel(update, context)
-    
-    return SET_SESSION_CONTROL
-
-async def handle_add_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ ليس لديك صلاحية.")
-        return MAIN_MENU
-    
-    try:
-        target_user_id = int(update.message.text.strip())
-        context.user_data['target_user_id'] = target_user_id
-        
-        keyboard = [
-            ["🕐 ساعة", "📅 يوم"],
-            ["📆 أسبوع", "📅 شهر"],
-            ["📅 سنة", "♾️ مدى الحياة"],
-            ["إلغاء", "🔙 العودة للوحة التحكم"]
-        ]
-        
-        await update.message.reply_text(
-            f"➕ **إضافة اشتراك للمستخدم:** `{target_user_id}`\n\n"
-            f"اختر مدة الاشتراك:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True),
-            parse_mode="Markdown"
-        )
-        return SELECT_DURATION
-        
-    except ValueError:
-        await update.message.reply_text("❌ الرجاء إرسال معرف المستخدم (أرقام فقط).")
-        return ADD_SUBSCRIPTION
-
-async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    duration_choice = update.message.text.strip()
-    
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ ليس لديك صلاحية.")
-        return MAIN_MENU
-    
-    if duration_choice == "إلغاء" or duration_choice == "🔙 العودة للوحة التحكم":
-        return await start_admin_panel(update, context)
-    
-    subscription_type = None
-    if duration_choice == "🕐 ساعة":
-        subscription_type = "hourly"
-    elif duration_choice == "📅 يوم":
-        subscription_type = "daily"
-    elif duration_choice == "📆 أسبوع":
-        subscription_type = "weekly"
-    elif duration_choice == "📅 شهر":
-        subscription_type = "monthly"
-    elif duration_choice == "📅 سنة":
-        subscription_type = "yearly"
-    elif duration_choice == "♾️ مدى الحياة":
-        subscription_type = "lifetime"
-    else:
-        await update.message.reply_text("❌ اختيار غير صالح.")
-        return SELECT_DURATION
-    
-    target_user_id = context.user_data.get('target_user_id')
-    if not target_user_id:
-        await update.message.reply_text("❌ خطأ: لم يتم تحديد المستخدم.")
-        return ADMIN_MENU
-    
-    success, result = SubscriptionSystem.add_subscription(
-        user_id=target_user_id,
-        subscription_type=subscription_type,
-        added_by=user_id
-    )
-    
-    if success:
-        sub_info = result
-        end_info = ""
-        if sub_info['end_date']:
-            end_datetime = datetime.fromisoformat(sub_info['end_date'])
-            end_info = f"ينتهي في: {end_datetime.strftime('%Y-%m-%d %H:%M')}"
-        else:
-            end_info = "غير محدد المدة (مدى الحياة)"
-        
-        SubscriptionSystem.reset_free_analyses(target_user_id, 3)
-        
-        await update.message.reply_text(
-            f"✅ **تم إضافة الاشتراك بنجاح!**\n\n"
-            f"👤 المستخدم: `{target_user_id}`\n"
-            f"📅 النوع: {sub_info['subscription_name']}\n"
-            f"{end_info}",
-            parse_mode="Markdown"
-        )
-        
-        try:
-            await context.bot.send_message(
-                chat_id=target_user_id,
-                text=f"✅ **تم تفعيل اشتراكك في البوت الخاص بنا!**\n\n"
-                     f"📅 نوع الاشتراك: {sub_info['subscription_name']}\n"
-                     f"{end_info}\n\n"
-                     f"أرسل /start لبدء استخدام البوت",
-                parse_mode="Markdown"
-            )
-        except:
-            pass
-        
-    else:
-        await update.message.reply_text(f"❌ فشل في إضافة الاشتراك: {result}")
-    
-    if 'target_user_id' in context.user_data:
-        del context.user_data['target_user_id']
-    
-    return ADMIN_MENU
-
-async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    previous_message = update.message.text.strip()
-    
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ ليس لديك صلاحية.")
-        return MAIN_MENU
-    
-    last_action = context.user_data.get('last_action')
-    
-    try:
-        if last_action == 'block':
-            target_user_id = int(previous_message.split()[0])
-            reason = ' '.join(previous_message.split()[1:]) if len(previous_message.split()) > 1 else "Blocked by admin"
-            
-            success, message = SubscriptionSystem.block_user(target_user_id, reason, performed_by=user_id)
-            
-            await update.message.reply_text(f"✅ {message}" if success else f"❌ {message}")
-            context.user_data['last_action'] = None
-            return ADMIN_MENU
-        
-        elif last_action == 'unblock':
-            target_user_id = int(previous_message)
-            
-            success, message = SubscriptionSystem.unblock_user(target_user_id, performed_by=user_id)
-            
-            await update.message.reply_text(f"✅ {message}" if success else f"❌ {message}")
-            context.user_data['last_action'] = None
-            return ADMIN_MENU
-        
-        else:
-            target_user_id = int(previous_message)
-            
-            if target_user_id == ADMIN_ID:
-                await update.message.reply_text("❌ لا يمكن إلغاء اشتراك المشرف الرئيسي.")
-                return ADMIN_MENU
-            
-            success, message = SubscriptionSystem.revoke_subscription(target_user_id, performed_by=user_id)
-            
-            if success:
-                await update.message.reply_text(f"✅ {message}")
-                
-                try:
-                    await context.bot.send_message(
-                        chat_id=target_user_id,
-                        text=f"⚠️ **تم إلغاء اشتراكك في البوت**\n\n"
-                             f"للتواصل مع المشرف: @Sz2zv",
-                        parse_mode="Markdown"
-                    )
-                except:
-                    pass
-            else:
-                await update.message.reply_text(f"❌ {message}")
-            
-            return ADMIN_MENU
-        
-    except ValueError:
-        await update.message.reply_text("❌ الرجاء إرسال معرف المستخدم (أرقام فقط).")
-        return REMOVE_USER
-
-async def handle_set_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ ليس لديك صلاحية.")
-        return MAIN_MENU
-    
-    try:
-        parts = update.message.text.strip().split()
-        if len(parts) != 2:
-            await update.message.reply_text(
-                "❌ صيغة خاطئة. استخدم: `user_id 86400`\n"
-                "مثال: `123456789 86400`",
-                parse_mode="Markdown"
-            )
-            return SET_USER_DURATION
-        
-        target_user_id = int(parts[0])
-        additional_seconds = int(parts[1])
-        
-        if target_user_id == ADMIN_ID:
-            await update.message.reply_text("✅ المشرف الرئيسي لديه صلاحيات غير محدودة.")
-            return ADMIN_MENU
-        
-        success, message = SubscriptionSystem.extend_subscription(
-            target_user_id, 
-            additional_seconds, 
-            performed_by=user_id
-        )
-        
-        if success:
-            await update.message.reply_text(f"✅ {message}")
-            
-            try:
-                await context.bot.send_message(
-                    chat_id=target_user_id,
-                    text=f"✅ **تم تمديد اشتراكك في البوت**\n\n{message}",
-                    parse_mode="Markdown"
-                )
-            except:
-                pass
-        else:
-            await update.message.reply_text(f"❌ {message}")
-        
-    except ValueError:
-        await update.message.reply_text("❌ الرجاء إرسال معرف المستخدم والمدة بشكل صحيح.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {str(e)}")
-    
-    return ADMIN_MENU
-
-async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    broadcast_message = update.message.text.strip()
-    
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("❌ ليس لديك صلاحية.")
-        return MAIN_MENU
-    
-    users = SubscriptionSystem.get_all_users()
-    
-    if not users:
-        await update.message.reply_text("📭 لا يوجد مستخدمين للإذاعة.")
-        return ADMIN_MENU
-    
-    wait_msg = await update.message.reply_text(f"📢 جاري الإذاعة لـ {len(users)} مستخدم...")
-    
-    success_count = 0
-    fail_count = 0
-    
-    for user in users:
-        target_id = user[0]
-        try:
-            await context.bot.send_message(
-                chat_id=target_id,
-                text=f"📢 **رسالة إدارية**\n\n{broadcast_message}\n\n━━━━━━━━━━━━\nObeida Trading",
-                parse_mode="Markdown"
-            )
-            success_count += 1
-            await asyncio.sleep(0.05)
-        except Exception as e:
-            print(f"⚠️ فشل إرسال للمستخدم {target_id}: {e}")
-            fail_count += 1
-    
-    await wait_msg.edit_text(
-        f"📊 **نتيجة الإذاعة**\n\n"
-        f"✅ تم الإرسال بنجاح لـ: {success_count} مستخدم\n"
-        f"❌ فشل الإرسال لـ: {fail_count} مستخدم"
-    )
-    
-    return ADMIN_MENU
 
 async def analyze_chart_image(update, context, image_path, candle, trade_time, symbol):
     try:
@@ -4330,21 +3384,27 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS +
         full_result = analysis_result + footer
         full_result = clean_repeated_text(full_result)
         
+        # تنسيق النتيجة مع زر نسخ - بشكل آمن
+        formatted_result = format_analysis_with_copy_button(full_result)
+        
         # إرسال النتيجة
         try:
-            if len(full_result) > 4000:
-                parts = split_message(full_result, 3500)
+            if len(formatted_result) > 4000:
+                parts = split_message(formatted_result, 3500)
                 await wait_msg.edit_text(parts[0], parse_mode="Markdown")
                 for part in parts[1:]:
                     await update.message.reply_text(part, parse_mode="Markdown")
             else:
-                await wait_msg.edit_text(full_result, parse_mode="Markdown")
+                await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
         except Exception as e:
-            if "Message is not modified" in str(e):
-                # إذا كانت الرسالة نفسها، نرسل رسالة جديدة
-                await update.message.reply_text(full_result, parse_mode="Markdown")
+            # إذا فشل الإرسال مع Markdown، نرسل بدون تنسيق
+            error_msg = str(e)
+            if "can't find end of the entity" in error_msg:
+                # مشكلة في تنسيق Markdown - نرسل النص العادي
+                await wait_msg.edit_text(full_result)
             else:
-                raise e
+                # أخطاء أخرى
+                await update.message.reply_text(full_result)
         
         # العودة للقائمة الرئيسية
         keyboard = [
@@ -4370,22 +3430,1103 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS +
         return "⏱️ تجاوز الوقت المحدد"
     except Exception as e:
         print(f"❌ خطأ في تحليل الصورة: {traceback.format_exc()}")
-        error_msg = f"🛑 البوت متوقف بشكل مؤقت: {str(e)[:200]}\nيرجى الانتظار حتى تشغيله."
+        error_msg = f"❌ حدث خطأ في تحليل الصورة: {str(e)[:200]}\nيرجى المحاولة مرة أخرى."
+        
+        # إرسال رسالة خطأ آمنة
         try:
             await wait_msg.edit_text(error_msg)
         except:
             await update.message.reply_text(error_msg)
         return error_msg
-    finally:
-        # تنظيف الملفات المؤقتة
-        for filepath in [image_path, compressed_path] if 'compressed_path' in locals() else [image_path]:
-            if os.path.exists(filepath):
-                try:
-                    os.remove(filepath)
-                except Exception as e:
-                    print(f"⚠️ خطأ في حذف الملف المؤقت: {e}")
+
+async def timezone_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    current_tz = get_user_timezone(user_id)
     
-    return MAIN_MENU
+    local_time = get_localized_time(user_id)
+    time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
+    
+    gmt_keys = list(TIMEZONES_BY_GMT.keys())
+    
+    def gmt_sort_key(gmt):
+        try:
+            sign = 1 if '+' in gmt else -1
+            hours = int(gmt.split(':')[0].replace('GMT', '').replace('+', '').replace('-', ''))
+            return sign * hours
+        except:
+            return 0
+    
+    gmt_keys.sort(key=gmt_sort_key)
+    
+    keyboard = []
+    row = []
+    
+    for i, gmt in enumerate(gmt_keys):
+        display_name = gmt
+        if gmt in TIMEZONES_BY_GMT:
+            display_name = f"{gmt} ({TIMEZONES_BY_GMT[gmt]['name']})"
+        
+        row.append(display_name[:20])
+        
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    
+    if row:
+        keyboard.append(row)
+    
+    keyboard.append(["🔍 بحث عن دولة", "🌍 جميع الدول"])
+    keyboard.append(["🕒 منطقتي الحالية", "الرجوع للقائمة الرئيسية"])
+    
+    await update.message.reply_text(
+        f"🌍 **المناطق الزمنية**\n\n"
+        f"🕒 **منطقتك الحالية:** {current_tz}\n"
+        f"⏰ **الوقت المحلي:** {time_str}\n\n"
+        f"اختر المنطقة الزمنية المناسبة لك من القائمة:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+        parse_mode="Markdown"
+    )
+    return TIMEZONE_MENU
+
+async def handle_timezone_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_message == "الرجوع للقائمة الرئيسية":
+        keyboard = [
+            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+            ["📊 معلومات الجلسة", "👤 معلوماتي"],
+            ["🌍 المناطق الزمنية"]
+        ]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
+        
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    elif user_message == "🕒 منطقتي الحالية":
+        current_tz = get_user_timezone(user_id)
+        local_time = get_localized_time(user_id)
+        time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
+        
+        countries_in_tz = []
+        for country, tz in COUNTRY_TIMEZONE_MAP.items():
+            if tz == current_tz:
+                countries_in_tz.append(country)
+        
+        countries_text = "\n".join([f"• {country}" for country in countries_in_tz[:10]])
+        if len(countries_in_tz) > 10:
+            countries_text += f"\n• ... و {len(countries_in_tz) - 10} دولة أخرى"
+        
+        await update.message.reply_text(
+            f"📍 **معلومات منطقتك الزمنية**\n\n"
+            f"🕒 **المنطقة:** {current_tz}\n"
+            f"⏰ **الوقت الحالي:** {time_str}\n\n"
+            f"🌍 **الدول في هذه المنطقة:**\n{countries_text if countries_text else 'لا توجد دول محددة'}",
+            parse_mode="Markdown"
+        )
+        return TIMEZONE_MENU
+    
+    elif user_message == "🔍 بحث عن دولة":
+        await update.message.reply_text(
+            "🔍 **أدخل اسم الدولة**\n\n"
+            "مثال: `مصر`، `السعودية`، `فلسطين`، `اليابان`\n\n"
+            "أو اكتب `قائمة الدول` لعرض جميع الدول المتاحة",
+            parse_mode="Markdown"
+        )
+        return SEARCH_COUNTRY
+    
+    elif user_message == "🌍 جميع الدول":
+        keyboard = []
+        row = []
+        
+        countries = list(COUNTRY_TIMEZONE_MAP.keys())
+        for i, country in enumerate(countries[:30]):
+            tz = COUNTRY_TIMEZONE_MAP[country]
+            display = f"{country} {tz}"
+            row.append(display[:20])
+            
+            if len(row) == 2:
+                keyboard.append(row)
+                row = []
+        
+        if row:
+            keyboard.append(row)
+        
+        keyboard.append(["🔙 رجوع", "الرجوع للقائمة الرئيسية"])
+        
+        await update.message.reply_text(
+            "🌍 **قائمة الدول مع مناطقها الزمنية**\n\n"
+            "اختر دولة لتعيين منطقتك الزمنية:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return SEARCH_COUNTRY
+    
+    selected_gmt = None
+    for gmt in TIMEZONES_BY_GMT.keys():
+        if user_message.startswith(gmt) or gmt in user_message:
+            selected_gmt = gmt
+            break
+    
+    if selected_gmt:
+        set_user_timezone(user_id, selected_gmt)
+        
+        tz_info = TIMEZONES_BY_GMT[selected_gmt]
+        local_time = get_localized_time(user_id)
+        time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
+        
+        countries_in_tz = []
+        for country, tz in COUNTRY_TIMEZONE_MAP.items():
+            if tz == selected_gmt:
+                countries_in_tz.append(country)
+        
+        countries_text = "\n".join([f"• {country}" for country in countries_in_tz[:10]])
+        if len(countries_in_tz) > 10:
+            countries_text += f"\n• ... و {len(countries_in_tz) - 10} دولة أخرى"
+        
+        await update.message.reply_text(
+            f"✅ **تم تعيين منطقتك الزمنية بنجاح!**\n\n"
+            f"🕒 **المنطقة:** {selected_gmt}\n"
+            f"📌 **الاسم:** {tz_info['name']}\n"
+            f"⏰ **الوقت المحلي:** {time_str}\n\n"
+            f"🌍 **الدول في هذه المنطقة:**\n{countries_text if countries_text else 'لا توجد دول محددة'}",
+            parse_mode="Markdown"
+        )
+        
+        return TIMEZONE_MENU
+    
+    await update.message.reply_text(
+        "❌ لم أتمكن من العثور على المنطقة الزمنية المحددة.\n"
+        "الرجاء الاختيار من القائمة أو البحث عن دولة.",
+        reply_markup=ReplyKeyboardMarkup([["🔙 رجوع"]], resize_keyboard=True)
+    )
+    return TIMEZONE_MENU
+
+async def handle_country_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_message == "الرجوع للقائمة الرئيسية" or user_message == "🔙 رجوع":
+        return await timezone_menu(update, context)
+    
+    if user_message == "قائمة الدول":
+        countries_list = "\n".join([f"• {country}" for country in sorted(COUNTRY_TIMEZONE_MAP.keys())])
+        
+        for part in split_message(countries_list, 3500):
+            await update.message.reply_text(
+                f"🌍 **قائمة الدول المتاحة:**\n\n{part}",
+                parse_mode="Markdown"
+            )
+        
+        return SEARCH_COUNTRY
+    
+    found_countries = []
+    for country, tz in COUNTRY_TIMEZONE_MAP.items():
+        if user_message.lower() in country.lower():
+            found_countries.append((country, tz))
+    
+    if found_countries:
+        if len(found_countries) == 1:
+            country, tz = found_countries[0]
+            set_user_timezone(user_id, tz)
+            
+            tz_info = TIMEZONES_BY_GMT.get(tz, {"name": "منطقة زمنية"})
+            local_time = get_localized_time(user_id)
+            time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
+            
+            await update.message.reply_text(
+                f"✅ **تم تعيين منطقتك الزمنية حسب {country}**\n\n"
+                f"🕒 **المنطقة:** {tz}\n"
+                f"📌 **الاسم:** {tz_info.get('name', '')}\n"
+                f"⏰ **الوقت المحلي:** {time_str}",
+                parse_mode="Markdown"
+            )
+            return await timezone_menu(update, context)
+        else:
+            keyboard = []
+            for country, tz in found_countries[:10]:
+                keyboard.append([f"{country} ({tz})"])
+            
+            keyboard.append(["🔙 رجوع", "الرجوع للقائمة الرئيسية"])
+            
+            await update.message.reply_text(
+                f"🔍 **نتائج البحث عن '{user_message}':**\n\n"
+                f"تم العثور على {len(found_countries)} دولة. اختر الدولة المناسبة:",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+                parse_mode="Markdown"
+            )
+            return SEARCH_COUNTRY
+    else:
+        await update.message.reply_text(
+            f"❌ لم يتم العثور على دولة باسم '{user_message}'.\n"
+            "تأكد من كتابة الاسم بشكل صحيح أو اختر من القائمة.",
+            parse_mode="Markdown"
+        )
+        return SEARCH_COUNTRY
+
+async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية الوصول للوحة التحكم.")
+        return MAIN_MENU
+    
+    bot_status = SubscriptionSystem.get_bot_status()
+    health = AutomationSystem.get_system_health()
+    stats = SubscriptionSystem.get_stats()
+    free_settings = free_analytics.get_settings()
+    
+    keyboard = [
+        ["👥 عرض المستخدمين", "➕ إضافة اشتراك"],
+        ["🗑️ إلغاء اشتراك", "⏱️ تمديد اشتراك"],
+        ["🚫 حظر مستخدم", "✅ إلغاء حظر"],
+        ["📢 إذاعة للمشتركين", "📊 إحصائيات"],
+        ["🔧 حالة البوت", "⏰ جدولة"],
+        ["🌐 التحكم بالجلسات", "🔄 تحديث تلقائي"],
+        ["🎯 التحكم بالتحليلات المجانية", "📡 رادار الأخبار"],
+        ["➕ إضافة تحليلات مجانية", "🔢 تحديد عدد تحليلات"],
+        ["🔙 العودة"]
+    ]
+    
+    status_emoji = {
+        'active': '✅',
+        'stopped': '⏸️',
+        'maintenance': '🔧',
+        'scheduled': '⏰'
+    }
+    
+    current_status = status_emoji.get(bot_status['status'], '❓')
+    
+    health_emoji = '✅' if health['status'] == 'healthy' else '⚠️'
+    free_status = "✅ مفعلة" if free_settings['enabled'] else "❌ معطلة"
+    
+    await update.message.reply_text(
+        f"👑 **لوحة تحكم المشرف** 👑\n\n"
+        f"🔑 **نظام إدارة الاشتراكات المتطور V2.1**\n\n"
+        f"📊 **حالة البوت:** {current_status} {bot_status['status']}\n"
+        f"🌐 **الجلسات المسموحة:** {bot_status['session_control']}\n"
+        f"🖥️ **صحة النظام:** {health_emoji} CPU: {health['cpu']}% | RAM: {health['memory_used']}%\n"
+        f"🎯 **التحليلات المجانية:** {free_status} (العدد الافتراضي: {free_settings['default_count']})\n\n"
+        f"📈 **إحصائيات سريعة:**\n"
+        f"👥 المستخدمين: {stats.get('total_users', 0)}\n"
+        f"✅ النشطين: {stats.get('active_users', 0)}\n"
+        f"📊 التحليلات: {stats.get('total_analyses', 0)}\n"
+        f"🔢 مستخدمين مع تحليلات مجانية: {stats.get('users_with_free', 0)}\n"
+        f"🎯 تحليلات مجانية متبقية: {stats.get('total_free_remaining', 0)}\n\n"
+        f"اختر الإجراء المطلوب:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+        parse_mode="Markdown"
+    )
+    return ADMIN_MENU
+
+async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية الوصول للوحة التحكم.")
+        return MAIN_MENU
+    
+    # معالجة الإجراءات المعلقة أولاً
+    if context.user_data.get('admin_action'):
+        if context.user_data['admin_action'] == 'add_free_analyses':
+            try:
+                parts = user_message.strip().split()
+                if len(parts) == 2:
+                    target_user_id = int(parts[0])
+                    count = int(parts[1])
+                    
+                    success, message = SubscriptionSystem.add_free_analyses(
+                        user_id=target_user_id,
+                        count=count,
+                        performed_by=user_id
+                    )
+                    
+                    await update.message.reply_text(f"✅ {message}" if success else f"❌ {message}")
+                else:
+                    await update.message.reply_text("❌ صيغة خاطئة. استخدم: `user_id count`")
+                
+                context.user_data['admin_action'] = None
+                return await start_admin_panel(update, context)
+            except ValueError:
+                await update.message.reply_text("❌ الرجاء إدخال أرقام صحيحة")
+                context.user_data['admin_action'] = None
+                return ADMIN_MENU
+        
+        elif context.user_data['admin_action'] == 'set_free_analyses':
+            try:
+                parts = user_message.strip().split()
+                if len(parts) == 2:
+                    target_user_id = int(parts[0])
+                    count = int(parts[1])
+                    
+                    success = SubscriptionSystem.set_free_analyses_count(target_user_id, count)
+                    
+                    if success:
+                        await update.message.reply_text(f"✅ تم تحديد عدد التحليلات إلى {count}")
+                    else:
+                        await update.message.reply_text("❌ فشل في تحديد العدد")
+                else:
+                    await update.message.reply_text("❌ صيغة خاطئة. استخدم: `user_id count`")
+                
+                context.user_data['admin_action'] = None
+                return await start_admin_panel(update, context)
+            except ValueError:
+                await update.message.reply_text("❌ الرجاء إدخال أرقام صحيحة")
+                context.user_data['admin_action'] = None
+                return ADMIN_MENU
+    
+    if user_message == "🔙 العودة":
+        keyboard = [
+            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+            ["📊 معلومات الجلسة", "👤 معلوماتي"],
+            ["🌍 المناطق الزمنية"],
+            ["👑 لوحة التحكم"]
+        ]
+        await update.message.reply_text(
+            "🏠 العودة للقائمة الرئيسية",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+        )
+        return MAIN_MENU
+    
+    elif user_message == "👥 عرض المستخدمين":
+        users = SubscriptionSystem.get_all_users()
+        
+        if not users:
+            await update.message.reply_text("📭 لا يوجد مستخدمين بعد.")
+        else:
+            msg = "👥 **قائمة المستخدمين:**\n\n"
+            for u in users[:20]:
+                uid, username, first_name, created, last_active, is_blocked, free_analyses, total_analyses, timezone, sub_name, start_date, end_date, is_active = u
+                
+                if is_blocked == 1:
+                    status = "🚫 محظور"
+                elif is_active == 1 and (not end_date or datetime.fromisoformat(end_date) > datetime.now()):
+                    status = "✅ نشط"
+                else:
+                    status = "❌ غير نشط"
+                
+                display_name = first_name or username or str(uid)
+                
+                msg += f"• **{display_name}**\n"
+                msg += f"  🆔 `{uid}`\n"
+                msg += f"  📊 اشتراك: {sub_name or 'لا يوجد'} ({status})\n"
+                msg += f"  🔢 تحليلات: {total_analyses} (مجاني: {free_analyses})\n"
+                msg += f"  🌍 منطقة: {timezone}\n"
+                msg += f"  📅 آخر نشاط: {last_active[:16] if last_active else '-'}\n\n"
+            
+            for part in split_message(msg, 4000):
+                await update.message.reply_text(part, parse_mode="Markdown")
+        
+        return ADMIN_MENU
+    
+    elif user_message == "➕ إضافة اشتراك":
+        await update.message.reply_text(
+            "➕ **إضافة اشتراك لمستخدم**\n\n"
+            "أرسل معرف المستخدم (User ID):\n"
+            "مثال: `123456789`",
+            parse_mode="Markdown"
+        )
+        return ADD_SUBSCRIPTION
+    
+    elif user_message == "🗑️ إلغاء اشتراك":
+        await update.message.reply_text(
+            "🗑️ **إلغاء اشتراك مستخدم**\n\n"
+            "أرسل معرف المستخدم للإلغاء:\n"
+            "مثال: `123456789`",
+            parse_mode="Markdown"
+        )
+        return REMOVE_USER
+    
+    elif user_message == "⏱️ تمديد اشتراك":
+        await update.message.reply_text(
+            "⏱️ **تمديد اشتراك مستخدم**\n\n"
+            "أرسل معرف المستخدم والمدة الإضافية بالثواني:\n"
+            "مثال: `123456789 86400` لتمديد يوم",
+            parse_mode="Markdown"
+        )
+        return SET_USER_DURATION
+    
+    elif user_message == "🚫 حظر مستخدم":
+        await update.message.reply_text(
+            "🚫 **حظر مستخدم**\n\n"
+            "أرسل معرف المستخدم للحظر:\n"
+            "مثال: `123456789`",
+            parse_mode="Markdown"
+        )
+        return REMOVE_USER
+    
+    elif user_message == "✅ إلغاء حظر":
+        await update.message.reply_text(
+            "✅ **إلغاء حظر مستخدم**\n\n"
+            "أرسل معرف المستخدم لإلغاء الحظر:\n"
+            "مثال: `123456789`",
+            parse_mode="Markdown"
+        )
+        return REMOVE_USER
+    
+    elif user_message == "📢 إذاعة للمشتركين":
+        await update.message.reply_text(
+            "📢 **إذاعة للمشتركين**\n\n"
+            "أرسل الرسالة التي تريد إذاعتها لجميع المشتركين النشطين:",
+            parse_mode="Markdown"
+        )
+        return BROADCAST_MESSAGE
+    
+    elif user_message == "📊 إحصائيات":
+        stats = SubscriptionSystem.get_stats()
+        health = AutomationSystem.get_system_health()
+        current_session = get_current_session()
+        free_settings = free_analytics.get_settings()
+        
+        stats_text = (
+            "📊 **إحصائيات النظام المتقدم:**\n\n"
+            f"👥 إجمالي المستخدمين: {stats.get('total_users', 0)}\n"
+            f"✅ نشط اليوم: {stats.get('active_today', 0)}\n"
+            f"📅 نشط الأسبوع: {stats.get('active_week', 0)}\n"
+            f"🚫 المحظورين: {stats.get('blocked_users', 0)}\n"
+            f"✅ المشتركين النشطين: {stats.get('active_users', 0)}\n"
+            f"⏳ منتهي قريباً (7 أيام): {stats.get('expiring_soon', 0)}\n"
+            f"📈 إجمالي التحليلات: {stats.get('total_analyses', 0)}\n"
+            f"🔢 مستخدمين مع تحليلات مجانية: {stats.get('users_with_free', 0)}\n"
+            f"🎯 تحليلات مجانية متبقية: {stats.get('total_free_remaining', 0)}\n\n"
+            f"🎯 **إعدادات التحليلات المجانية:**\n"
+            f"الحالة: {'✅ مفعلة' if free_settings['enabled'] else '❌ معطلة'}\n"
+            f"العدد الافتراضي: {free_settings['default_count']}\n"
+            f"الحد الأقصى: {free_settings['max_count']}\n\n"
+            f"🖥️ **صحة النظام:**\n"
+            f"CPU: {health['cpu']}% | RAM: {health['memory_used']}%\n"
+            f"القرص: {health['disk_used']}% مستخدم ({health['disk_free']:.1f} جيجا متاح)\n\n"
+            f"🌐 **الجلسة الحالية:** {current_session['name']}\n\n"
+            f"📊 **الاشتراكات حسب النوع:**\n"
+        )
+        
+        for sub_type, count in stats.get('subscriptions_by_type', {}).items():
+            stats_text += f"  • {sub_type}: {count}\n"
+        
+        for part in split_message(stats_text, 4000):
+            await update.message.reply_text(part, parse_mode="Markdown")
+        return ADMIN_MENU
+    
+    elif user_message == "🔧 حالة البوت":
+        bot_status = SubscriptionSystem.get_bot_status()
+        
+        status_text = (
+            "🔧 **التحكم بحالة البوت**\n\n"
+            f"الحالة الحالية: **{bot_status['status']}**\n"
+            f"الجلسات المسموحة: **{bot_status['session_control']}**\n\n"
+            "اختر الحالة الجديدة:"
+        )
+        
+        keyboard = [
+            ["✅ تشغيل", "⏸️ إيقاف", "🔧 صيانة"],
+            ["🔙 العودة للوحة التحكم"]
+        ]
+        
+        await update.message.reply_text(
+            status_text,
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return SET_BOT_STATUS
+    
+    elif user_message == "⏰ جدولة":
+        await update.message.reply_text(
+            "⏰ **جدولة تغيير حالة البوت**\n\n"
+            "أرسل الوقت والمدة والصيغة المطلوبة:\n\n"
+            "مثال: `stop 30m` (إيقاف بعد 30 دقيقة)\n"
+            "مثال: `maintenance 2h` (صيانة بعد ساعتين)\n"
+            "مثال: `active 1h` (تشغيل بعد ساعة)\n\n"
+            "الوحدات: m (دقائق), h (ساعات)",
+            parse_mode="Markdown"
+        )
+        return SET_BOT_STATUS
+    
+    elif user_message == "🌐 التحكم بالجلسات":
+        keyboard = [
+            ["🌏 آسيوية فقط", "🇬🇧 لندن فقط"],
+            ["🗽 نيويورك فقط", "🌊 المحيط الهادئ فقط"],
+            ["🌍 جميع الجلسات"],
+            ["🔄 تلقائي (حسب الوقت)"],
+            ["🔙 العودة للوحة التحكم"]
+        ]
+        
+        await update.message.reply_text(
+            "🌐 **التحكم بالجلسات المسموحة**\n\n"
+            "اختر الجلسات التي تريد السماح بها:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return SET_SESSION_CONTROL
+    
+    elif user_message == "🔄 تحديث تلقائي":
+        AutomationSystem.auto_switch_session()
+        await update.message.reply_text(
+            "🔄 **تم تحديث الجلسات تلقائياً**\n\n"
+            "سيتم إرسال إشعار للمستخدمين النشطين.",
+            parse_mode="Markdown"
+        )
+        return ADMIN_MENU
+    
+    elif user_message == "🎯 التحكم بالتحليلات المجانية":
+        free_settings = free_analytics.get_settings()
+        
+        keyboard = [
+            ["✅ تفعيل التحليلات المجانية", "❌ تعطيل التحليلات المجانية"],
+            ["🔢 تغيير العدد الافتراضي", "🔄 إعادة تعيين الكل"],
+            ["🔙 العودة للوحة التحكم"]
+        ]
+        
+        await update.message.reply_text(
+            f"🎯 **التحكم بالتحليلات المجانية**\n\n"
+            f"الحالة الحالية: {'✅ مفعلة' if free_settings['enabled'] else '❌ معطلة'}\n"
+            f"العدد الافتراضي: {free_settings['default_count']}\n"
+            f"الحد الأقصى: {free_settings['max_count']}\n\n"
+            f"اختر الإجراء المطلوب:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return FREE_ANALYSES_SETTINGS
+    
+    elif user_message == "📡 رادار الأخبار":
+        groups = news_radar.get_monitored_groups()
+        settings = news_radar.get_settings()
+        
+        groups_list = "\n".join([f"• {title} (ID: {cid})" for cid, title in groups]) if groups else "لا توجد مجموعات مراقبة"
+        
+        keyboard = [
+            ["➕ إضافة مجموعة", "➖ إزالة مجموعة"],
+            ["✅ تفعيل الرادار", "❌ تعطيل الرادار"],
+            ["🔄 تشغيل فوري", "⏱️ تغيير المدة"],
+            ["🔙 العودة للوحة التحكم"]
+        ]
+        
+        await update.message.reply_text(
+            f"📡 **رادار الأخبار المتقدم**\n\n"
+            f"الحالة: {'✅ مفعل' if settings.get('enabled', 'true') == 'true' else '❌ معطل'}\n"
+            f"مدة الفحص: {settings.get('interval_minutes', '5')} دقائق\n"
+            f"عدد العملات: {len(news_radar.currencies)}\n\n"
+            f"**المجموعات المراقبة:**\n{groups_list}\n\n"
+            f"اختر الإجراء المطلوب:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return FREE_ANALYSES_SETTINGS
+    
+    elif user_message == "➕ إضافة تحليلات مجانية":
+        await update.message.reply_text(
+            "➕ **إضافة تحليلات مجانية لمستخدم**\n\n"
+            "أرسل معرف المستخدم وعدد التحليلات:\n"
+            "مثال: `123456789 5`",
+            parse_mode="Markdown"
+        )
+        context.user_data['admin_action'] = 'add_free_analyses'
+        return ADMIN_MENU
+    
+    elif user_message == "🔢 تحديد عدد تحليلات":
+        await update.message.reply_text(
+            "🔢 **تحديد عدد التحليلات المجانية لمستخدم**\n\n"
+            "أرسل معرف المستخدم والعدد الجديد:\n"
+            "مثال: `123456789 10`",
+            parse_mode="Markdown"
+        )
+        context.user_data['admin_action'] = 'set_free_analyses'
+        return ADMIN_MENU
+    
+    return ADMIN_MENU
+
+async def handle_free_analytics_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        return ADMIN_MENU
+    
+    if user_message == "🔙 العودة للوحة التحكم":
+        return await start_admin_panel(update, context)
+    
+    elif user_message == "✅ تفعيل التحليلات المجانية":
+        free_analytics.set_setting('enabled', 'true', user_id)
+        await update.message.reply_text("✅ تم تفعيل التحليلات المجانية")
+    
+    elif user_message == "❌ تعطيل التحليلات المجانية":
+        free_analytics.set_setting('enabled', 'false', user_id)
+        await update.message.reply_text("✅ تم تعطيل التحليلات المجانية")
+    
+    elif user_message == "🔢 تغيير العدد الافتراضي":
+        await update.message.reply_text(
+            "🔢 **تغيير العدد الافتراضي للتحليلات المجانية**\n\n"
+            "أرسل الرقم الجديد (1-10):\n"
+            "مثال: `5`",
+            parse_mode="Markdown"
+        )
+        context.user_data['setting_action'] = 'set_default_count'
+        return FREE_ANALYSES_SETTINGS
+    
+    elif user_message == "🔄 إعادة تعيين الكل":
+        users = SubscriptionSystem.get_all_users()
+        default_count = free_analytics.get_settings()['default_count']
+        
+        count = 0
+        for user in users:
+            user_id_db = user[0]
+            if user_id_db != ADMIN_ID:
+                SubscriptionSystem.reset_free_analyses(user_id_db, default_count)
+                count += 1
+        
+        await update.message.reply_text(f"✅ تم إعادة تعيين التحليلات المجانية لـ {count} مستخدم إلى {default_count}")
+    
+    elif user_message == "➕ إضافة مجموعة":
+        await update.message.reply_text(
+            "➕ **إضافة مجموعة لرادار الأخبار**\n\n"
+            "أرسل معرف المجموعة (Chat ID):\n"
+            "مثال: `-1001234567890`",
+            parse_mode="Markdown"
+        )
+        context.user_data['radar_action'] = 'add_group'
+        return FREE_ANALYSES_SETTINGS
+    
+    elif user_message == "➖ إزالة مجموعة":
+        groups = news_radar.get_monitored_groups()
+        if not groups:
+            await update.message.reply_text("📭 لا توجد مجموعات مراقبة")
+        else:
+            groups_list = "\n".join([f"• {cid} - {title}" for cid, title in groups])
+            await update.message.reply_text(
+                f"➖ **إزالة مجموعة**\n\n"
+                f"المجموعات المتاحة:\n{groups_list}\n\n"
+                f"أرسل معرف المجموعة للإزالة:",
+                parse_mode="Markdown"
+            )
+            context.user_data['radar_action'] = 'remove_group'
+            return FREE_ANALYSES_SETTINGS
+    
+    elif user_message == "✅ تفعيل الرادار":
+        news_radar.broadcast_enabled = True
+        await update.message.reply_text("✅ تم تفعيل رادار الأخبار")
+    
+    elif user_message == "❌ تعطيل الرادار":
+        news_radar.broadcast_enabled = False
+        await update.message.reply_text("✅ تم تعطيل رادار الأخبار")
+    
+    elif user_message == "🔄 تشغيل فوري":
+        await update.message.reply_text("📡 جاري تشغيل الرادار...")
+        await news_radar.broadcast_news_to_all_groups(context)
+        await update.message.reply_text("✅ تم تشغيل الرادار وإرسال آخر الأخبار")
+    
+    elif user_message == "⏱️ تغيير المدة":
+        await update.message.reply_text(
+            "⏱️ **تغيير مدة فحص الرادار**\n\n"
+            "أرسل المدة بالدقائق:\n"
+            "مثال: `10` (كل 10 دقائق)",
+            parse_mode="Markdown"
+        )
+        context.user_data['radar_action'] = 'set_interval'
+        return FREE_ANALYSES_SETTINGS
+    
+    elif context.user_data.get('setting_action') == 'set_default_count':
+        try:
+            new_count = int(user_message)
+            if 1 <= new_count <= 10:
+                free_analytics.set_setting('default_count', new_count, user_id)
+                await update.message.reply_text(f"✅ تم تغيير العدد الافتراضي إلى {new_count}")
+            else:
+                await update.message.reply_text("❌ الرجاء إدخال رقم بين 1 و 10")
+        except:
+            await update.message.reply_text("❌ الرجاء إدخال رقم صحيح")
+        context.user_data['setting_action'] = None
+    
+    elif context.user_data.get('radar_action') == 'add_group':
+        try:
+            chat_id = int(user_message)
+            chat_title = f"Group_{chat_id}"
+            if news_radar.add_group(chat_id, chat_title, user_id):
+                await update.message.reply_text(f"✅ تم إضافة المجموعة {chat_id} بنجاح")
+            else:
+                await update.message.reply_text("❌ فشل في إضافة المجموعة")
+        except:
+            await update.message.reply_text("❌ الرجاء إدخال معرف صحيح")
+        context.user_data['radar_action'] = None
+    
+    elif context.user_data.get('radar_action') == 'remove_group':
+        try:
+            chat_id = int(user_message)
+            if news_radar.remove_group(chat_id):
+                await update.message.reply_text(f"✅ تم إزالة المجموعة {chat_id} بنجاح")
+            else:
+                await update.message.reply_text("❌ فشل في إزالة المجموعة")
+        except:
+            await update.message.reply_text("❌ الرجاء إدخال معرف صحيح")
+        context.user_data['radar_action'] = None
+    
+    elif context.user_data.get('radar_action') == 'set_interval':
+        try:
+            minutes = int(user_message)
+            if 1 <= minutes <= 60:
+                # تحديث المدة في الإعدادات
+                await update.message.reply_text(f"✅ تم تغيير مدة الفحص إلى {minutes} دقائق")
+            else:
+                await update.message.reply_text("❌ الرجاء إدخال رقم بين 1 و 60")
+        except:
+            await update.message.reply_text("❌ الرجاء إدخال رقم صحيح")
+        context.user_data['radar_action'] = None
+    
+    return await start_admin_panel(update, context)
+
+async def handle_set_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        return ADMIN_MENU
+    
+    if user_message == "🔙 العودة للوحة التحكم":
+        return await start_admin_panel(update, context)
+    
+    if user_message in ["✅ تشغيل", "⏸️ إيقاف", "🔧 صيانة"]:
+        status_map = {
+            "✅ تشغيل": "active",
+            "⏸️ إيقاف": "stopped",
+            "🔧 صيانة": "maintenance"
+        }
+        
+        new_status = status_map[user_message]
+        SubscriptionSystem.set_bot_status(new_status, session_control='all', updated_by=user_id)
+        
+        await update.message.reply_text(f"✅ تم تغيير حالة البوت إلى: {user_message}")
+        return await start_admin_panel(update, context)
+    
+    try:
+        parts = user_message.split()
+        if len(parts) == 2:
+            action = parts[0]
+            duration_str = parts[1]
+            
+            if action in ['stop', 'maintenance', 'active']:
+                if duration_str.endswith('m'):
+                    minutes = int(duration_str[:-1])
+                    seconds = minutes * 60
+                elif duration_str.endswith('h'):
+                    hours = int(duration_str[:-1])
+                    seconds = hours * 3600
+                else:
+                    seconds = int(duration_str)
+                
+                scheduled_time = (datetime.now() + timedelta(seconds=seconds)).isoformat()
+                SubscriptionSystem.set_bot_status('scheduled', scheduled_time, action, updated_by=user_id)
+                
+                await update.message.reply_text(
+                    f"⏰ **تمت الجدولة بنجاح**\n\n"
+                    f"الإجراء: {action}\n"
+                    f"الوقت: {datetime.fromisoformat(scheduled_time).strftime('%Y-%m-%d %H:%M:%S')}",
+                    parse_mode="Markdown"
+                )
+                return await start_admin_panel(update, context)
+    except:
+        pass
+    
+    await update.message.reply_text("❌ صيغة غير صحيحة. الرجاء المحاولة مرة أخرى.")
+    return SET_BOT_STATUS
+
+async def handle_session_control(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        return ADMIN_MENU
+    
+    if user_message == "🔙 العودة للوحة التحكم":
+        return await start_admin_panel(update, context)
+    
+    if user_message == "🔄 تلقائي (حسب الوقت)":
+        AutomationSystem.auto_switch_session()
+        await update.message.reply_text(
+            "🔄 **تم تفعيل الوضع التلقائي**\n\n"
+            "سيتم تبديل الجلسات تلقائياً حسب الوقت العالمي.",
+            parse_mode="Markdown"
+        )
+        return await start_admin_panel(update, context)
+    
+    session_map = {
+        "🌏 آسيوية فقط": "asian",
+        "🇬🇧 لندن فقط": "london",
+        "🗽 نيويورك فقط": "newyork",
+        "🌊 المحيط الهادئ فقط": "pacific",
+        "🌍 جميع الجلسات": "all"
+    }
+    
+    if user_message in session_map:
+        session_control = session_map[user_message]
+        SubscriptionSystem.set_bot_status('active', session_control=session_control, updated_by=user_id)
+        
+        await update.message.reply_text(f"✅ تم تعيين الجلسات المسموحة إلى: {user_message}")
+        return await start_admin_panel(update, context)
+    
+    return SET_SESSION_CONTROL
+
+async def handle_add_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية.")
+        return MAIN_MENU
+    
+    try:
+        target_user_id = int(update.message.text.strip())
+        context.user_data['target_user_id'] = target_user_id
+        
+        keyboard = [
+            ["🕐 ساعة", "📅 يوم"],
+            ["📆 أسبوع", "📅 شهر"],
+            ["📅 سنة", "♾️ مدى الحياة"],
+            ["إلغاء", "🔙 العودة للوحة التحكم"]
+        ]
+        
+        await update.message.reply_text(
+            f"➕ **إضافة اشتراك للمستخدم:** `{target_user_id}`\n\n"
+            f"اختر مدة الاشتراك:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True),
+            parse_mode="Markdown"
+        )
+        return SELECT_DURATION
+        
+    except ValueError:
+        await update.message.reply_text("❌ الرجاء إرسال معرف المستخدم (أرقام فقط).")
+        return ADD_SUBSCRIPTION
+
+async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    duration_choice = update.message.text.strip()
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية.")
+        return MAIN_MENU
+    
+    if duration_choice == "إلغاء" or duration_choice == "🔙 العودة للوحة التحكم":
+        return await start_admin_panel(update, context)
+    
+    subscription_type = None
+    if duration_choice == "🕐 ساعة":
+        subscription_type = "hourly"
+    elif duration_choice == "📅 يوم":
+        subscription_type = "daily"
+    elif duration_choice == "📆 أسبوع":
+        subscription_type = "weekly"
+    elif duration_choice == "📅 شهر":
+        subscription_type = "monthly"
+    elif duration_choice == "📅 سنة":
+        subscription_type = "yearly"
+    elif duration_choice == "♾️ مدى الحياة":
+        subscription_type = "lifetime"
+    else:
+        await update.message.reply_text("❌ اختيار غير صالح.")
+        return SELECT_DURATION
+    
+    target_user_id = context.user_data.get('target_user_id')
+    if not target_user_id:
+        await update.message.reply_text("❌ خطأ: لم يتم تحديد المستخدم.")
+        return ADMIN_MENU
+    
+    success, result = SubscriptionSystem.add_subscription(
+        user_id=target_user_id,
+        subscription_type=subscription_type,
+        added_by=user_id
+    )
+    
+    if success:
+        sub_info = result
+        end_info = ""
+        if sub_info['end_date']:
+            end_datetime = datetime.fromisoformat(sub_info['end_date'])
+            end_info = f"ينتهي في: {end_datetime.strftime('%Y-%m-%d %H:%M')}"
+        else:
+            end_info = "غير محدد المدة (مدى الحياة)"
+        
+        SubscriptionSystem.reset_free_analyses(target_user_id, 3)
+        
+        await update.message.reply_text(
+            f"✅ **تم إضافة الاشتراك بنجاح!**\n\n"
+            f"👤 المستخدم: `{target_user_id}`\n"
+            f"📅 النوع: {sub_info['subscription_name']}\n"
+            f"{end_info}",
+            parse_mode="Markdown"
+        )
+        
+        try:
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=f"✅ **تم تفعيل اشتراكك في البوت الخاص بنا!**\n\n"
+                     f"📅 نوع الاشتراك: {sub_info['subscription_name']}\n"
+                     f"{end_info}\n\n"
+                     f"أرسل /start لبدء استخدام البوت",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+        
+    else:
+        await update.message.reply_text(f"❌ فشل في إضافة الاشتراك: {result}")
+    
+    if 'target_user_id' in context.user_data:
+        del context.user_data['target_user_id']
+    
+    return ADMIN_MENU
+
+async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    previous_message = update.message.text.strip()
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية.")
+        return MAIN_MENU
+    
+    last_action = context.user_data.get('last_action')
+    
+    try:
+        if last_action == 'block':
+            target_user_id = int(previous_message.split()[0])
+            reason = ' '.join(previous_message.split()[1:]) if len(previous_message.split()) > 1 else "Blocked by admin"
+            
+            success, message = SubscriptionSystem.block_user(target_user_id, reason, performed_by=user_id)
+            
+            await update.message.reply_text(f"✅ {message}" if success else f"❌ {message}")
+            context.user_data['last_action'] = None
+            return ADMIN_MENU
+        
+        elif last_action == 'unblock':
+            target_user_id = int(previous_message)
+            
+            success, message = SubscriptionSystem.unblock_user(target_user_id, performed_by=user_id)
+            
+            await update.message.reply_text(f"✅ {message}" if success else f"❌ {message}")
+            context.user_data['last_action'] = None
+            return ADMIN_MENU
+        
+        else:
+            target_user_id = int(previous_message)
+            
+            if target_user_id == ADMIN_ID:
+                await update.message.reply_text("❌ لا يمكن إلغاء اشتراك المشرف الرئيسي.")
+                return ADMIN_MENU
+            
+            success, message = SubscriptionSystem.revoke_subscription(target_user_id, performed_by=user_id)
+            
+            if success:
+                await update.message.reply_text(f"✅ {message}")
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=target_user_id,
+                        text=f"⚠️ **تم إلغاء اشتراكك في البوت**\n\n"
+                             f"للتواصل مع المشرف: @Sz2zv",
+                        parse_mode="Markdown"
+                    )
+                except:
+                    pass
+            else:
+                await update.message.reply_text(f"❌ {message}")
+            
+            return ADMIN_MENU
+        
+    except ValueError:
+        await update.message.reply_text("❌ الرجاء إرسال معرف المستخدم (أرقام فقط).")
+        return REMOVE_USER
+
+async def handle_set_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية.")
+        return MAIN_MENU
+    
+    try:
+        parts = update.message.text.strip().split()
+        if len(parts) != 2:
+            await update.message.reply_text(
+                "❌ صيغة خاطئة. استخدم: `user_id 86400`\n"
+                "مثال: `123456789 86400`",
+                parse_mode="Markdown"
+            )
+            return SET_USER_DURATION
+        
+        target_user_id = int(parts[0])
+        additional_seconds = int(parts[1])
+        
+        if target_user_id == ADMIN_ID:
+            await update.message.reply_text("✅ المشرف الرئيسي لديه صلاحيات غير محدودة.")
+            return ADMIN_MENU
+        
+        success, message = SubscriptionSystem.extend_subscription(
+            target_user_id, 
+            additional_seconds, 
+            performed_by=user_id
+        )
+        
+        if success:
+            await update.message.reply_text(f"✅ {message}")
+            
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text=f"✅ **تم تمديد اشتراكك في البوت**\n\n{message}",
+                    parse_mode="Markdown"
+                )
+            except:
+                pass
+        else:
+            await update.message.reply_text(f"❌ {message}")
+        
+    except ValueError:
+        await update.message.reply_text("❌ الرجاء إرسال معرف المستخدم والمدة بشكل صحيح.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ: {str(e)}")
+    
+    return ADMIN_MENU
+
+async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    broadcast_message = update.message.text.strip()
+    
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية.")
+        return MAIN_MENU
+    
+    users = SubscriptionSystem.get_all_users()
+    
+    if not users:
+        await update.message.reply_text("📭 لا يوجد مستخدمين للإذاعة.")
+        return ADMIN_MENU
+    
+    wait_msg = await update.message.reply_text(f"📢 جاري الإذاعة لـ {len(users)} مستخدم...")
+    
+    success_count = 0
+    fail_count = 0
+    
+    for user in users:
+        target_id = user[0]
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=f"📢 **رسالة إدارية**\n\n{broadcast_message}\n\n━━━━━━━━━━━━\nObeida Trading",
+                parse_mode="Markdown"
+            )
+            success_count += 1
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            print(f"⚠️ فشل إرسال للمستخدم {target_id}: {e}")
+            fail_count += 1
+    
+    await wait_msg.edit_text(
+        f"📊 **نتيجة الإذاعة**\n\n"
+        f"✅ تم الإرسال بنجاح لـ: {success_count} مستخدم\n"
+        f"❌ فشل الإرسال لـ: {fail_count} مستخدم"
+    )
+    
+    return ADMIN_MENU
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
@@ -6717,8 +6858,6 @@ def main():
     loop.create_task(news_radar_scheduler(application))
     
     print("✅ Telegram Secure Admin Panel ready...")
-    print(f"📡 رادار الأخبار يعمل مع {len(news_radar.currencies)} عملة عالمية")
-    print("⏱️ فحص الأخبار كل 5 دقائق")
     
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
