@@ -2564,34 +2564,21 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         user_id = update.effective_user.id
         prev_context, prev_time = get_analysis_context(user_id)
         
-        # إرسال رسالة انتظار
         wait_msg = await update.message.reply_text("🤔 جاري تحليل الصورة...")
         
         compressed_path = compress_image(image_path)
         base64_img = encode_image(compressed_path)
         
         if not base64_img:
-            try:
-                await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
-            except Exception as e:
-                if "Message is not modified" not in str(e):
-                    await update.message.reply_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
+            await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
             return "❌ **خطأ في قراءة الصورة.**"
         
-        # ============================================
-        # 1. جمع بيانات التحليل الأساسية
-        # ============================================
         current_session = get_current_session()
-        user_local_session = get_user_local_session(user_id)
         current_time = datetime.utcnow()
         current_hour = current_time.hour
         current_minute = current_time.minute
         current_second = current_time.second
         
-        user_tz = get_user_timezone(user_id)
-        local_time = get_localized_time(user_id)
-        
-        # حساب الوقت المتبقي
         seconds_remaining = 60 - current_second
         if candle.startswith('S'):
             candle_seconds = int(candle[1:]) if candle[1:].isdigit() else 5
@@ -2604,275 +2591,21 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             minutes_passed = current_time.hour % candle_hours * 60 + current_minute
             seconds_remaining = (candle_hours * 3600) - (minutes_passed * 60 + current_second)
 
-        # تحديث رسالة الانتظار
-        try:
-            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
-        except Exception as e:
-            if "Message is not modified" not in str(e):
-                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
+        is_fast_frame = candle.startswith('S')
 
-        # ============================================
-        # 2. تحليل Kill Zones المتقدم
-        # ============================================
-        class KillZonesAnalyzer:
-            KILL_ZONES = {
-                'asian': {'name': '🌏 المنطقة الآسيوية', 'start': 0, 'end': 8, 'liquidity': 'منخفضة', 'success': '45-55%', 'strategy': 'الارتداد من الأطراف', 'personality': 'نوم عميق - حركات بطيئة'},
-                'london_open': {'name': '🇬🇧 افتتاح لندن', 'start': 8, 'end': 10, 'liquidity': 'عالية جداً', 'success': '80-90%', 'strategy': 'كسر الهيكل مع الاتجاه', 'personality': 'فيضان - كل شيء يتحرك بقوة'},
-                'london_mid': {'name': '🇬🇧 منتصف لندن', 'start': 10, 'end': 12, 'liquidity': 'متوسطة', 'success': '65-75%', 'strategy': 'إعادة اختبار', 'personality': 'عمل منظم - تصحيحات'},
-                'london_close': {'name': '🇬🇧 إغلاق لندن', 'start': 12, 'end': 13, 'liquidity': 'منخفضة', 'success': '50-60%', 'strategy': 'جني أرباح', 'personality': 'تعب - جني أرباح'},
-                'ny_open': {'name': '🗽 افتتاح نيويورك', 'start': 13, 'end': 15, 'liquidity': 'عالية جداً', 'success': '85-95%', 'strategy': 'كسر مع زخم', 'personality': 'معركة - اندفاع قوي'},
-                'ny_mid': {'name': '🗽 منتصف نيويورك', 'start': 15, 'end': 17, 'liquidity': 'مرتفعة', 'success': '75-85%', 'strategy': 'استمرار + تصحيح', 'personality': 'استمرار - تصحيحات عميقة'},
-                'ny_close': {'name': '🗽 إغلاق نيويورك', 'start': 17, 'end': 18, 'liquidity': 'متوسطة', 'success': '55-65%', 'strategy': 'إغلاق صفقات', 'personality': 'تسوية مراكز'},
-                'london_ny_overlap': {'name': '⚡ تداخل لندن-نيويورك', 'start': 13, 'end': 16, 'liquidity': 'عالية جداً', 'success': '90-98%', 'strategy': 'أقوى تحركات اليوم', 'personality': 'انفجار نووي'},
-                'pacific': {'name': '🌊 المحيط الهادئ', 'start': 18, 'end': 24, 'liquidity': 'منخفضة جداً', 'success': '30-40%', 'strategy': 'تجنب التداول', 'personality': 'صحراء - لا حركة'}
-            }
-            
-            @staticmethod
-            def get_current_kill_zone():
-                hour = datetime.utcnow().hour
-                if 13 <= hour < 16:
-                    return KillZonesAnalyzer.KILL_ZONES['london_ny_overlap']
-                for key, zone in KillZonesAnalyzer.KILL_ZONES.items():
-                    if zone['start'] <= hour < zone['end']:
-                        return zone
-                return KillZonesAnalyzer.KILL_ZONES['pacific']
-            
-            @staticmethod
-            def should_trade_now():
-                zone = KillZonesAnalyzer.get_current_kill_zone()
-                good_zones = ['🇬🇧 افتتاح لندن', '🗽 افتتاح نيويورك', '⚡ تداخل لندن-نيويورك', '🇬🇧 منتصف لندن', '🗽 منتصف نيويورك']
-                if any(gz in zone['name'] for gz in good_zones):
-                    return {'trade': True, 'reason': f'✅ وقت ممتاز - {zone["name"]}', 'zone': zone}
-                elif 'الآسيوية' in zone['name']:
-                    return {'trade': 'limited', 'reason': '⚠️ تداول محدود - أزواج الين فقط', 'zone': zone}
-                else:
-                    return {'trade': False, 'reason': f'❌ وقت غير مناسب - {zone["name"]}', 'zone': zone}
+        if seconds_remaining < (3 if is_fast_frame else 10):
+            time_status = "⚡ حالة زخم متفجر (Ignition Phase)"
+        else:
+            time_status = "✅ توقيت مستقر للتحليل"
 
-        kill_zone = KillZonesAnalyzer.get_current_kill_zone()
-        trade_decision = KillZonesAnalyzer.should_trade_now()
-
-        # تحديث رسالة الانتظار
-        try:
-            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
-        except Exception as e:
-            if "Message is not modified" not in str(e):
-                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
-
-        # ============================================
-        # 3. تحليل PO3 (المراحل الثلاث)
-        # ============================================
-        class PO3Analyzer:
-            PHASES = {
-                'accumulation': {'name': '🔄 التجميع', 'desc': 'تذبذب ممل لجمع العقود', 'action': 'مراقبة', 'psychology': 'الملل وعدم اليقين'},
-                'manipulation': {'name': '🎭 التلاعب', 'desc': 'كسر كاذب لضرب الستوبات', 'action': 'انتظر العودة', 'psychology': 'الخوف والطمع - هذا فخ'},
-                'distribution': {'name': '💥 التوزيع', 'desc': 'الانفجار السعري الحقيقي', 'action': 'ادخل مع الاتجاه', 'psychology': 'اليقين والثقة'}
-            }
-            
-            @staticmethod
-            def detect_current_phase():
-                if 8 <= current_hour < 16:
-                    return {'phase': 'distribution', 'phase_info': PO3Analyzer.PHASES['distribution'], 'confidence': 85}
-                elif 0 <= current_hour < 8:
-                    return {'phase': 'accumulation', 'phase_info': PO3Analyzer.PHASES['accumulation'], 'confidence': 70}
-                else:
-                    return {'phase': 'manipulation', 'phase_info': PO3Analyzer.PHASES['manipulation'], 'confidence': 60}
-
-        po3_analysis = PO3Analyzer.detect_current_phase()
-
-        # تحديث رسالة الانتظار
-        try:
-            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
-        except Exception as e:
-            if "Message is not modified" not in str(e):
-                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
-
-        # ============================================
-        # 4. تحليل VSA (Volume Spread Analysis)
-        # ============================================
-        class VSAAnalyzer:
-            @staticmethod
-            def get_volume_status(ratio):
-                if ratio > 2.5: return '💥 ضخم جداً (Climax)'
-                if ratio > 1.8: return '🔥 كبير (High)'
-                if ratio > 1.2: return '📊 فوق المتوسط'
-                if ratio > 0.8: return '📈 متوسط'
-                if ratio > 0.5: return '📉 ضعيف'
-                return '💤 ضعيف جداً'
-            
-            @staticmethod
-            def analyze_fake_breakout(volume_ratio, candle_body_ratio, wick_ratio):
-                fake_signals = []
-                if volume_ratio < 0.7:
-                    fake_signals.append('حجم منخفض')
-                if candle_body_ratio < 0.3:
-                    fake_signals.append('جسم صغير')
-                if wick_ratio > 0.4:
-                    fake_signals.append('ذيل طويل')
-                
-                if len(fake_signals) >= 2:
-                    return {
-                        'is_fake': True,
-                        'confidence': 90 + (len(fake_signals) * 3),
-                        'reasons': fake_signals,
-                        'action': 'عكس الاتجاه - هذا فخ'
-                    }
-                return {'is_fake': False}
-
-        # قيم افتراضية - سيتم استبدالها بتحليل حقيقي من الصورة
-        volume_ratio = 0.6
-        candle_body_ratio = 0.25
-        wick_ratio = 0.45
-        vsa_analysis = VSAAnalyzer.analyze_fake_breakout(volume_ratio, candle_body_ratio, wick_ratio)
-        volume_status = VSAAnalyzer.get_volume_status(volume_ratio)
-
-        # تحديث رسالة الانتظار
-        try:
-            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
-        except Exception as e:
-            if "Message is not modified" not in str(e):
-                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
-
-        # ============================================
-        # 5. تحليل Fibonacci OTE
-        # ============================================
-        class InstitutionalFibonacci:
-            @staticmethod
-            def calculate_ote(high, low, price):
-                diff = high - low
-                ote_low = low + (diff * 0.68)
-                ote_high = low + (diff * 0.82)
-                in_ote = ote_low <= price <= ote_high
-                return {
-                    'in_ote': in_ote,
-                    'ote_low': ote_low,
-                    'ote_high': ote_high,
-                    'level_618': low + (diff * 0.618),
-                    'level_705': low + (diff * 0.705),
-                    'level_795': low + (diff * 0.795),
-                    'level_886': low + (diff * 0.886)
-                }
-
-        # قيم افتراضية
-        high_price = 1.1300
-        low_price = 1.1200
-        current_price = 1.1234
-        fib_analysis = InstitutionalFibonacci.calculate_ote(high_price, low_price, current_price)
-
-        # تحديث رسالة الانتظار
-        try:
-            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
-        except Exception as e:
-            if "Message is not modified" not in str(e):
-                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
-
-        # ============================================
-        # 6. تحليل Round Numbers
-        # ============================================
-        class RoundNumbersAnalyzer:
-            @staticmethod
-            def analyze_price(price):
-                integer = int(price)
-                decimal = price - integer
-                pips = int(decimal * 10000)
-                distance_to_major = min(pips % 1000, 1000 - (pips % 1000))
-                return {
-                    'nearest': f"{integer}.{(round(pips/1000)*1000):04d}",
-                    'distance': distance_to_major,
-                    'force': 95 if distance_to_major < 5 else 70 if distance_to_major < 10 else 40,
-                    'level_type': 'رئيسي' if distance_to_major < 5 else 'متوسط' if distance_to_major < 15 else 'ضعيف'
-                }
-
-        round_analysis = RoundNumbersAnalyzer.analyze_price(current_price)
-
-        # تحديث رسالة الانتظار
-        try:
-            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
-        except Exception as e:
-            if "Message is not modified" not in str(e):
-                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
-
-        # ============================================
-        # 7. تحليل SMT Divergence
-        # ============================================
-        class SMTDivergenceAnalyzer:
-            @staticmethod
-            def analyze():
-                return {
-                    'detected': False,
-                    'type': 'none',
-                    'message': 'لا يوجد تباعد واضح مع الأزواج المرتبطة'
-                }
-
-        smt_analysis = SMTDivergenceAnalyzer.analyze()
-
-        # تحديث رسالة الانتظار
-        try:
-            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
-        except Exception as e:
-            if "Message is not modified" not in str(e):
-                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
-
-        # ============================================
-        # 8. قاعدة الـ 3 شموع (Timing)
-        # ============================================
-        class ThreeCandlesTimer:
-            TIMEFRAMES = {
-                'S5': 5, 'S10': 10, 'S15': 15, 'S30': 30,
-                'M1': 60, 'M2': 120, 'M3': 180, 'M5': 300,
-                'M10': 600, 'M15': 900, 'M30': 1800,
-                'H1': 3600, 'H4': 14400, 'D1': 86400
-            }
-            
-            @staticmethod
-            def calculate_timing(timeframe, momentum='normal'):
-                seconds = ThreeCandlesTimer.TIMEFRAMES.get(timeframe, 60)
-                factors = {'extreme': 1.5, 'high': 2.0, 'normal': 3.0, 'low': 4.0, 'liquidity': 5.0}
-                factor = factors.get(momentum, 3.0)
-                trade_seconds = seconds * factor
-                now = datetime.utcnow()
-                return {
-                    'entry': now.strftime('%H:%M:%S'),
-                    'exit': (now + timedelta(seconds=trade_seconds)).strftime('%H:%M:%S'),
-                    'duration': trade_seconds / 60,
-                    'candles': factor,
-                    'factor': factor,
-                    'momentum': momentum
-                }
-
-        timing = ThreeCandlesTimer.calculate_timing(candle, 'normal')
-
-        # ============================================
-        # 9. Previous Candle Rule
-        # ============================================
-        class PreviousCandleAnalyzer:
-            @staticmethod
-            def analyze_previous_candle():
-                return {
-                    'is_bullish': True,
-                    'is_strong': False,
-                    'body_ratio': 65,
-                    'message': '✅ لا توجد قيود من الشمعة السابقة'
-                }
-
-        prev_candle = PreviousCandleAnalyzer.analyze_previous_candle()
-
-        # ============================================
-        # 10. تحليل نفسية الجلسات
-        # ============================================
-        def get_session_psychology():
-            return {
-                'session_name': kill_zone['name'],
-                'liquidity': kill_zone['liquidity'],
-                'success_rate': kill_zone['success'],
-                'personality': kill_zone.get('personality', 'غير محدد'),
-                'strategy': kill_zone['strategy']
-            }
-
-        psych = get_session_psychology()
-
-        # ============================================
-        # 11. تحليل الأخبار
-        # ============================================
+        momentum_boost = True if seconds_remaining <= 10 and candle.startswith('S') else False
+        
+        candle_closing_status = f"الوقت المتبقي: {seconds_remaining} ثانية"
+        if seconds_remaining < 5:
+            candle_closing_status += " ⚡ (قرب انفجار السعر - استعد للتبديل)"
+        elif seconds_remaining < 15:
+            candle_closing_status += " ⚠️ (مرحلة تأكيد الاتجاه)"
+        
         news_impact = "🟢 منخفض"
         news_warning = ""
         news_risk_multiplier = 1.0
@@ -2896,24 +2629,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 news_risk_multiplier = 1.5
                 news_warning = f"📢 **تنبيه:** اقتراب من وقت أخبار مهمة"
                 break
-
-        # ============================================
-        # 12. إعدادات التحليل
-        # ============================================
-        is_fast_frame = candle.startswith('S')
-        if seconds_remaining < (3 if is_fast_frame else 10):
-            time_status = "⚡ حالة زخم متفجر (Ignition Phase)"
-        else:
-            time_status = "✅ توقيت مستقر للتحليل"
-
-        momentum_boost = True if seconds_remaining <= 10 and candle.startswith('S') else False
         
-        candle_closing_status = f"الوقت المتبقي: {seconds_remaining} ثانية"
-        if seconds_remaining < 5:
-            candle_closing_status += " ⚡ (قرب انفجار السعر - استعد للتبديل)"
-        elif seconds_remaining < 15:
-            candle_closing_status += " ⚠️ (مرحلة تأكيد الاتجاه)"
-
         kill_zone_status = ""
         if 8 <= current_hour < 11:
             kill_zone_status = "داخل منطقة القتل السعري (افتتاح لندن)"
@@ -2935,6 +2651,273 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             last_minute_status = "STABLE_FLOW" if not is_trap_minute else "VOLATILITY_EXPANSION"
         
         market_mode = "AGGRESSIVE" if candle.startswith('S') or (is_trap_minute and seconds_remaining < 15 and momentum_boost) else "CONSERVATIVE"
+        
+        def calculate_breakout_force(candle_volume, avg_volume):
+            if avg_volume > 0:
+                return candle_volume / avg_volume
+            return 1.0
+
+        def has_institutional_fvg(chart_data):
+            return False
+
+        def check_liquidity_sweep(chart_data):
+            return False
+
+        def identify_liquidity_layers(chart_data):
+            liquidity_layers = {
+                "internal": [],
+                "external": [],
+                "retail": []
+            }
+            return liquidity_layers
+
+        def is_in_golden_execution_window(current_second, candle_type):
+            seconds_in_candle = 60 - current_second
+            
+            if candle_type.startswith('S'):
+                return 5 <= seconds_in_candle <= 25
+            else:
+                return 10 <= seconds_in_candle <= 40
+            
+        def exclusionary_scan(distance_to_peak, distance_to_bottom, is_at_historical_peak, is_at_historical_bottom, 
+                              candle_body_ratio, candle_wick_ratio, volume_ratio, avg_volume_ratio, 
+                              engulfing_ratio, is_trap_minute, seconds_remaining, momentum_boost, 
+                              current_direction, breakout_force):
+            
+            reasons = []
+            passed = True
+            reversal_signal = None
+            
+            if is_at_historical_peak or distance_to_peak < 5:
+                if not (breakout_force >= 1.5 and candle_body_ratio >= 0.9 and distance_to_peak >= 5):
+                    passed = False
+                    reasons.append("فخ سيولة: قمة تاريخية بدون ثالوث مؤسسي")
+                    reversal_signal = "LIQUIDITY_TRAP_REVERSAL 🔴"
+                    return passed, reasons, reversal_signal
+            
+            if is_at_historical_bottom or distance_to_bottom < 5:
+                if not (breakout_force >= 1.5 and candle_body_ratio >= 0.9 and distance_to_bottom >= 5):
+                    passed = False
+                    reasons.append("فخ سيولة: قاع تاريخي بدون ثالوث مؤسسي")
+                    reversal_signal = "LIQUIDITY_TRAP_REVERSAL 🟢"
+                    return passed, reasons, reversal_signal
+            
+            if engulfing_ratio > 0.5:
+                passed = False
+                reasons.append(f"قانون الابتلاع: شمعة عكسية ابتلعت {engulfing_ratio*100:.0f}% من الشمعة السابقة")
+                reversal_signal = "IMMEDIATE_REVERSAL 🔄"
+                return passed, reasons, reversal_signal
+            
+            if avg_volume_ratio > 3.0:
+                passed = False
+                reasons.append(f"إجهاد سعري: الشمعة الحالية أكبر بـ {avg_volume_ratio:.1f}x من المتوسط")
+                reversal_signal = "EXHAUSTION_HOLD 🟡"
+                return passed, reasons, reversal_signal
+            
+            if candle_wick_ratio > 0.6:
+                passed = False
+                reasons.append(f"رفض سعري: ذيل طويل بنسبة {candle_wick_ratio*100:.0f}%")
+                reversal_signal = "REJECTION_HOLD 🟡"
+                return passed, reasons, reversal_signal
+            
+            seconds_passed = 60 - seconds_remaining
+            if candle.startswith('S'):
+                if not (5 <= seconds_passed <= 25):
+                    passed = False
+                    reasons.append(f"خارج نافذة التنفيذ الذهبية: الثواني المنقضية = {seconds_passed} (يجب أن تكون بين 5-25)")
+                    reversal_signal = "TIMING_HOLD 🟡"
+                    return passed, reasons, reversal_signal
+            else:
+                if not (10 <= seconds_passed <= 40):
+                    passed = False
+                    reasons.append(f"خارج نافذة التنفيذ الذهبية: الثواني المنقضية = {seconds_passed} (يجب أن تكون بين 10-40)")
+                    reversal_signal = "TIMING_HOLD 🟡"
+                    return passed, reasons, reversal_signal
+            
+            if is_trap_minute and seconds_remaining < 15 and not momentum_boost:
+                passed = False
+                reasons.append("دقيقة غدر: وقت حرج بدون زخم كافي")
+                reversal_signal = "TRAP_MINUTE_HOLD 🟡"
+                return passed, reasons, reversal_signal
+            
+            return passed, reasons, reversal_signal
+
+        def get_success_driven_decision_v7_5(is_at_historical_peak, is_at_historical_bottom, 
+                                             breakout_points, breakout_force, 
+                                             candle_body_ratio, candle_wick_ratio, 
+                                             volume_ratio, avg_volume_ratio,
+                                             engulfing_ratio, distance_to_peak, distance_to_bottom,
+                                             current_direction, has_fvg):
+            
+            if is_at_historical_peak or distance_to_peak < 5:
+                if candle_wick_ratio > 0.4 or engulfing_ratio > 0.5:
+                    return {
+                        "decision": "LIQUIDITY_TRAP_REVERSAL 🔄",
+                        "action": "SELL_REVERSAL 🔴",
+                        "confidence": 95,
+                        "reason": f"فخ سيولة: قمة تاريخية مع { 'ذيل طويل' if candle_wick_ratio > 0.4 else 'ابتلاع عكسي' }",
+                        "success_rate": "95%",
+                        "entry_type": "REVERSAL_AT_PEAK_MINUS_2"
+                    }
+            
+            if is_at_historical_bottom or distance_to_bottom < 5:
+                if candle_wick_ratio > 0.4 or engulfing_ratio > 0.5:
+                    return {
+                        "decision": "LIQUIDITY_TRAP_REVERSAL 🔄",
+                        "action": "BUY_REVERSAL 🟢",
+                        "confidence": 95,
+                        "reason": f"فخ سيولة: قاع تاريخي مع { 'ذيل طويل' if candle_wick_ratio > 0.4 else 'ابتلاع عكسي' }",
+                        "success_rate": "95%",
+                        "entry_type": "REVERSAL_AT_BOTTOM_PLUS_2"
+                    }
+            
+            if is_at_historical_peak or distance_to_peak < 8:
+                if (breakout_points >= 5 and candle_body_ratio >= 0.9 and 
+                    volume_ratio >= 1.5 and has_fvg):
+                    return {
+                        "decision": "STRUCTURAL_BREAKOUT 💥",
+                        "action": "BREAKOUT_BUY 🟢",
+                        "confidence": 98,
+                        "reason": "كسر هيكلي حقيقي: ثالوث مؤسسي مكتمل (≥5 نقاط + حجم ≥1.5x + جسم >90% + FVG)",
+                        "success_rate": "98%",
+                        "entry_type": "RETEST_ENTRY"
+                    }
+            
+            if is_at_historical_bottom or distance_to_bottom < 8:
+                if (breakout_points >= 5 and candle_body_ratio >= 0.9 and 
+                    volume_ratio >= 1.5 and has_fvg):
+                    return {
+                        "decision": "STRUCTURAL_BREAKOUT 💥",
+                        "action": "BREAKOUT_SELL 🔴",
+                        "confidence": 98,
+                        "reason": "كسر هيكلي حقيقي: ثالوث مؤسسي مكتمل (≥5 نقاط + حجم ≥1.5x + جسم >90% + FVG)",
+                        "success_rate": "98%",
+                        "entry_type": "RETEST_ENTRY"
+                    }
+            
+            if current_direction == "UP" and volume_ratio >= 1.3 and candle_body_ratio > 0.8:
+                return {
+                    "decision": "MOMENTUM_ENTRY 🟢",
+                    "action": "BUY 🟢",
+                    "confidence": 90,
+                    "reason": f"زخم شراء قوي: حجم {volume_ratio:.1f}x + جسم {candle_body_ratio*100:.0f}%",
+                    "success_rate": "90%",
+                    "entry_type": "RETEST_ENTRY"
+                }
+            
+            if current_direction == "DOWN" and volume_ratio >= 1.3 and candle_body_ratio > 0.8:
+                return {
+                    "decision": "MOMENTUM_ENTRY 🔴",
+                    "action": "SELL 🔴",
+                    "confidence": 90,
+                    "reason": f"زخم بيع قوي: حجم {volume_ratio:.1f}x + جسم {candle_body_ratio*100:.0f}%",
+                    "success_rate": "90%",
+                    "entry_type": "RETEST_ENTRY"
+                }
+            
+            return {
+                "decision": "HOLD 🟡",
+                "action": "HOLD",
+                "confidence": 70,
+                "reason": "لم تتحقق شروط الكسر أو الانعكاس - انتظار تأكيد أقوى",
+                "success_rate": "70%",
+                "entry_type": "NO_ENTRY"
+            }
+
+        def market_type_filter(candle_wick_ratio, is_at_historical_level, volume_ratio, candle_body_ratio):
+            if candle.startswith('S'):
+                if is_at_historical_level and candle_wick_ratio > 0.3:
+                    return {
+                        "is_trap": True,
+                        "reason": "OTC Trap: فتل طويل عند مستوى تاريخي",
+                        "action": "REVERSAL"
+                    }
+                
+                if volume_ratio > 2.5 and candle_body_ratio > 0.9 and is_at_historical_level:
+                    return {
+                        "is_trap": True,
+                        "reason": "OTC Distribution: حجم ضخم عند قمة = تفريغ",
+                        "action": "REVERSAL"
+                    }
+            
+            return {
+                "is_trap": False,
+                "reason": "Normal Market",
+                "action": "NORMAL"
+            }
+
+        def calculate_success_weighted_score(distance_safety, volume_force, timeframe_alignment, candle_shape, reversal_potential):
+            distance_score = min(35, distance_safety * 3.5)
+            volume_score = min(25, volume_force * 16.67)
+            reversal_score = min(20, reversal_potential * 10)
+            timeframe_score = min(10, timeframe_alignment * 2.5)
+            shape_score = min(10, candle_shape * 2)
+            
+            total_score = distance_score + volume_score + reversal_score + timeframe_score + shape_score
+            
+            return {
+                "score": min(100, max(0, total_score)),
+                "breakdown": {
+                    "distance": distance_score,
+                    "volume": volume_score,
+                    "reversal": reversal_score,
+                    "timeframe": timeframe_score,
+                    "shape": shape_score
+                }
+            }
+
+        def calculate_retest_entry_enhanced(current_price, broken_level, direction, is_breakout=True, market_type="OTC"):
+            if direction == "BUY" and is_breakout:
+                if market_type == "OTC":
+                    return {
+                        "entry_price": broken_level + 0.5,
+                        "stop_loss": broken_level - 3,
+                        "reason": "إعادة اختبار في OTC - دخول مبكر قليلاً",
+                        "drawdown": "منخفض جداً"
+                    }
+                else:
+                    return {
+                        "entry_price": broken_level,
+                        "stop_loss": broken_level - 2,
+                        "reason": "إعادة اختبار المقاومة المكسورة كدعم",
+                        "drawdown": "صفر تقريباً"
+                    }
+            elif direction == "SELL" and is_breakout:
+                if market_type == "OTC":
+                    return {
+                        "entry_price": broken_level - 0.5,
+                        "stop_loss": broken_level + 3,
+                        "reason": "إعادة اختبار في OTC - دخول مبكر قليلاً",
+                        "drawdown": "منخفض جداً"
+                    }
+                else:
+                    return {
+                        "entry_price": broken_level,
+                        "stop_loss": broken_level + 2,
+                        "reason": "إعادة اختبار الدعم المكسور كمقاومة",
+                        "drawdown": "صفر تقريباً"
+                    }
+            else:
+                return {
+                    "entry_price": current_price,
+                    "stop_loss": current_price - 3 if direction == "BUY" else current_price + 3,
+                    "reason": "دخول مباشر مع الزخم",
+                    "drawdown": "طبيعي"
+                }
+
+        breakout_force = 0.0
+        avg_volume = 0.0
+        has_fvg = False
+        liquidity_sweep_detected = False
+        retail_liquidity_zones = []
+        engulfing_ratio = 0.0
+        distance_to_peak = 100.0
+        distance_to_bottom = 100.0
+        is_at_historical_peak = False
+        is_at_historical_bottom = False
+        has_long_wick = False
+        has_engulfing = False
+        current_direction = "UP"
         
         candle_category = ""
         if candle.startswith('S'):
@@ -2979,851 +2962,16 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             verification_timeframe = "H1"
         elif candle.startswith('D'):
             verification_timeframe = "H4"
-
-        def is_in_golden_execution_window(current_second, candle_type):
-            seconds_in_candle = 60 - current_second
-            
-            if candle_type.startswith('S'):
-                return 5 <= seconds_in_candle <= 25
-            else:
-                return 10 <= seconds_in_candle <= 40
-
-        # تحديث رسالة الانتظار النهائية
-        try:
-            await wait_msg.edit_text("🔍 انتظار قليلآ جاري تحليل 🤌🤌🤌")
-        except Exception as e:
-            if "Message is not modified" not in str(e):
-                print(f"⚠️ خطأ في تحديث الرسالة: {e}")
-
-        # ============================================
-        # 13. تحليل أنماط الشموع اليابانية (Candlestick Patterns)
-        # ============================================
-        class CandlestickPatternAnalyzer:
-            """تحليل 50+ نمط من أنماط الشموع اليابانية"""
-            
-            PATTERNS = {
-                # أنماط الانعكاس الصاعد
-                'hammer': {'name': '🔨 المطرقة', 'type': 'bullish', 'success_rate': '75%', 'description': 'ظهور بعد ترند هابط، ذيل سفلي طويل'},
-                'morning_star': {'name': '⭐ نجمة الصباح', 'type': 'bullish', 'success_rate': '85%', 'description': 'ثلاث شموع: هابطة، دوجي، صاعدة'},
-                'bullish_engulfing': {'name': '🟢 ابتلاع صاعد', 'type': 'bullish', 'success_rate': '80%', 'description': 'شمعة خضراء تبتلع الحمراء السابقة'},
-                'piercing_line': {'name': '📈 خط الاختراق', 'type': 'bullish', 'success_rate': '78%', 'description': 'شمعة خضراء تخترق منتصف الحمراء'},
-                'bullish_harami': {'name': '🤰 هارامي صاعد', 'type': 'bullish', 'success_rate': '70%', 'description': 'شمعة صغيرة داخل شمعة كبيرة هابطة'},
-                'doji_star': {'name': '✨ نجمة دوجي', 'type': 'bullish', 'success_rate': '72%', 'description': 'دوجي بعد ترند هابط'},
-                
-                # أنماط الانعكاس الهابط
-                'shooting_star': {'name': '💫 نجمة الرماية', 'type': 'bearish', 'success_rate': '75%', 'description': 'ظهور بعد ترند صاعد، ذيل علوي طويل'},
-                'evening_star': {'name': '🌙 نجمة المساء', 'type': 'bearish', 'success_rate': '85%', 'description': 'ثلاث شموع: صاعدة، دوجي، هابطة'},
-                'bearish_engulfing': {'name': '🔴 ابتلاع هابط', 'type': 'bearish', 'success_rate': '80%', 'description': 'شمعة حمراء تبتلع الخضراء السابقة'},
-                'dark_cloud_cover': {'name': '☁️ غطاء سحابي', 'type': 'bearish', 'success_rate': '78%', 'description': 'شمعة حمراء تخترق منتصف الخضراء'},
-                'bearish_harami': {'name': '🤰 هارامي هابط', 'type': 'bearish', 'success_rate': '70%', 'description': 'شمعة صغيرة داخل شمعة كبيرة صاعدة'},
-                
-                # أنماط الاستمرار
-                'three_white_soldiers': {'name': '⚔️ ثلاثة جنود بيض', 'type': 'bullish_cont', 'success_rate': '82%', 'description': 'ثلاث شموع خضراء متتالية'},
-                'three_black_crows': {'name': '🐦‍⬛ ثلاثة غربان سود', 'type': 'bearish_cont', 'success_rate': '82%', 'description': 'ثلاث شموع حمراء متتالية'},
-                'rising_three': {'name': '📊 ثلاثة صاعدة', 'type': 'bullish_cont', 'success_rate': '75%', 'description': 'شموع حمراء صغيرة ضمن شمعة خضراء كبيرة'},
-                'falling_three': {'name': '📉 ثلاثة هابطة', 'type': 'bearish_cont', 'success_rate': '75%', 'description': 'شموع خضراء صغيرة ضمن شمعة حمراء كبيرة'},
-                
-                # أنماط الدوجي
-                'long_legged_doji': {'name': '🦵 دوجي طويل', 'type': 'neutral', 'success_rate': '65%', 'description': 'ظل علوي وسفلي طويلين'},
-                'dragonfly_doji': {'name': '🦋 دوجي اليعسوب', 'type': 'bullish', 'success_rate': '70%', 'description': 'ذيل سفلي طويل بدون ظل علوي'},
-                'gravestone_doji': {'name': '🪦 دوجي شاهد القبر', 'type': 'bearish', 'success_rate': '70%', 'description': 'ذيل علوي طويل بدون ظل سفلي'},
-                'four_price_doji': {'name': '⚪ دوجي كامل', 'type': 'neutral', 'success_rate': '60%', 'description': 'الافتتاح = الإغلاق = القمة = القاع'},
-            }
-            
-            @staticmethod
-            def detect_patterns(open_prices, high_prices, low_prices, close_prices):
-                """اكتشاف الأنماط في آخر 5 شموع"""
-                detected = []
-                
-                if len(close_prices) < 3:
-                    return detected
-                
-                # فحص آخر 3 شموع
-                last_3_close = close_prices[-3:]
-                last_3_open = open_prices[-3:] if len(open_prices) >= 3 else []
-                last_3_high = high_prices[-3:] if len(high_prices) >= 3 else []
-                last_3_low = low_prices[-3:] if len(low_prices) >= 3 else []
-                
-                # فحص أنماط الانعكاس
-                if len(last_3_close) >= 3:
-                    # نجمة الصباح
-                    if (last_3_close[0] > last_3_open[0] and  # شمعة أولى حمراء
-                        abs(last_3_close[1] - last_3_open[1]) < (last_3_high[1] - last_3_low[1]) * 0.1 and  # دوجي
-                        last_3_close[2] < last_3_open[2] and  # شمعة ثالثة خضراء
-                        last_3_close[2] > (last_3_close[0] + last_3_close[1]) / 2):  # فوق منتصف الشموع السابقة
-                        detected.append(CandlestickPatternAnalyzer.PATTERNS['morning_star'])
-                    
-                    # نجمة المساء
-                    if (last_3_close[0] < last_3_open[0] and  # شمعة أولى خضراء
-                        abs(last_3_close[1] - last_3_open[1]) < (last_3_high[1] - last_3_low[1]) * 0.1 and  # دوجي
-                        last_3_close[2] > last_3_open[2] and  # شمعة ثالثة حمراء
-                        last_3_close[2] < (last_3_close[0] + last_3_close[1]) / 2):  # تحت منتصف الشموع السابقة
-                        detected.append(CandlestickPatternAnalyzer.PATTERNS['evening_star'])
-                
-                # فحص آخر شمعتين
-                if len(last_3_close) >= 2:
-                    # ابتلاع صاعد
-                    if (last_3_close[-2] > last_3_open[-2] and  # شمعة سابقة حمراء
-                        last_3_close[-1] < last_3_open[-1] and  # الشمعة الحالية خضراء
-                        last_3_close[-1] < last_3_close[-2] and  # إغلاق الحالية أقل من إغلاق السابقة
-                        last_3_open[-1] > last_3_open[-2]):  # افتتاح الحالية أعلى من افتتاح السابقة
-                        detected.append(CandlestickPatternAnalyzer.PATTERNS['bullish_engulfing'])
-                    
-                    # ابتلاع هابط
-                    if (last_3_close[-2] < last_3_open[-2] and  # شمعة سابقة خضراء
-                        last_3_close[-1] > last_3_open[-1] and  # الشمعة الحالية حمراء
-                        last_3_close[-1] > last_3_close[-2] and  # إغلاق الحالية أعلى من إغلاق السابقة
-                        last_3_open[-1] < last_3_open[-2]):  # افتتاح الحالية أقل من افتتاح السابقة
-                        detected.append(CandlestickPatternAnalyzer.PATTERNS['bearish_engulfing'])
-                
-                # فحص آخر شمعة
-                if len(close_prices) >= 1:
-                    last_candle = {
-                        'open': open_prices[-1],
-                        'high': high_prices[-1],
-                        'low': low_prices[-1],
-                        'close': close_prices[-1]
-                    }
-                    
-                    body = abs(last_candle['close'] - last_candle['open'])
-                    upper_wick = last_candle['high'] - max(last_candle['close'], last_candle['open'])
-                    lower_wick = min(last_candle['close'], last_candle['open']) - last_candle['low']
-                    total_range = last_candle['high'] - last_candle['low']
-                    
-                    # المطرقة
-                    if (body < total_range * 0.3 and
-                        lower_wick > body * 2 and
-                        upper_wick < body * 0.3 and
-                        last_candle['close'] > last_candle['open']):  # شمعة خضراء
-                        detected.append(CandlestickPatternAnalyzer.PATTERNS['hammer'])
-                    
-                    # نجمة الرماية
-                    if (body < total_range * 0.3 and
-                        upper_wick > body * 2 and
-                        lower_wick < body * 0.3 and
-                        last_candle['close'] < last_candle['open']):  # شمعة حمراء
-                        detected.append(CandlestickPatternAnalyzer.PATTERNS['shooting_star'])
-                    
-                    # دوجي بأنواعه
-                    if body < total_range * 0.1:
-                        if upper_wick > total_range * 0.4 and lower_wick > total_range * 0.4:
-                            detected.append(CandlestickPatternAnalyzer.PATTERNS['long_legged_doji'])
-                        elif upper_wick < body and lower_wick > total_range * 0.6:
-                            detected.append(CandlestickPatternAnalyzer.PATTERNS['dragonfly_doji'])
-                        elif upper_wick > total_range * 0.6 and lower_wick < body:
-                            detected.append(CandlestickPatternAnalyzer.PATTERNS['gravestone_doji'])
-                        else:
-                            detected.append(CandlestickPatternAnalyzer.PATTERNS['four_price_doji'])
-                
-                return detected
-
-        # ============================================
-        # 14. نظام إدارة المخاطر الذكي (Risk Management)
-        # ============================================
-        class RiskManagementSystem:
-            """نظام متكامل لإدارة المخاطر"""
-            
-            @staticmethod
-            def calculate_position_size(account_balance, risk_percentage, stop_loss_pips, pip_value=10):
-                """
-                حساب حجم الصفقة بناءً على إدارة المخاطر
-                account_balance: رصيد الحساب
-                risk_percentage: نسبة المخاطرة (1-3%)
-                stop_loss_pips: وقف الخسارة بالنقاط
-                pip_value: قيمة النقطة
-                """
-                risk_amount = account_balance * (risk_percentage / 100)
-                position_size = risk_amount / (stop_loss_pips * pip_value)
-                
-                return {
-                    'account_balance': account_balance,
-                    'risk_percentage': risk_percentage,
-                    'risk_amount': risk_amount,
-                    'stop_loss_pips': stop_loss_pips,
-                    'position_size': round(position_size, 2),
-                    'recommendation': 'ممتاز' if risk_percentage <= 1 else 'جيد' if risk_percentage <= 2 else 'عالي المخاطرة'
-                }
-            
-            @staticmethod
-            def calculate_optimal_stop_loss(entry_price, atr, multiplier=1.5):
-                """حساب وقف الخسارة الأمثل باستخدام ATR"""
-                return {
-                    'stop_loss_long': entry_price - (atr * multiplier),
-                    'stop_loss_short': entry_price + (atr * multiplier),
-                    'atr_value': atr,
-                    'multiplier': multiplier
-                }
-            
-            @staticmethod
-            def calculate_risk_reward_ratio(entry, stop_loss, take_profit):
-                """حساب نسبة المخاطرة إلى العائد"""
-                risk = abs(entry - stop_loss)
-                reward = abs(take_profit - entry)
-                ratio = reward / risk if risk > 0 else 0
-                
-                return {
-                    'risk': risk,
-                    'reward': reward,
-                    'ratio': round(ratio, 2),
-                    'grade': '🌟🌟🌟🌟🌟' if ratio >= 5 else '🌟🌟🌟🌟' if ratio >= 3 else '🌟🌟🌟' if ratio >= 2 else '🌟🌟' if ratio >= 1 else '🌟',
-                    'recommendation': 'ممتازة' if ratio >= 3 else 'جيدة' if ratio >= 2 else 'مقبولة' if ratio >= 1 else 'غير مقبولة'
-                }
-            
-            @staticmethod
-            def calculate_max_drawdown(equity_curve):
-                """حساب أقصى تراجع"""
-                if not equity_curve:
-                    return 0
-                
-                peak = equity_curve[0]
-                max_dd = 0
-                
-                for value in equity_curve:
-                    if value > peak:
-                        peak = value
-                    dd = (peak - value) / peak * 100
-                    if dd > max_dd:
-                        max_dd = dd
-                
-                return round(max_dd, 2)
-            
-            @staticmethod
-            def calculate_sharpe_ratio(returns, risk_free_rate=0.02):
-                """حساب نسبة شارب"""
-                if not returns:
-                    return 0
-                
-                avg_return = sum(returns) / len(returns)
-                std_dev = (sum((r - avg_return) ** 2 for r in returns) / len(returns)) ** 0.5
-                
-                if std_dev == 0:
-                    return 0
-                
-                sharpe = (avg_return - risk_free_rate) / std_dev
-                return round(sharpe, 2)
-
-        # ============================================
-        # 15. تحليل RSI مع Divergence
-        # ============================================
-        class RSIAnalyzer:
-            """تحليل مؤشر القوة النسبية مع اكتشاف التباعدات"""
-            
-            @staticmethod
-            def calculate_rsi(prices, period=14):
-                """حساب RSI"""
-                if len(prices) < period + 1:
-                    return 50
-                
-                gains = []
-                losses = []
-                
-                for i in range(1, len(prices)):
-                    change = prices[i] - prices[i-1]
-                    if change > 0:
-                        gains.append(change)
-                        losses.append(0)
-                    else:
-                        gains.append(0)
-                        losses.append(abs(change))
-                
-                avg_gain = sum(gains[-period:]) / period
-                avg_loss = sum(losses[-period:]) / period
-                
-                if avg_loss == 0:
-                    return 100
-                
-                rs = avg_gain / avg_loss
-                rsi = 100 - (100 / (1 + rs))
-                
-                return rsi
-            
-            @staticmethod
-            def detect_divergence(prices, rsi_values):
-                """اكتشاف التباعدات"""
-                if len(prices) < 5 or len(rsi_values) < 5:
-                    return {'type': 'none', 'strength': 0}
-                
-                # تباعد صاعد (قيعان سعرية هابطة مع قيعان RSI صاعدة)
-                price_lows = [min(prices[i-2:i+1]) for i in range(2, len(prices))]
-                rsi_lows = [min(rsi_values[i-2:i+1]) for i in range(2, len(rsi_values))]
-                
-                bullish_div = False
-                bearish_div = False
-                
-                if len(price_lows) >= 2 and len(rsi_lows) >= 2:
-                    # تباعد صاعد
-                    if price_lows[-1] < price_lows[-2] and rsi_lows[-1] > rsi_lows[-2]:
-                        bullish_div = True
-                    
-                    # تباعد هابط
-                    price_highs = [max(prices[i-2:i+1]) for i in range(2, len(prices))]
-                    rsi_highs = [max(rsi_values[i-2:i+1]) for i in range(2, len(rsi_values))]
-                    
-                    if len(price_highs) >= 2 and len(rsi_highs) >= 2:
-                        if price_highs[-1] > price_highs[-2] and rsi_highs[-1] < rsi_highs[-2]:
-                            bearish_div = True
-                
-                rsi_current = rsi_values[-1] if rsi_values else 50
-                
-                return {
-                    'rsi_current': round(rsi_current, 2),
-                    'condition': 'تشبع شراء 🔴' if rsi_current > 70 else 'تشبع بيع 🟢' if rsi_current < 30 else 'محايد ⚪',
-                    'bullish_divergence': bullish_div,
-                    'bearish_divergence': bearish_div,
-                    'divergence_strength': 'قوية' if (bullish_div or bearish_div) else 'ضعيفة',
-                    'signal': 'شراء' if rsi_current < 30 and bullish_div else 'بيع' if rsi_current > 70 and bearish_div else 'انتظار'
-                }
-
-        # ============================================
-        # 16. تحليل السيولة (Liquidity Analysis)
-        # ============================================
-        class LiquidityAnalyzer:
-            """تحليل مستويات السيولة ومناطق الوقف"""
-            
-            @staticmethod
-            def identify_liquidity_levels(highs, lows, lookback=20):
-                """تحديد مستويات السيولة"""
-                liquidity_levels = {
-                    'buy_liquidity': [],  # قيعان متساوية (مناطق شراء)
-                    'sell_liquidity': [],  # قمم متساوية (مناطق بيع)
-                    'stop_hunts': []  # مناطق صيد الوقف
-                }
-                
-                if len(highs) < lookback or len(lows) < lookback:
-                    return liquidity_levels
-                
-                # البحث عن القيعان المتساوية (سيولة شراء)
-                for i in range(lookback - 5, len(lows) - 1):
-                    current_low = lows[i]
-                    similar_lows = 0
-                    
-                    for j in range(max(0, i-10), i):
-                        if abs(lows[j] - current_low) < (current_low * 0.0001):  # نفس المستوى تقريباً
-                            similar_lows += 1
-                    
-                    if similar_lows >= 2:
-                        liquidity_levels['buy_liquidity'].append({
-                            'price': current_low,
-                            'strength': similar_lows * 20,  # قوة المستوى
-                            'type': 'سيولة شراء'
-                        })
-                
-                # البحث عن القمم المتساوية (سيولة بيع)
-                for i in range(lookback - 5, len(highs) - 1):
-                    current_high = highs[i]
-                    similar_highs = 0
-                    
-                    for j in range(max(0, i-10), i):
-                        if abs(highs[j] - current_high) < (current_high * 0.0001):
-                            similar_highs += 1
-                    
-                    if similar_highs >= 2:
-                        liquidity_levels['sell_liquidity'].append({
-                            'price': current_high,
-                            'strength': similar_highs * 20,
-                            'type': 'سيولة بيع'
-                        })
-                
-                # مناطق صيد الوقف (قمم/قيعان بعيدة)
-                last_high = highs[-1]
-                last_low = lows[-1]
-                
-                for level in liquidity_levels['sell_liquidity']:
-                    if abs(level['price'] - last_high) < (last_high * 0.002):  # قريب من القمة الحالية
-                        liquidity_levels['stop_hunts'].append({
-                            'price': level['price'],
-                            'type': 'منطقة صيد وقف بيع',
-                            'probability': 'عالية'
-                        })
-                
-                for level in liquidity_levels['buy_liquidity']:
-                    if abs(level['price'] - last_low) < (last_low * 0.002):
-                        liquidity_levels['stop_hunts'].append({
-                            'price': level['price'],
-                            'type': 'منطقة صيد وقف شراء',
-                            'probability': 'عالية'
-                        })
-                
-                return liquidity_levels
-
-        # ============================================
-        # 17. تحليل قوة الاتجاه (Trend Following)
-        # ============================================
-        class TrendStrengthAnalyzer:
-            """تحليل قوة الاتجاه ونقاط الدخول المثالية"""
-            
-            @staticmethod
-            def analyze_trend_strength(prices, period=20):
-                """تحليل قوة الاتجاه باستخدام ADX"""
-                if len(prices) < period + 1:
-                    return {'strength': 'غير معروف', 'direction': 'محايد'}
-                
-                # حساب اتجاه الحركة
-                price_changes = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-                positive_moves = sum(1 for c in price_changes[-period:] if c > 0)
-                negative_moves = sum(1 for c in price_changes[-period:] if c < 0)
-                
-                positive_ratio = positive_moves / period
-                negative_ratio = negative_moves / period
-                
-                # حساب قوة الاتجاه
-                if positive_ratio > 0.6:
-                    direction = 'صاعد قوي 📈'
-                    strength = 'قوية جداً' if positive_ratio > 0.8 else 'قوية'
-                elif negative_ratio > 0.6:
-                    direction = 'هابط قوي 📉'
-                    strength = 'قوية جداً' if negative_ratio > 0.8 else 'قوية'
-                elif positive_ratio > 0.4 and negative_ratio > 0.4:
-                    direction = 'متذبذب 📊'
-                    strength = 'ضعيفة'
-                else:
-                    direction = 'محايد'
-                    strength = 'ضعيفة'
-                
-                # نقاط الدخول المثالية مع الاتجاه
-                entry_points = []
-                if direction.startswith('صاعد'):
-                    # في الاتجاه الصاعد، نبحث عن نقاط التصحيح
-                    recent_low = min(prices[-5:])
-                    entry_points.append({
-                        'price': recent_low,
-                        'type': 'تصحيح صاعد',
-                        'confidence': 'عالية'
-                    })
-                elif direction.startswith('هابط'):
-                    # في الاتجاه الهابط، نبحث عن نقاط الارتداد
-                    recent_high = max(prices[-5:])
-                    entry_points.append({
-                        'price': recent_high,
-                        'type': 'ارتداد هابط',
-                        'confidence': 'عالية'
-                    })
-                
-                return {
-                    'direction': direction,
-                    'strength': strength,
-                    'positive_ratio': round(positive_ratio * 100, 1),
-                    'negative_ratio': round(negative_ratio * 100, 1),
-                    'recommendation': 'تداول مع الاتجاه' if strength != 'ضعيفة' else 'تجنب التداول',
-                    'optimal_entries': entry_points
-                }
-
-        # ============================================
-        # 18. تحليل الفجوات السعرية (Gap Analysis)
-        # ============================================
-        class GapAnalyzer:
-            """تحليل الفجوات السعرية"""
-            
-            @staticmethod
-            def detect_gaps(highs, lows):
-                """اكتشاف الفجوات السعرية"""
-                gaps = []
-                
-                for i in range(1, len(highs)):
-                    # فجوة صاعدة
-                    if lows[i] > highs[i-1]:
-                        gap_size = lows[i] - highs[i-1]
-                        gap_percentage = (gap_size / highs[i-1]) * 100
-                        
-                        gaps.append({
-                            'type': 'صاعدة ⬆️',
-                            'start': highs[i-1],
-                            'end': lows[i],
-                            'size': round(gap_size, 5),
-                            'percentage': round(gap_percentage, 3),
-                            'fill_probability': 'عالية' if gap_percentage < 0.5 else 'متوسطة' if gap_percentage < 1 else 'منخفضة',
-                            'significance': 'كبيرة' if gap_percentage > 1 else 'متوسطة' if gap_percentage > 0.5 else 'صغيرة'
-                        })
-                    
-                    # فجوة هابطة
-                    elif highs[i] < lows[i-1]:
-                        gap_size = lows[i-1] - highs[i]
-                        gap_percentage = (gap_size / lows[i-1]) * 100
-                        
-                        gaps.append({
-                            'type': 'هابطة ⬇️',
-                            'start': lows[i-1],
-                            'end': highs[i],
-                            'size': round(gap_size, 5),
-                            'percentage': round(gap_percentage, 3),
-                            'fill_probability': 'عالية' if gap_percentage < 0.5 else 'متوسطة' if gap_percentage < 1 else 'منخفضة',
-                            'significance': 'كبيرة' if gap_percentage > 1 else 'متوسطة' if gap_percentage > 0.5 else 'صغيرة'
-                        })
-                
-                return gaps
-
-        # ============================================
-        # 19. تحليل Point of Control (POC)
-        # ============================================
-        class POCAnalyzer:
-            """تحليل Point of Control - منطقة التحكم الرئيسية"""
-            
-            @staticmethod
-            def calculate_poc(prices, volumes, num_levels=10):
-                """حساب Point of Control"""
-                if not prices or not volumes or len(prices) != len(volumes):
-                    return {'poc': None, 'value_area': []}
-                
-                # تقسيم السعر إلى مستويات
-                price_min = min(prices)
-                price_max = max(prices)
-                price_range = price_max - price_min
-                level_size = price_range / num_levels
-                
-                levels = {}
-                for i in range(num_levels):
-                    level_low = price_min + (i * level_size)
-                    level_high = level_low + level_size
-                    levels[f"{round(level_low, 5)}-{round(level_high, 5)}"] = 0
-                
-                # تجميع الحجم لكل مستوى
-                for price, volume in zip(prices, volumes):
-                    for level_key in levels:
-                        low, high = map(float, level_key.split('-'))
-                        if low <= price <= high:
-                            levels[level_key] += volume
-                            break
-                
-                # العثور على POC (أعلى حجم)
-                poc_level = max(levels, key=levels.get)
-                poc_price = sum(map(float, poc_level.split('-'))) / 2
-                
-                # حساب منطقة القيمة (70% من الحجم)
-                total_volume = sum(levels.values())
-                sorted_levels = sorted(levels.items(), key=lambda x: x[1], reverse=True)
-                
-                value_area = []
-                accumulated_volume = 0
-                for level, volume in sorted_levels:
-                    accumulated_volume += volume
-                    value_area.append(level)
-                    if accumulated_volume >= total_volume * 0.7:
-                        break
-                
-                return {
-                    'poc_price': round(poc_price, 5),
-                    'poc_volume': levels[poc_level],
-                    'value_area': value_area,
-                    'market_type': 'متوازن' if len(value_area) > 3 else 'مركز'
-                }
-
-        # ============================================
-        # 20. تحليل Market Structure
-        # ============================================
-        class MarketStructureAnalyzer:
-            """تحليل هيكل السوق (BOS و CHoCH)"""
-            
-            @staticmethod
-            def analyze_structure(highs, lows):
-                """تحليل هيكل السوق"""
-                if len(highs) < 5 or len(lows) < 5:
-                    return {'structure': 'غير معروف'}
-                
-                # تحديد القمم والقيعان
-                peaks = []
-                troughs = []
-                
-                for i in range(1, len(highs) - 1):
-                    if highs[i] > highs[i-1] and highs[i] > highs[i+1]:
-                        peaks.append({'index': i, 'price': highs[i]})
-                    if lows[i] < lows[i-1] and lows[i] < lows[i+1]:
-                        troughs.append({'index': i, 'price': lows[i]})
-                
-                # تحليل الهيكل
-                structure_type = 'متذبذب'
-                bos_detected = False
-                choch_detected = False
-                
-                if len(peaks) >= 2 and len(troughs) >= 2:
-                    # قمم صاعدة وقيعان صاعدة = ترند صاعد
-                    if peaks[-1]['price'] > peaks[-2]['price'] and troughs[-1]['price'] > troughs[-2]['price']:
-                        structure_type = 'صاعد'
-                        
-                        # كسر هيكل صاعد (BOS)
-                        if len(highs) > 3 and highs[-1] > peaks[-1]['price']:
-                            bos_detected = True
-                    
-                    # قمم هابطة وقيعان هابطة = ترند هابط
-                    elif peaks[-1]['price'] < peaks[-2]['price'] and troughs[-1]['price'] < troughs[-2]['price']:
-                        structure_type = 'هابط'
-                        
-                        # كسر هيكل هابط (BOS)
-                        if len(lows) > 3 and lows[-1] < troughs[-1]['price']:
-                            bos_detected = True
-                    
-                    # تغير في الهيكل (CHoCH)
-                    if len(peaks) >= 3 and len(troughs) >= 3:
-                        # من صاعد إلى هابط
-                        if (peaks[-3]['price'] < peaks[-2]['price'] and 
-                            peaks[-2]['price'] > peaks[-1]['price'] and
-                            troughs[-3]['price'] < troughs[-2]['price'] and
-                            troughs[-2]['price'] > troughs[-1]['price']):
-                            choch_detected = True
-                            structure_type = 'تحول هابط'
-                        
-                        # من هابط إلى صاعد
-                        elif (peaks[-3]['price'] > peaks[-2]['price'] and 
-                              peaks[-2]['price'] < peaks[-1]['price'] and
-                              troughs[-3]['price'] > troughs[-2]['price'] and
-                              troughs[-2]['price'] < troughs[-1]['price']):
-                            choch_detected = True
-                            structure_type = 'تحول صاعد'
-                
-                return {
-                    'structure': structure_type,
-                    'bos_detected': bos_detected,
-                    'choch_detected': choch_detected,
-                    'last_peak': peaks[-1]['price'] if peaks else None,
-                    'last_trough': troughs[-1]['price'] if troughs else None,
-                    'recommendation': 'شراء' if structure_type == 'صاعد' else 'بيع' if structure_type == 'هابط' else 'انتظار'
-                }
-
-        # ============================================
-        # 21. تحليل Fibonacci المتقدم
-        # ============================================
-        class FibonacciPro:
-            """تحليل فيبوناتشي المتكامل مع جميع المستويات"""
-            
-            LEVELS = {
-                'retracement': [0.236, 0.382, 0.5, 0.618, 0.786],
-                'extension': [1.272, 1.414, 1.618, 2.0, 2.272, 2.414, 2.618],
-                'ote': [0.68, 0.795]  # Optimal Trade Entry
-            }
-            
-            @staticmethod
-            def calculate_levels(high, low, current_price):
-                """حساب جميع مستويات فيبوناتشي"""
-                diff = high - low
-                
-                levels = {}
-                
-                # مستويات التصحيح
-                for level in FibonacciPro.LEVELS['retracement']:
-                    price = high - (diff * level)
-                    levels[f"retrace_{int(level*1000)}"] = {
-                        'price': round(price, 5),
-                        'type': 'تصحيح',
-                        'level': level,
-                        'zone': 'شراء' if price < current_price else 'بيع'
-                    }
-                
-                # مستويات الامتداد
-                for level in FibonacciPro.LEVELS['extension']:
-                    price = high + (diff * (level - 1))
-                    levels[f"ext_{int(level*1000)}"] = {
-                        'price': round(price, 5),
-                        'type': 'امتداد',
-                        'level': level,
-                        'zone': 'هدف'
-                    }
-                
-                # منطقة OTE
-                ote_low = low + (diff * 0.68)
-                ote_high = low + (diff * 0.795)
-                levels['ote_zone'] = {
-                    'low': round(ote_low, 5),
-                    'high': round(ote_high, 5),
-                    'type': 'OTE',
-                    'in_zone': ote_low <= current_price <= ote_high
-                }
-                
-                return levels
-
-        # ============================================
-        # 22. تحليل Volume Profile
-        # ============================================
-        class VolumeProfileAnalyzer:
-            """تحليل Volume Profile المتقدم"""
-            
-            @staticmethod
-            def analyze_volume_profile(prices, volumes, num_bins=12):
-                """تحليل توزيع الحجم على مستويات السعر"""
-                if not prices or not volumes:
-                    return {}
-                
-                price_min = min(prices)
-                price_max = max(prices)
-                price_range = price_max - price_min
-                bin_size = price_range / num_bins
-                
-                volume_profile = []
-                max_volume = 0
-                poc_price = price_min
-                
-                for i in range(num_bins):
-                    bin_low = price_min + (i * bin_size)
-                    bin_high = bin_low + bin_size
-                    bin_volume = 0
-                    
-                    for price, volume in zip(prices, volumes):
-                        if bin_low <= price <= bin_high:
-                            bin_volume += volume
-                    
-                    volume_profile.append({
-                        'low': round(bin_low, 5),
-                        'high': round(bin_high, 5),
-                        'volume': bin_volume
-                    })
-                    
-                    if bin_volume > max_volume:
-                        max_volume = bin_volume
-                        poc_price = (bin_low + bin_high) / 2
-                
-                # حساب منطقة القيمة (70% من الحجم)
-                sorted_by_volume = sorted(volume_profile, key=lambda x: x['volume'], reverse=True)
-                total_volume = sum(v['volume'] for v in volume_profile)
-                value_area_volume = 0
-                value_area = []
-                
-                for bin_data in sorted_by_volume:
-                    value_area_volume += bin_data['volume']
-                    value_area.append(bin_data)
-                    if value_area_volume >= total_volume * 0.7:
-                        break
-                
-                value_area_low = min(v['low'] for v in value_area)
-                value_area_high = max(v['high'] for v in value_area)
-                
-                return {
-                    'poc': round(poc_price, 5),
-                    'value_area_low': round(value_area_low, 5),
-                    'value_area_high': round(value_area_high, 5),
-                    'volume_profile': volume_profile,
-                    'market_type': 'متوازن' if (value_area_high - value_area_low) > price_range * 0.5 else 'مركز'
-                }
-
-        # ============================================
-        # 23. تحليل Supply/Demand
-        # ============================================
-        class SupplyDemandAnalyzer:
-            """تحليل مناطق العرض والطلب"""
-            
-            ZONE_TYPES = {
-                'strong_demand': '🔵 منطقة طلب قوية',
-                'weak_demand': '🔷 منطقة طلب ضعيفة',
-                'strong_supply': '🔴 منطقة عرض قوية',
-                'weak_supply': '🔶 منطقة عرض ضعيفة'
-            }
-            
-            @staticmethod
-            def identify_zones(highs, lows, lookback=20):
-                """تحديد مناطق العرض والطلب"""
-                zones = []
-                
-                if len(highs) < lookback or len(lows) < lookback:
-                    return zones
-                
-                for i in range(lookback, len(highs) - 1):
-                    # منطقة عرض (قمة مع رد فعل قوي)
-                    if i > 0 and highs[i] > highs[i-1] and highs[i] > highs[i+1]:
-                        reaction_strength = (highs[i] - lows[i]) / (highs[i] - lows[i-1]) if lows[i-1] != highs[i] else 1
-                        strength = 'قوية' if reaction_strength > 0.6 else 'ضعيفة'
-                        
-                        zones.append({
-                            'type': 'supply',
-                            'zone_type': SupplyDemandAnalyzer.ZONE_TYPES['strong_supply' if strength == 'قوية' else 'weak_supply'],
-                            'price': round(highs[i], 5),
-                            'strength': strength,
-                            'reaction': round(reaction_strength * 100, 1)
-                        })
-                    
-                    # منطقة طلب (قاع مع رد فعل قوي)
-                    if i > 0 and lows[i] < lows[i-1] and lows[i] < lows[i+1]:
-                        reaction_strength = (highs[i] - lows[i]) / (highs[i+1] - lows[i]) if highs[i+1] != lows[i] else 1
-                        strength = 'قوية' if reaction_strength > 0.6 else 'ضعيفة'
-                        
-                        zones.append({
-                            'type': 'demand',
-                            'zone_type': SupplyDemandAnalyzer.ZONE_TYPES['strong_demand' if strength == 'قوية' else 'weak_demand'],
-                            'price': round(lows[i], 5),
-                            'strength': strength,
-                            'reaction': round(reaction_strength * 100, 1)
-                        })
-                
-                return zones[-10:]  # آخر 10 مناطق
-
-        # ============================================
-        # 24. تحليل Market Cycles
-        # ============================================
-        class MarketCycleAnalyzer:
-            """تحليل دورات السوق"""
-            
-            CYCLES = {
-                'accumulation': '🔄 التجميع',
-                'markup': '📈 الصعود',
-                'distribution': '🔄 التوزيع',
-                'markdown': '📉 الهبوط'
-            }
-            
-            @staticmethod
-            def identify_cycle(prices, volumes, period=20):
-                """تحديد دورة السوق الحالية"""
-                if len(prices) < period or len(volumes) < period:
-                    return {'cycle': 'غير معروف'}
-                
-                recent_prices = prices[-period:]
-                recent_volumes = volumes[-period:]
-                
-                price_change = (recent_prices[-1] - recent_prices[0]) / recent_prices[0] * 100
-                volume_trend = sum(recent_volumes[-5:]) / sum(recent_volumes[:5]) if sum(recent_volumes[:5]) > 0 else 1
-                
-                # تحديد الدورة
-                if price_change < 2 and price_change > -2:
-                    if volume_trend < 0.8:
-                        cycle = 'accumulation'  # تجميع بحجم منخفض
-                    elif volume_trend > 1.2:
-                        cycle = 'distribution'  # توزيع بحجم مرتفع
-                    else:
-                        cycle = 'accumulation'
-                
-                elif price_change > 5:
-                    if volume_trend > 1.2:
-                        cycle = 'markup'  # صعود قوي مع حجم
-                    else:
-                        cycle = 'markup'
-                
-                elif price_change < -5:
-                    if volume_trend > 1.2:
-                        cycle = 'markdown'  # هبوط قوي مع حجم
-                    else:
-                        cycle = 'markdown'
-                
-                else:
-                    cycle = 'accumulation' if price_change > 0 else 'distribution'
-                
-                cycle_info = {
-                    'cycle': MarketCycleAnalyzer.CYCLES[cycle],
-                    'cycle_stage': cycle,
-                    'price_change': round(price_change, 2),
-                    'volume_ratio': round(volume_trend, 2),
-                    'next_cycle': MarketCycleAnalyzer.get_next_cycle(cycle),
-                    'recommendation': MarketCycleAnalyzer.get_recommendation(cycle)
-                }
-                
-                return cycle_info
-            
-            @staticmethod
-            def get_next_cycle(current_cycle):
-                """تحديد الدورة القادمة"""
-                cycle_order = ['accumulation', 'markup', 'distribution', 'markdown']
-                current_index = cycle_order.index(current_cycle) if current_cycle in cycle_order else 0
-                next_index = (current_index + 1) % 4
-                return MarketCycleAnalyzer.CYCLES[cycle_order[next_index]]
-            
-            @staticmethod
-            def get_recommendation(cycle):
-                """توصية حسب الدورة"""
-                recommendations = {
-                    'accumulation': 'شراء تجميعي 🟢',
-                    'markup': 'استمرار مع الاتجاه 📈',
-                    'distribution': 'توزيع وجني أرباح 🔴',
-                    'markdown': 'انتظار أو بيع 📉'
-                }
-                return recommendations.get(cycle, 'انتظار')
-
-        # ============================================
-        # 13. قواعد التحليل المتقدمة V7.5 FINAL (الموجودة سابقاً)
-        # ============================================
+        
+        GENERATION_CONFIG = {
+            "max_tokens": 1000,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "random_seed": 42
+        }
+        
+        previous_context_info = ""
+        
         three_points_rule = """
 【التعديل 1 - قاعدة الاختراق الرقمي الفوري (الـ 3 نقاط)】
 - المنطق: إذا تجاوز السعر مستوى المقاومة/الدعم بـ ≥ 3 نقاط وكان الجسم ممتلئاً بنسبة > 70%، الدخول إلزامي وفوري مع الاتجاه.
@@ -4042,14 +3190,439 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 {decision_matrix_v7_5}
 """
 
-        # ============================================
-        # 14. البرومبت المتكامل النهائي (محدث مع جميع التحليلات)
-        # ============================================
-        MAIN_PROMPT = f"""
-أنت محلل فني خبير متكامل تجمع كل مدارس التحليل المتقدمة:
-SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS + VOLUME PROFILE + MARKET PSYCHOLOGY + CANDLESTICK PATTERNS + LIQUIDITY ANALYSIS + TREND ANALYSIS + GAP ANALYSIS + Liquidity Swing + MARKET STRUCTURE + SUPPLY/DEMAND + Ultra Market Structure + MARKET CYCLES.
+        liquidity_trap_alert_v7_5 = """
+🚨 **⚠️ تنبيه عالي الخطورة - V7.5 FINAL النهائي ⚠️**
 
-أنت محلل فني خبير متخصص في تحليل الهيكل الفائق للسوق (Ultra Market Structure) وتأرجحات السيولة (Liquidity Swing) وفق منهجية ICT 2024 والمفاهيم المؤسسية المتقدمة.
+━━━━━━━━━━━━━━━━━━━━━━━
+**الموقع:** قمة تاريخية (Historical Peak) 🏔️
+**الحالة:** تم رصد "فخ سيولة" - اختراق كاذب.
+
+**التحليل الرقمي الدقيق:**
+• **المسافة من القمة:** +{distance_points} نقطة (فشل شرط الـ 5 نقاط ❌)
+• **حجم الشمعة:** {volume_ratio}x من المتوسط (أقل من 1.5x ❌)
+• **شكل الشمعة:** {candle_shape_description} (رفض سعري ❌)
+• **نسبة الجسم:** {body_percentage}% (أقل من 90% للثالوث المؤسسي ❌)
+• **الفتيلة العلوية:** {wick_percentage}% (تأكيد رفض سعري)
+
+🛡️ **القرار الدفاعي الإلزامي:**
+إلغاء فكرة الشراء فوراً / بيع انعكاسي 🔴. السعر الآن يسحب السيولة لضرب أوامر الوقف قبل الانعكاس.
+
+🔄 **الإجراء القادم:**
+انتظر إغلاق الشمعة الحالية؛ إذا عادت تحت القمة، ادخل بيع 🔴 فوراً بمجرد لمس مستوى القمة - 2 نقطة.
+
+📊 **نقطة الدخول المقترحة للبيع (انعكاس):**
+• **الدخول:** {peak_level - 2} (بعد تأكيد الارتداد)
+• **الهدف 1:** {peak_level - 5} (أول سيولة داخلية)
+• **الهدف 2:** {peak_level - 10} (منطقة طلب)
+• **وقف الخسارة:** {peak_level + 3} (فوق القمة بـ 3 نقاط)
+• **نسبة المخاطرة/العائد:** 1:3 على الأقل
+━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+        ENTRY_POINT_ANALYSIS = """
+🔍 **تحليل نقطة الدخول:**
+
+[1] أنواع الدخول:
+• بعد الكسر: انتظر إغلاق شمعة فوق/تحت المستوى + X نقطة
+• إعادة اختبار: بعد الكسر، انتظر عودة السعر للمستوى
+• مع الزخم: شمعة قوية (جسم > X%) + حجم كبير (> Xx)
+
+[2] مناطق ممنوعة:
+• القمم/القيعان بدون تأكيد
+• قبل الأخبار (X دقيقة)
+• نهاية الشمعة (آخر X ثانية)
+
+[3] معايير القرار:
+✅ ادخل إذا: تأكيد + RR > X + اتجاه واضح
+❌ لا تدخل إذا: شك + RR < X + خبر قريب
+
+[4] حسب السوق:
+• فوركس: X نقاط
+• كريبتو: X نقاط
+• أسهم: X%
+• مؤشرات: X نقاط
+• سلع: X نقاط
+• OTC: X نقاط
+"""
+        
+        MAIN_PROMPT = f"""
+أنت محلل فني خبير متكامل في SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS + VOLUME PROFILE + MARKET PSYCHOLOGY + CANDLESTICK PATTERNS + LIQUIDITY ANALYSIS + TREND ANALYSIS + GAP ANALYSIS + Liquidity Swing + MARKET STRUCTURE + SUPPLY/DEMAND + Ultra Market Structure + MARKET CYCLES.
+مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات مع تطبيق قوانين السيادة الجديدة (V7.5 FINAL ELITE SNIPER MODE - الحل النهائي).
+
+🎯 **التوجيه الأساسي: التركيز الكامل على استخراج البيانات وتحليل الصورة**
+أنت ملزم بالتركيز التام على الصورة المرفقة فقط. يجب أن تستخرج كل البيانات والأرقام من الصورة بكامل قدراتك البصرية. لا تتشتت بأي معلومات خارجية أو افتراضات. كل ما تحتاجه موجود في الصورة:
+
+1. **استخراج الأسعار بدقة مطلقة:** اقرأ الأسعار من المحور اليميني (Y-axis) بدقة بكسلية
+2. **تحديد الزمن الحالي:** ابحث عن ساعة المنصة في الزاوية اليسرى/اليمنى السفلية - **هذا هو المرجع الوحيد لدقائق الغدر**
+3. **تحليل الشموع:** افحص آخر 5-7 شموع (الأجسام، الذيول، الألوان، الأحجام)
+4. **رسم المستويات:** حدد الدعم/المقاومة، الفجوات، مناطق السيولة، القمم والقيعان التاريخية
+5. **التطبيق العملي:** طبق جميع القواعد أدناه على البيانات المستخرجة من الصورة فقط
+
+{previous_context_info}
+{ENTRY_POINT_ANALYSIS}
+
+{all_updates_section}
+
+⚠️ **قاعدة الجوكر المنضبط (Disciplined Joker) V7.5 FINAL:**
+- لا يُسمح بتجاهل الوقت (الجوكر) إلا إذا كانت الشمعة تخترق "مستوى مغلق" (Closed Level) وبجسم شمعة ممتلئ بنسبة >90%.
+- يجب أن يتجاوز السعر المستوى المخترق بـ 5 نقاط على الأقل للقمم التاريخية (تأكيد الاندفاع المؤسسي).
+- إذا كان الاختراق لقمة تاريخية، انتظر 'الثالوث المؤسسي' (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%). إذا لم يتحقق الشرط، اعتبره سحب سيولة (Liquidity Grab) وألغِ إشارة الجوكر فوراً مع تحويل للانعكاس.
+- عندما تكون المعطيات المرسلة لك هي market_mode: AGGRESSIVE، ولديك momentum_boost: True، يُسمح لك بتجاهل تحذير "الوقت المتبقي" وفق الشروط أعلاه، ولكن لا يمكنك تجاهل "فلتر القمم التاريخية" أبداً.
+
+🚨 **نظام الأولوية النهائي V7.5 FINAL:**
+
+【قاعدة المسح الاستبعادي الكامل - تطبق بالترتيب】
+يجب تطبيق هذا المسح بالترتيب قبل أي قرار. **ابحث عن أي سبب للمنع أولاً:**
+
+🛑 **الحاجز 1: فلتر القمم التاريخية (5 نقاط)**
+- إذا كان السعر ضمن 5 نقاط من قمة تاريخية:
+  * فحص الثالوث المؤسسي: (حجم ≥ 1.5x + جسم > 90% + FVG + مسافة ≥ 5 نقاط)
+  * إذا لم يتحقق الثالوث ← القرار: فخ سيولة - بيع انعكاسي 🔴 (نسبة نجاح 95%)
+  * إذا تحقق الثالوث بالكامل ← القرار: كسر هيكلي - شراء 💥🟢 (نسبة نجاح 98%)
+
+🛑 **الحاجز 2: قانون الابتلاع (50% Kill Switch)**
+- إذا ظهرت شمعة عكسية تبتلع ≥ 50% من الشمعة السابقة:
+  * القرار: انعكاس فوري 🔄 (نسبة نجاح 85-90%)
+  * إلغاء أي صفقة مع الاتجاه القديم
+
+🛑 **الحاجز 3: فلتر إجهاد الموجة (Exhaustion)**
+- إذا كانت الشمعة الحالية > 3 أضعاف متوسط آخر 5 شموع:
+  * القرار: احتفاظ 🟡 - انتظر تصحيح (نسبة نجاح 80%)
+
+🛑 **الحاجز 4: فلتر الرفض السعري (Price Rejection)**
+- إذا كانت نسبة الذيل > 60% من الشمعة:
+  * القرار: احتفاظ 🟡 - انتظر تأكيد (نسبة نجاح 85%)
+
+🛑 **الحاجز 5: نافذة التنفيذ الذهبية (Golden Window)**
+- فريمات الثواني: الدخول مسموح فقط بين الثانية 5 والثانية 25
+- فريمات الدقائق: الدخول مسموح فقط بين الثانية 10 والثانية 40
+- خارج هذه النوافذ: احتفاظ إلزامي 🟡 (نسبة نجاح 70%)
+
+🛑 **الحاجز 6: دقائق الغدر (Trap Minutes)**
+- إذا كنت في دقيقة غدر (14,29,44,59) مع <15 ثانية متبقية وبدون زخم كافي:
+  * القرار: احتفاظ صارم 🟡 (نسبة نجاح 90%)
+
+✅ **إذا اجتاز السعر جميع الحواجز الستة:**
+- دخول مع الاتجاه بحجم قوي 🟢/🔴 (نسبة نجاح 90-98%)
+
+【معادلة ترجيح النجاح المتقدمة V7.5 FINAL】
+احسب نسبة نجاح كل صفقة بناءً على الأهمية المعدلة:
+• **35% لمسافة الأمان عن القمم والقيعان** (الأولوية القصوى)
+• **25% لقوة الحجم المؤسسي (Breakout Force)** (سيولة الحيتان)
+• **20% لإمكانية الانعكاس المحتمل** (جديد - يعطي وزن للصفقات الانعكاسية)
+• **10% لاتجاه الفريم الأكبر (Higher Timeframe)** (توافق الإطارات)
+• **10% لشكل الشمعة الحالية** (الزخم البصري)
+
+🎯 **القاعدة الذهبية V7.5 FINAL:**
+يُمنع إصدار أي إشارة شراء (Buy) إذا كان السعر ضمن نطاق 5 نقاط من قمة تاريخية، حتى لو كانت الشمعة خضراء قوية. الأولوية هنا هي لصفقة 'الارتداد العكسي' (Reversal) لأنها الأكثر نجاحاً إحصائياً في هذه المناطق. لا تعتمد الزخم كدليل وحيد؛ المسافة الرقمية (5 نقاط) والحجم هما القادة.
+
+🚨 **تنبيه فخ السيولة (Liquidity Trap Alert) V7.5 FINAL - يجب تفعيله فوراً عند اكتشاف الحالات التالية:**
+
+إذا اكتشفت أن السعر يحاول اختراق قمة تاريخية ولكن:
+1. **المسافة من القمة:** أقل من 5 نقاط (أي +1 إلى +4.9 نقاط)
+2. **حجم الشمعة:** أقل من 1.5x من المتوسط
+3. **شكل الشمعة:** وجود فتيلة علوية طويلة (>40%) أو جسم ضعيف (<50%)
+
+قم فوراً بإصدار التنبيه التالي في بداية التحليل:
+
+🚨 **⚠️ تنبيه عالي الخطورة - V7.5 FINAL النهائي ⚠️**
+
+━━━━━━━━━━━━━━━━━━━━━━
+**الموقع:** قمة تاريخية (Historical Peak) 🏔️
+**الحالة:** تم رصد "فخ سيولة" - اختراق كاذب.
+
+**التحليل الرقمي:**
+• **المسافة من القمة:** +[X.X] نقطة (فشل شرط الـ 5 نقاط ❌)
+• **حجم الشمعة:** [X.X]x (أقل من 1.5x ❌)
+• **شكل الشمعة:** [فتيلة علوية طويلة / جسم ضعيف] (رفض سعري ❌)
+• **نسبة الجسم:** [XX]% (أقل من 90% ❌)
+
+🛡️ **القرار الدفاعي:**
+إلغاء فكرة الشراء / بيع فوراً. السعر الآن يسحب السيولة لضرب أوامر الوقف.
+
+🔄 **الإجراء القادم:**
+انتظر إغلاق الشمعة الحالية؛ إذا عادت تحت القمة، ادخل بيع 🔴 فوراً بمجرد لمس مستوى الـ -2 نقطة تحت القمة.
+
+📊 **نقطة الدخول المقترحة للبيع:**
+• الدخول: [القمة - 2] (بعد تأكيد الارتداد)
+• الهدف 1: [القمة - 5] (أول سيولة داخلية)
+• الهدف 2: [القمة - 10] (منطقة طلب)
+• وقف الخسارة: [القمة + 3] (فوق القمة)
+━━━━━━━━━━━━━━━━━━━━━━
+
+📜 **قواعد السيادة العشر المعدلة (The 10 Supremacy Rules) - V7.5 FINAL:**
+
+1. **الزخم المشروط مع فلتر القمم (Conditional Momentum with Peak Filter):**
+   إذا كانت آخر 3 شموع ممتلئة بنسبة >85%، بشرط:
+   - عدم وجود قمة/قاع سيولة (Liquidity Pool) قريب جداً (أقل من 5 نقاط)
+   - عدم ظهور أي شمعة رفض (Wick) تتجاوز 30% من الشمعة السابقة
+   - السعر ليس عند قمة تاريخية أو تجاوزها بأقل من 5 نقاط مع "الثالوث المؤسسي"
+   إذا ظهرت شمعة عكسية تبتلع 50% من شمعة الزخم، يُلغى 'مود القطار' فوراً ويتحول التحليل لنظام الانعكاس (SMC Reversal).
+
+2. **بروتوكول الانفجار السعري المشروط مع مسافة الأمان:**
+   لا ترفض أي صفقة في الثواني الأخيرة (55-59) إذا كان الزخم مفرطاً (>90%)، بشرط:
+   - اختراق مستوى مغلق حقيقي
+   - تجاوز المستوى بـ 5 نقاط على الأقل للقمم التاريخية (مع الثالوث المؤسسي)
+
+3. **فحص الذيول (The 15/60 Rule) مع تعديل V7.5:**
+   - أي ذيل يمثل أقل من 15% من حجم الشمعة يُعتبر "قوة دافعة" (Marubozu Mode).
+   - أي ذيل يمثل أكثر من 60% من حجم الشمعة هو "رفض سعري" قطعي؛ امنع الصفقة فوراً (احتفاظ 🟡).
+   - أي ذيل يمثل 30-60% عند قمة تاريخية = فخ سيولة محتمل (انعكاس 🔄)
+
+4. **مغناطيس الأرقام المستديرة (Round Numbers) مع فلتر الأمان:**
+   الأرقام التي تنتهي بـ (.000) أو (.500) هي أهداف سيولة. إذا كان السعر قريباً منها والزخم صاعد، استهدف الرقم ولا تعتبره مقاومة. للدخول مع الاتجاه، انتظر تجاوز الرقم بـ 3 نقاط على الأقل (أو 5 نقاط مع الثالوث المؤسسي للقمم).
+
+5. **هندسة السيولة (SMC/ICT) مع الأولوية للانعكاس:**
+   ابحث عن Liquidity Sweep (ضرب قمة/قاع سابق). إذا سحب السعر السيولة (لمس القمة وارتد) ثم أغلق داخل النطاق، فالدخول يكون انعكاسياً (Reversal) وليس استمرارياً.
+
+6. **معامل الفجوات (FVG/Imbalance) مع تأكيد الكسر:**
+   تأكد من وجود فجوات سعرية غير مملوءة. السعر ينجذب دائماً لملء الـ Imbalance قبل تغيير الاتجاه. لا تدخل عند القمة، انتظر عودة السعر لملء 50% من الفجوة. وجود FVG خلف الكسر هو شرط أساسي للثالوث المؤسسي.
+
+7. **فلتر سحب السيولة (Liquidity Sweep Filter) مع قاعدة 5 نقاط:**
+   قبل تأكيد أي قرار شراء عند القمة، ابحث عن قمة تاريخية قريبة. إذا لمسها السعر وارتد بفتيلة أو ظهرت شمعة حمراء سريعة، يتم إلغاء الشراء فوراً والتحول للبيع (انعكاس). إذا كان الاختراق بـ ≥5 نقاط مع الثالوث المؤسسي، يتم تأكيد الشراء.
+
+8. **قانون الابتلاع القاتل (The Kill Switch - Rule 8) مع التفعيل الإلزامي:**
+   بمجرد ظهور شمعة عكسية تبتلع 50% من الشمعة الاندفاعية السابقة، يُعتبر الزخم "منتهياً" أو "خداعياً" ويمنع الدخول مع الاتجاه القديم. السعر الآن في مرحلة تغيير هيكل (Market Structure Shift). هذا الشرط إلزامي وليس اختيارياً.
+
+9. **مغناطيس الفجوات السعرية (FVG Magnet) مع احترام السيولة:**
+   إذا ترك السعر خلفه فجوة سعرية (Imbalance) تزيد عن 5 نقاط:
+   - يرفض البوت الدخول عند القمة أبداً
+   - ينتظر عودة السعر لملء 50% على الأقل من الفجوة (منطقة الخصم) قبل إصدار أي توصية استمرار
+   - إذا كسر السعر نقطة المنشأ، فالصفقة ملغاة
+
+10. **التقييم النهائي المرجح مع الأولوية للانعكاس:**
+    تذكر دائماً: "السيولة تسبق الزخم".
+    - إذا رأيت زخماً قوياً يقترب من قمة سيولة، فكر في "الارتداد" أولاً
+    - لا تدخل صفقة استمرارية إلا إذا أغلق السعر "فوق" القمة المخترقة بشمعتين على الأقل (تأكيد الكسر) مع "الثالوث المؤسسي"
+    - إذا كان الزخم مفرطاً (>90%) ولكن الذيول طويلة، فهذا دليل على "خروج المؤسسات" وليس دخولها
+    - الأولوية الرقمية: ابحث عن سبب للانعكاس قبل البحث عن سبب للاستمرار
+
+⚠️ **نظام حساب الثقة المتقدم (Confidence Score Calculation) V7.5 FINAL**
+  
+  📊 **معادلة حساب الثقة النهائية (V7.5 FINAL):**
+  
+  الثقة = (مسافة_الأمان × 35%) + (قوة_الحجم × 25%) + (إمكانية_الانعكاس × 20%) + (توافق_الإطارات × 10%) + (شكل_الشمعة × 10%)
+  
+  **معايير التقييم المعدلة:**
+  
+  1. **مسافة الأمان (35 نقطة كحد أقصى) - الأولوية القصوى:**
+     - 30-35: مسافة آمنة > 10 نقاط من القمم/القيعان
+     - 20-29: مسافة آمنة 5-10 نقاط
+     - 10-19: مسافة متوسطة 3-5 نقاط
+     - 5-9: مسافة خطرة < 3 نقاط
+     - 0: عند القمة/القاع مباشرة
+  
+  2. **قوة الحجم (25 نقطة كحد أقصى):**
+     - 20-25: حجم ≥ 2x المتوسط (قوة مؤسسية عالية)
+     - 15-19: حجم ≥ 1.5x المتوسط (قوة مؤسسية جيدة)
+     - 10-14: حجم ≥ 1.2x المتوسط (قوة متوسطة)
+     - 5-9: حجم ≥ 0.8x المتوسط (قوة ضعيفة)
+     - 0: حجم < 0.5x المتوسط (بدون سيولة)
+  
+  3. **إمكانية الانعكاس (20 نقطة كحد أقصى) - معيار جديد:**
+     - 15-20: دلائل قوية على انعكاس (ذيل طويل عند قمة + ابتلاع)
+     - 10-14: دلائل متوسطة (لمس قمة + ارتداد)
+     - 5-9: دلائل ضعيفة (اقتراب من قمة)
+     - 0: لا توجد دلائل انعكاس
+  
+  4. **توافق الإطارات (10 نقطة كحد أقصى):**
+     - 10: توافق كامل (H4, H1, M15, M5 بنفس الاتجاه)
+     - 7: توافق جيد (3 من 4 إطارات)
+     - 5: توافق متوسط (2 من 4 إطارات)
+     - 3: توافق ضعيف (إطار واحد فقط)
+     - 0: تضارب كامل
+  
+  5. **شكل الشمعة (10 نقطة كحد أقصى):**
+     - 9-10: ماروبوزو > 90%
+     - 7-8: جسم قوي 70-90%
+     - 5-6: جسم متوسط 50-70%
+     - 3-4: جسم ضعيف 30-50%
+     - 0-2: دوجي أو شمعة غير واضحة
+  
+  📈 **مستويات الثقة ومعناها (V7.5 FINAL):**
+  
+  - **💥 90-100%: ثقة عالية جداً** - دخول بقوة (كسر هيكلي حقيقي)
+  - **🔥 75-89%: ثقة عالية** - دخول بحجم جيد (زخم مع تأكيد)
+  - **⚡ 60-74%: ثقة متوسطة** - دخول بحذر أو احتفاظ
+  - **🔄 50-59%: ثقة انعكاس** - فرصة انعكاس جيدة
+  - **❄️ 40-49%: ثقة منخفضة** - احتفاظ إلزامي
+  - **🚫 أقل من 40%: لا توجد ثقة** - خطر مرتفع
+
+[1] تنبيه الربط البرمجي الإلزامي - المعطيات المستلمة من المستخدم
+
+📌 **المعطيات الأساسية:**
+• إطار الشموع: {candle}
+• فريم التحقق: {verification_timeframe}
+• استراتيجية التداول: {trading_strategy}
+• جلسة السوق: {current_session['name']} (UTC)
+• حالة السيولة: {current_session['volatility']}
+• تصنيف الفريم: {candle_category}
+• حجم الصفقة: {position_sizing}
+• نمط السوق: {market_mode}
+• وصف التوقيت: {time_status}
+• الوضع الديناميكي: {"تجاهل القيود الزمنية مع الالتزام بفلتر القمم" if momentum_boost else "التزم بالقواعد القياسية"}
+
+📌 **تأثير الأخبار والتوقيت:**
+• تأثير الأخبار: {news_impact} (معامل ×{news_risk_multiplier})
+• تحذير الأخبار: {news_warning if news_warning else "✅ الوضع آمن"}
+• منطقة القتل السعري: {kill_zone_status}
+• حالة السوق: {last_minute_status}
+• حالة إغلاق الشمعة: {candle_closing_status}
+• الوقت المتبقي للإغلاق: {seconds_remaining} ثانية
+• الثواني المنقضية: {60 - seconds_remaining} ثانية
+• توقيت التحليل: {current_time.strftime('%Y-%m-%d %H:%M:%S')} (UTC)
+
+📌 **سياق التحليل السابق:**
+• {"✅ متوفر" if previous_context_info else "❌ غير متوفر"}
+
+✅ **جميع المتغيرات مستلمة ومعرّفة بشكل صحيح.**
+
+[2] نظام الاستخراج البصري المتقدم (مع تركيز على القمم التاريخية)
+
+🔍 **المرحلة 1: مسح الصورة الشامل**
+1. ابدأ بمسح شامل للصورة من الأعلى إلى الأسفل، ومن اليسار إلى اليمين
+2. حدد العناصر الأساسية: محور الأسعار (Y-axis)، محور الزمن (X-axis)، منطقة الشموع، ساعة المنصة
+3. استخرج البيانات التالية بالترتيب:
+   - **الأسعار:** السعر الحالي، أعلى سعر، أدنى سعر، مستويات الدعم/المقاومة، القمم التاريخية، القيعان التاريخية
+   - **الزمن:** الوقت الحالي على الشارت، إطار الشموع ({candle})
+   - **الشموع:** آخر 5 شموع (فتحة، إغلاق، أعلى، أدنى، الجسم، الذيول، الألوان)
+   - **المؤشرات:** أي مؤشرات مرئية (إن وجدت)
+
+🔍 **المرحلة 2: مصفوفة فحص المناطق الحرجة (Critical Zone Check) - موسعة:**
+   - **2.1: تحديد موقع السعر بدقة مطلقة**
+     * هل السعر عند قمة تاريخية؟ (أعلى نقطة في آخر 20-30 شمعة على الأقل)
+     * هل السعر عند قاع تاريخي؟ (أدنى نقطة في آخر 20-30 شمعة على الأقل)
+     * هل السعر ضمن 5 نقاط من قمة تاريخية؟ (منطقة خطر)
+     * هل السعر ضمن 5 نقاط من قاع تاريخي؟ (منطقة خطر)
+     * هل السعر يلامس مستوى دعم أو مقاومة رئيسي؟
+     * هل السعر عند رقم مستدير (.000, .500)؟
+   
+   - **2.2: تحليل سلوك السعر حول المستوى بدقة**
+     * كم نقطة ابتعد السعر عن المستوى؟ (أقل من 3 نقاط = منطقة حرجة، أقل من 5 نقاط للقمم التاريخية = منطقة خطر)
+     * ما هو سلوك الشمعة الحالية على المستوى؟ (اختراق، لمس وارتداد، تذبذب)
+     * هل يوجد ذيل علوي طويل (>40%) يشير إلى رفض سعري؟
+     * هل يوجد ابتلاع عكسي (50%) للشمعة السابقة؟
+   
+   - **2.3: تطبيق منطق الاحتمالات المزدوجة مع V7.5 FINAL**
+     * في المنطقة الحرجة، للسعر احتمالان فقط: إما **كسر هيكلي حقيقي** (حجم ≥ 1.5x + استقرار ≥ 5 نقاط + FVG + ماروبوزو > 90%) أو **فخ وانعكاس**.
+     * لا يوجد خيار "الانتظار" في المناطق الحرجة؛ القرار إما كسر هيكلي أو انعكاس بناءً على سلوك الـ 5 نقاط والحجم.
+     * **الأولوية للأنجح V7.5:** في المنطقة الحرجة، ابحث عن دلائل الانعكاس أولاً (ذيل طويل، ابتلاع، ارتداد)، ثم تحقق من الكسر.
+
+🔍 **المرحلة 3: التحليل الاستبعادي البصري (مع قياس دقيق)**
+1. **الوصف الإلزامي قبل التحليل:** ابدأ بوصف الشموع الثلاث الأخيرة بدقة:
+   • **الشمعة -1:** [اللون]، [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]، الحجم النسبي: [x من المتوسط]، الابتلاع: [نعم/لا/بكم%]
+   • **الشمعة -2:** [اللون]، [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]، الحجم النسبي: [x من المتوسط]
+   • **الشمعة -3:** [اللون]، [جسم/ذيل العلوي/ذيل السفلي]، النسبة: جسم/شمعة = [%]، الحجم النسبي: [x من المتوسط]
+
+2. **تحليل سرعة تغير الزخم (Momentum Decay) مع قياس دقيق:**
+   • قارن حجم الشمعة الحالية بمتوسط آخر 5 شموع
+   • إذا كانت الشمعة الحالية > 3 أضعاف المتوسط = "إجهاد سعري" (Exhaustion)
+   • الإجراء: لا تدخل مع الاتجاه، انتظر انعكاساً فورياً (احتفاظ 🟡)
+
+3. **تحليل الابتلاع (Engulfing Analysis) مع قياس دقيق:**
+   • قارن الشمعة الحالية بالشمعة السابقة
+   • إذا كانت شمعة حمراء ابتلعت ≥50% من الشمعة الخضراء السابقة = إشارة انعكاس بيع 🔴
+   • إذا كانت شمعة خضراء ابتلعت ≥50% من الشمعة الحمراء السابقة = إشارة انعكاس شراء 🟢
+
+🔍 **المرحلة 4: الفحص الرياضي الدقيق مع معامل الانزلاق السعري**
+   • **السعر الحالي الملاحظ:** [قراءة مباشرة من المحور Y]
+   • **سعر القمة التاريخية:** [قراءة مباشرة من أعلى نقطة]
+   • **المسافة إلى القمة التاريخية:** |السعر الحالي - القمة| = [نقاط] - هل هي ≥ 5 نقاط؟
+   • **حجم الشمعة الحالية:** [الحجم] - هل هو ≥ 1.5x من متوسط آخر 3 شموع؟
+   • **نسبة جسم الشمعة:** [جسم/إجمالي الشمعة] - هل هو ≥ 90% للثالوث المؤسسي؟
+   • **نسبة الذيل العلوي:** [ذيل علوي/إجمالي الشمعة] - هل هو > 40% (رفض سعري)؟
+   • **نسبة الابتلاع:** [حجم الشمعة العكسية / حجم الشمعة السابقة] - هل هو ≥ 50%؟
+
+🔍 **المرحلة 5: كشف التناقضات البصرية ودقة القراءة**
+   • إذا كانت المسافة المحسوبة ≠ المسافة المقدرة بالعين → أعد المسح
+   • تأكد من تطابق كل ذيل مع رقمه على المحور اليميني
+   • **عند قراءة المحور Y، إذا كان الرقم غير واضح، قم بمقارنة موضع الشمعة بمستويات الدعم/المقاومة المرئية الأقرب لتقدير السعر بدقة +/- 1 نقطة.**
+
+[3] بروتوكول الفشل الذاتي - توقف فوراً إذا:
+
+1. **ضوضاء بصرية عالية:** مؤشرات كثيرة تغطي الشموع وتحجب الرؤية
+2. **محور أسعار مقطوع:** عدم وضوح الأرقام على المحور Y
+3. **ساعة منصة غير واضحة:** عدم القدرة على تحديد الوقت بدقة
+4. **جودة صورة رديئة:** عدم وضوح تفاصيل الشموع
+
+✅ **الإجراء الإلزامي:** "الصورة غير صالحة للتحليل - يرجى إرسال صورة أوضح مع شموع ومحور أسعار واضحين."
+
+[4] قوانين السيادة الجديدة (V7.5 FINAL ELITE SNIPER MODE - الحل النهائي)
+
+【الرتبة 0】 بروتوكول التشريح الهيكلي والسيولة العميقة (Structural Autopsy) مع تحديث V7.5 FINAL
+   ✅ **0.1 الكسر الهيكلي الرقمي (Digital MSB) مع قياس دقيق:**
+      - قياس قوة الكسر = حجم شمعة الكسر / متوسط حجم آخر 3 شموع
+      - شرط القوة: ≥ 1.5x للكسر الحقيقي
+      - شرط الاستقرار: ≥ 5 نقاط للفريمات السريعة
+   
+   ✅ **0.2 خرائط السيولة المتدرجة مع تحديد الأولويات:**
+      - السيولة الداخلية (Internal): FVGs الصغيرة - تملأ 50% قبل الاستمرار
+      - السيولة الخارجية (External): القمم/القيعان التاريخية - تتطلب "الثالوث المؤسسي" (الأولوية القصوى)
+      - سيولة التجزئة (Retail): Equal Highs/Lows - يجب ضربها قبل الانطلاق
+   
+   ✅ **0.3 فلتر الأمان المعزز للقمم التاريخية (V7.5 FINAL):**
+      - القاعدة الصارمة: ممنوع الشراء عند القمم التاريخية إلا بشرط "الثالوث المؤسسي":
+        * شمعة ماروبوزو (Marubozu) تخترق القمة بنسبة > 90%
+        * الإغلاق فوق القمة بـ ≥ 5 نقاط (وليس 3 نقاط)
+        * حجم ≥ 1.5x من متوسط آخر 3 شموع
+        * وجود FVG خلفي يؤكد الاندفاع المؤسسي
+      - **الأولوية V7.5:** إذا لم يتحقق الثالوث، ابحث عن دلائل الانعكاس (ذيل، ابتلاع) واتخذ قرار انعكاسي فوري 🔴
+   
+   ✅ **0.4 مصفوفة القرار الهيكلي النهائية (V7.5 FINAL):**
+      - كسر حقيقي: حجم ≥ 1.5x + استقرار ≥ 5 نقاط + FVG + ماروبوزو > 90% = دخول فوري 💥 (نجاح 98%)
+      - سحب سيولة: لمس + ارتداد + عدم استقرار = انعكاس فوري 🔄 (نجاح 95%)
+      - فخ سيولة: قمة تاريخية + شمعة ضعيفة + ذيل طويل = انعكاس فوري مع تنبيه 🚨 (نجاح 95%)
+      - ابتلاع عكسي: شمعة عكسية تبتلع ≥50% = انعكاس فوري 🔄 (نجاح 85-90%)
+      - تذبذب: عدم وضوح = احتفاظ 🟡 (نجاح 70%)
+
+【الرتبة 1】 الزخم المشروط مع فلتر القمم (Conditional Momentum with Peak Filter) - V7.5 FINAL
+   ✅ إذا كانت آخر 3 شموع ممتلئة بنسبة >85%، بشرط:
+      - عدم وجود قمة/قاع سيولة (Liquidity Pool) قريب جداً (<5 نقاط) - (شرط إلزامي)
+      - عدم ظهور أي شمعة رفض (Wick) تتجاوز 30% من الشمعة السابقة
+      - السعر ليس عند قمة تاريخية أو تجاوزها بأقل من 5 نقاط مع "الثالوث المؤسسي"
+   ✅ إذا ظهرت شمعة عكسية تبتلع 50% من شمعة الزخم، يُلغى 'مود القطار' فوراً ويتحول التحليل لنظام الانعكاس (SMC Reversal) فوراً.
+
+【الرتبة 2】 السيولة المغناطيسية مع فلتر الفخاخ (Targeting with Trap Filter) - V7.5 FINAL
+   ✅ إذا كان السعر متجهاً لقمة/قاع تاريخي أو رقم مستدير
+   ✅ افحص أولاً: هل سبق للسعر أن لمس هذا المستوى وارتد؟ إذا نعم، احذره كـ "فخ سيولة" محتمل
+   ✅ يُمنع الشراء/البيع حتى يتم اختراق حقيقي (تجاوز المستوى بـ ≥ 5 نقاط مع حجم ≥ 1.5x + ماروبوزو > 90%) أو رفض بفتيلة (انعكاس)
+
+【الرتبة 3】 الهيكل الزمني مع تأكيد الاتجاه
+   ✅ يُطبق فقط في الأسواق العرضية (Side-way)
+   ✅ عندما يكون الزخم ضعيف (<50%) والسيولة غير نشطة
+
+【الرتبة 4】 الفجوات السعرية مع تأكيد الكسر
+   ✅ مناطق imbalance تُملأ بعد ضرب السيولة الخارجية
+   ✅ لا تدخل عند القمة، انتظر عودة السعر لملء 50% من الفجوة
+   ✅ وجود FVG خلف الكسر شرط أساسي للثالوث المؤسسي
+
+【الرتبة 5】 الفتيلة مع تفعيل الانعكاس
+   ✅ تُستخدم مع زخم ضعيف (أجسام <40%) وابتلاع 50% لتفعيل الانعكاس
+   ✅ عند القمم التاريخية، الفتيلة الطويلة (>40%) = انعكاس إلزامي
+
+【الرتبة 6】 المؤشرات الفنية
+   ✅ تأتي في المرتبة الأخيرة عند التعارض مع السلوك السعري
+
+[5] قانون الفتيلة العالمي المعدل (The Universal Wick Filter) V7.5 FINAL
+
+1. **الذيل الصاعد (في اتجاه التريند):** يُعتبر "استمراراً" طالما أن الشمعة التالية لم تبتلع 50% من جسم الشمعة السابقة لأسفل، بشرط ألا يكون السعر عند قمة تاريخية.
+2. **الذيل المعاكس للاتجاه:** يحتاج تأكيد بابتلاع 50%، وعند القمم التاريخية يعتبر إشارة انعكاس فورية.
+3. **تجاهل الذيول المجهرية:** أي ذيل يمثل أقل من 15% من طول الشمعة يُعامل كأنه غير موجود (Marubozu Mode).
+4. **نسبة الذيل >60%:** احتفاظ 🟡 ومراقبة فقط، وليس دخول فوري (رفض سعري قطعي).
+5. **نسبة الذيل 30-60% عند قمة تاريخية:** انعكاس فوري 🔄 (فخ سيولة).
+6. **ممنوع إصدار إشارة انعكاس بناءً على الذيل وحده تحت أي ظرف** إلا إذا كان الذيل >40% عند قمة تاريخية.
+
+[6] فلتر المسافة المرن (Dynamic Distance Filter) مع قاعدة 5 نقاط الصارمة
+
+• **القاعدة الأساسية V7.5 FINAL:** يُمنع الشراء عند القمم التاريخية إذا كانت المسافة < 5 نقاط، حتى لو كان الزخم قوياً.
+• **المعادلة:** إذا كان الهدف على بُعد 3 نقاط والزخم قوي، ادخل فقط إذا كان السعر في منتصف الطريق (وليس عند قمة).
+• **استثناء المغناطيس السعري مع قاعدة 5 نقاط:** 
+   - إذا كانت المسافة < 5 نقاط
+   - والشمعة الحالية تمتلك زخماً انفجارياً (تتحرك بسرعة عالية نحو الهدف)
+   - والهدف رقم مستدير أو مستوى سيولة واضح
+   - **بشرط صارم:** أن يكون الاختراق حقيقياً (تجاوز المستوى بـ ≥ 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية)
+   - **القرار:** دخول سريع (Scalp) للمس الهدف فقط إذا تحقق الشرط، وإلا فهو فخ سيولة.
+   
+أنت محلل فني خبير متخصص في تحليل الهيكل الفائق للسوق (Ultra Market Structure) وتأرجحات السيولة (Liquidity Swing) وفق منهجية ICT والمفاهيم المؤسسية المتقدمة.
 
 مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار تحليل هيكلي متكامل مع التركيز على المستويات المتعددة للهيكل ونقاط السيولة المتأرجحة.
 
@@ -4186,20 +3759,303 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS +
 • السيناريو البديل (Alternative Scenario): [احتمالية %] - [الوصف: ........] - [الهدف: X.XXXX] - [وقف: X.XXXX]
 • السيناريو المستبعد (Invalid Scenario): [الشرط: كسر X.XXXX]
 
+[7] قوانين إضافية متقدمة (مع تحديثات V7.5 FINAL)
 
-مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات مع تطبيق جميع الاستراتيجيات المتقدمة.
+💰 **7.1 قاعدة الأرقام المستديرة مع تأكيد الاختراق وفلتر القمم**
+• الرقم المستدير (.000/.500) = مغناطيس وليس مقاومة
+• لا تدخل عكسه إلا بعد لمسه بذيل ثم العودة (انعكاس)
+• للدخول مع الاتجاه، انتظر تجاوز الرقم بـ 3 نقاط على الأقل (أو 5 نقاط مع "الثالوث المؤسسي" للقمم)
 
-🔍 **التوجيه الأساسي: التركيز الكامل على استخراج البيانات وتحليل الصورة**
-أنت ملزم بالتركيز التام على الصورة المرفقة فقط. يجب أن تستخرج كل البيانات والأرقام من الصورة بكامل قدراتك البصرية.
+🚀 **7.2 الزخم الثلاثي المشروط مع فلتر القمم**
+• 3 شموع متتالية بنفس اللون بأجسام >80% = استمرار فقط
+• بشرط إلزامي: عدم وجود قمة سيولة قريبة (<5 نقاط)
+• إذا كان هناك قمة قريبة، ابحث عن انعكاس بدلاً من استمرار
 
-📊 **البيانات الأساسية:**
-• إطار الشموع: {candle}
-• فريم التحقق: {verification_timeframe}
-• استراتيجية التداول: {trading_strategy}
-• الوقت الحالي (UTC): {current_time.strftime('%H:%M:%S')}
-• جلسة السوق الحالية: {current_session['name']}
-• حالة السيولة: {current_session['volatility']}
-• الوقت المتبقي: {seconds_remaining} ثانية
+💪 **7.3 سيادة الجسم - Marubozu Supremacy مع شرط الموقع**
+• إذا كان الجسم >90% والذيل <20% = الذيل "جس نبض" وليس انعكاساً
+• يُلغى قانون الفتيلة في هذه الحالة
+• بشرط أن يكون الاختراق لمستوى مغلق وليس عند قمة تاريخية (إلا مع الثالوث المؤسسي)
+
+🔄 **7.4 قاعدة معالجة الشموع الانعكاسية الصغيرة (Micro-Rejection) مع تفعيل الانعكاس**
+• إذا ظهرت شمعة عكس الاتجاه حجمها <25% من الشمعة الاندفاعية السابقة → تُهمل تماماً (تجميع سيولة)
+• إذا ظهرت شمعة عكس الاتجاه حجمها >50% من الشمعة الاندفاعية السابقة → انعكاس فوري
+
+🏢 **7.5 الاندفاع المؤسسي مع قياس القوة**
+• تغطية هبوط 10 دقائق بصعود دقيقتين = اندفاع - يُمنع البيع
+• يجب أن يكون الحجم ≥ 1.5x لتأكيد الاندفاع المؤسسي
+
+⚡ **7.6 قانون اختراق المقاومة الصامت مع التأكيد وفلتر القمم**
+• إذا اقترب السعر من منطقة عرض (Supply) أو رقم مستدير بشموع خضراء متزايدة الحجم
+• يُحظر توقع الارتداد تماماً إذا كان السعر في منتصف الطريق
+• **الإجراء:** تحول التوصية إلى "شراء" مع كسر المستوى بشرط تجاوزه بـ ≥ 3 نقاط (أو ≥ 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية)
+
+🧲 **7.7 قانون الفجوة المغناطيسية (FVG Magnet) مع تأكيد الكسر**
+• أي حركة انفجارية تترك فجوة (Imbalance) > 5 نقاط، تجعل الشراء عند القمة "مخاطرة انتحارية"
+• انتظر عودة السعر لمنطقة 'الخصم' (50% من الفجوة) قبل أي توصية استمرار
+• لا تشتري أبداً عند رأس الانفجار
+
+🚀 **7.8 قاعدة السمكة الكبيرة (Higher Timeframe Alignment) مع تأكيد الاتجاه**
+• قبل إصدار أي إشارة على فريم الثواني (S5, S10, S15)، يجب النظر إلى هيكل فريم الدقيقة (M1) أو (M5)
+• إذا كان الفريم الكبير صاعداً، تُقبل صفقات الشراء بشرط عدم وجود قمة قريبة (<5 نقاط)
+• إذا كان الفريم الكبير هابطاً، يُمنع الشراء تماماً عند القمم ويُستبدل ببحث فوري عن "إشارة انعكاس"
+
+🔄 **7.9 مصفوفة القرار القطعي النهائية (إلغاء الاحتفاظ 🟡) V7.5 FINAL**
+• الحالة (أ): السعر يلمس المقاومة + اندفاع سريع (+3 نقاط) + حجم ≥ 1.3x + لا توجد قمة قريبة = شراء فوري 🟢 (نجاح 90%)
+• الحالة (ب): السعر يلمس المقاومة + ظهور فتيلة علوية بـ 2 نقطة = بيع فوري (انعكاس) 🔴 (نجاح 95%)
+• الحالة (ج): السعر عند قمة تاريخية + "الثالوث المؤسسي" (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%) = كسر هيكلي - شراء 💥🟢 (نجاح 98%)
+• الحالة (د): السعر عند قمة تاريخية + شمعة ضعيفة (<50%) أو ذيل طويل (>40%) = بيع "فخ سيولة" 🔴 (نجاح 95%)
+
+⚡ **7.10 تحليل سرعة تغير الزخم (Momentum Decay) مع تحديث V7.5 FINAL**
+• إذا كانت الشمعة الحالية أكبر من متوسط حجم آخر 5 شموع بـ 3 أضعاف (300%) = حالة "إجهاد" (Exhaustion)
+• الإجراء: لا تدخل مع الاتجاه؛ احتفاظ 🟡 وانتظر ظهور إشارة "انعكاس فوري 🔄"
+
+⏰ **7.11 بروتوكول "الجوكر الهجومي" (تجاوز دقائق الغدر) مع نافذة التنفيذ الذهبية**
+• في الدقائق (14, 29, 44, 59)، إذا تبقى أقل من 15 ثانية
+• مسافة الأمان: {safety_buffer} نقاط (حسب وضع السوق)
+• نافذة التنفيذ الذهبية: يُسمح بالدخول فقط بين الثانية 5 والثانية 25 (لفريمات الثواني) أو 10-40 (لفريمات الدقائق)
+• القرار: مسموح بالدخول فقط إذا كان السعر في حالة "اندفاع حر" (تجاوز آخر مستوى بـ {safety_buffer} نقاط، أو ≥ 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية) **وكان في نافذة التنفيذ الذهبية**
+• المنطق: الاندفاع في آخر ثوانٍ يعني أن الشمعة القادمة ستفتح بـ "Gap" أو استمرار قوي، لكن الدخول خارج النافذة الذهبية خطير
+
+🔴 **7.12 منطق الاحتمالات المزدوجة (Double Probability Logic) مع تحديث V7.5 FINAL:**
+   🔴 **سيناريو الانفجار (Breakout):**
+   - إذا كسر السعر القاع بـ 5 نقاط كاملة + جسم شمعة > 90% + حجم ≥ 1.5x + FVG = كسر هيكلي - بيع 💥🔴 (نجاح 98%)
+   - الهدف: ملاحقة الزخم المؤسسي.
+
+   🟢 **سيناريو الفخ والانعكاس (Liquidity Trap):**
+   - إذا لمس السعر القاع وارتد بـ 2 نقطة للأعلى + أو ظهر ذيل طويل + أو ابتلعت الشمعة التالية 50% من الهابطة = شراء انعكاسي فوري 🔄🟢 (نجاح 95%)
+   - الهدف: ضرب ستوبات البائعين الضعفاء.
+
+🛡️ **7.13 فلتر الأمان الرقمي النهائي (تعديل الـ 5 نقاط V7.5 FINAL):**
+   - **القاعدة الصارمة:** يُمنع الشراء عند منطقة القمة إلا إذا كان السعر قد تجاوز القمة فعلياً بمسافة أمان (5 نقاط) مع حجم ≥ 1.5x + FVG. 
+   - إذا كان السعر 'تحت' القمة مباشرة، فكر في البيع الانعكاسي أولاً لأن نسبة نجاحه عند القمم تصل لـ 95%.
+
+🚨 **7.14 تنبيه فخ السيولة (Liquidity Trap Alert) V7.5 FINAL:**
+   - إذا اكتشف البوت أن السعر يحاول اختراق قمة تاريخية ولكن:
+     * المسافة من القمة: أقل من 5 نقاط (أي +1 إلى +4.9 نقاط)
+     * حجم الشمعة: أقل من 1.5x من المتوسط
+     * شكل الشمعة: وجود فتيلة علوية طويلة (>40%) أو جسم ضعيف (<50%)
+   - **الإجراء:** إصدار تنبيه فوري في بداية التحليل وإلغاء أي فكرة شراء، مع اقتراح دخول بيع انعكاسي بعد الارتداد (نقطة الدخول: القمة - 2) (نسبة نجاح 95%).
+
+**7.15 نقطة دخول إعادة الاختبار (The Retest Entry) مع تعديل V7.5 FINAL:**
+   - لا تدخل مع رأس الشمعة المنطلقة؛ نقطة الدخول المثالية هي ملامسة السعر لخط القمة المكسور مرة أخرى (القبلة الأخيرة).
+   - الهدف: الدخول من أدنى سعر ممكن (Zero Drawdown) وتقليل نسبة الانعكاس إلى الصفر.
+   - تطبق هذه القاعدة بعد تأكيد الكسر الحقيقي بـ 5 نقاط والثالوث المؤسسي.
+
+[8] فلاتر الرفض الإلزامية وأسباب المنع التسعة (V7.5 FINAL)
+
+💰 **8.1 فلتر المسافة الحقيقية مع معامل الانزلاق وقاعدة 5 نقاط**
+• المسافة الصافية = المسافة - (السبريد × 2)
+• المسافة الصافية < 3 نقاط = احتفاظ 🟡 (إلا مع استثناء المغناطيس السعري)
+• للقمم التاريخية: المسافة الصافية < 5 نقاط = احتفاظ 🟡 (إلا مع "الثالوث المؤسسي")
+
+📰 **8.2 فلتر الأخبار مع قياس الإجهاد**
+• شمعة حجمها >300% من المتوسط = احتفاظ 🟡 لمدة 3 شموع (إجهاد سعري)
+• ذيول الأخبار لا تُحتسب في التحليل
+
+⚠️ **8.3 قائمة أسباب المنع التسعة النهائية (إذا وُجد سبب واحد → احتفاظ أو انعكاس)**
+1. **قمة تاريخية بدون ثالوث مؤسسي:** السعر ضمن 5 نقاط من قمة بدون شروط الكسر → انعكاس 🔄
+2. **زخم معاكس:** آخر 3 شموع >80% عكس الاتجاه
+3. **فخ سيولة محتمل:** السعر عند قمة تاريخية أو رقم مستدير مع ارتداد سابق (<5 نقاط)
+4. **اختراق غير حقيقي:** المسافة إلى الهدف >3 نقاط بدون تجاوز المستوى بـ 3 نقاط (أو 5 نقاط مع الثالوث)
+5. **دقيقة الغدر + خارج نافذة التنفيذ:** داخل (55-59) أو (25-29) أو (40-44) أو (10-14) وليس في نافذة 5-25/10-40 ثانية
+6. **زخم منهك:** الشمعة الحالية >300% من المتوسط (إجهاد سعري)
+7. **غياب التأكيد:** عدم ابتلاع 50% للانعكاس (إلا مع سيادة الجسم)
+8. **تضارب الإطارات:** تعارض {candle} مع {verification_timeframe}
+9. **أخبار نشطة:** ±30 دقيقة من خبر قوي
+
+[9] النظام الزمني الذكي مع دقائق التحول ونافذة التنفيذ الذهبية
+
+【استخراج الوقت والمسافة بدقة فائقة (بكسل by بكسل)】
+
+🔍 **تعليمات إلزامية للاستخراج الدقيق:**
+
+• **الوقت على المنصة (Time on Chart):**
+  - ابحث عن ساعة المنصة في الزاوية اليسرى السفلية أو اليمنى السفلية من الصورة.
+  - انظر إلى الرقم الموجود بجانب كلمة (Server Time) أو (UTC) أو (Local Time).
+  - **أخرج الوقت بصيغة HH:MM:SS (مثال: 14:35:22).**
+  - إذا لم تجد الثواني، أضف (00) للثواني.
+  - هذا هو **المرجع الزمني الوحيد** الذي ستعتمد عليه لحساب وقت الوصول.
+
+• **الفريم (Timeframe):**
+  - الفريم المحدد من قبل المستخدم هو: `{candle}`.
+  - قارنه مع ما تراه في الصورة (مكتوب عادة في أعلى الشارت مثل M5, M15, H1).
+  - إذا تطابق، أكده. إذا اختلف، اذكر الفريم الذي تراه في الصورة.
+
+• **المسافة إلى الهدف (Distance to Target):**
+  - **المسافة = |السعر المستهدف - السعر الحالي|**.
+  - احسب الفرق بدقة **باستخدام الأرقام الظاهرة على المحور Y**.
+  - أخرج النتيجة بصيغة: `[X.X] نقطة` (مثال: 12.5 نقطة).
+
+• **سرعة الشموع (Candle Speed):**
+  - **السرعة = إجمالي حركة السعر خلال آخر 3 شموع / 3.**
+  - احسب الفرق بين أعلى سعر وأدنى سعر لكل شمعة (High - Low).
+  - اجمع النقاط للشموع الثلاث الأخيرة ثم اقسمها على 3.
+  - أخرج النتيجة بصيغة: `[X.X] نقطة/شمعة` (مثال: 2.3 نقطة/شمعة).
+
+• **الشموع المتوقعة (Expected Candles):**
+  - **عدد الشموع = المسافة إلى الهدف / سرعة الشموع.**
+  - قم بهذه العملية الحسابية باستخدام الأرقام التي استخرجتها أعلاه.
+  - أخرج النتيجة بصيغة: `[X.X] شمعة` (مثال: 5.4 شمعة). إذا كان الرقم كسري، اكتبه كما هو.
+
+• **وقت الوصول المتوقع (Estimated Time of Arrival - ETA):**
+  - **وقت الوصول = الوقت الحالي على المنصة + (عدد الشموع المتوقعة × مدة الفريم بالدقائق).**
+  - استخدم الوقت الذي استخرجته من الصورة كنقطة بداية.
+  - استخدم مدة الفريم `{candle}` (مثلاً M1 = دقيقة، M5 = 5 دقائق، H1 = 60 دقيقة).
+  - احسب الوقت الجديد وأخرجه بصيغة HH:MM:SS (مثال: 14:40:30).
+  - **ملاحظة هامة:** إذا كانت المسافة < 5 نقاط، اكتب "فوري (Flash)" بدلاً من الوقت.
+
+📌 **النتيجة النهائية لهذا القسم:**
+• الوقت على المنصة: [الوقت المستخرج بدقة]
+• الفريم: {candle} (متطابق مع الصورة)
+• المسافة للهدف: [X.X] نقطة
+• سرعة الشموع: [X.X] نقطة/شمعة
+• الشموع المتوقعة: [X.X] شمعة
+• وقت الوصول المتوقع: [HH:MM:SS / فوري (Flash)]
+
+【معامل الانزلاق - S5, S10 فقط】
+• نقطة الدخول المعدلة = السعر الحالي + نقطة أمان في اتجاه الصفقة
+• المسافة الفعلية = المسافة - 1 نقطة
+
+⚠️ **بروتوكول دقائق التحول والنافذة الذهبية (The Pivot Minutes & Golden Window) V7.5 FINAL:**
+• في الدقائق الحرجة (14, 29, 44, 59):
+   - إذا تبقى أقل من 15 ثانية وكان السعر في اندفاع حر (تجاوز مستوى بـ {safety_buffer} نقاط، أو ≥ 5 نقاط مع "الثالوث المؤسسي" للقمم التاريخية)
+   - **يجب أن تكون الثواني المنقضية بين 5 و 25 ثانية (نافذة التنفيذ الذهبية) لفريمات الثواني**
+   - **يجب أن تكون الثواني المنقضية بين 10 و 40 ثانية (نافذة التنفيذ الذهبية) لفريمات الدقائق**
+   - الاستثناء الوحيد: اختراق حقيقي لمستوى مغلق بـ ≥ {safety_buffer} نقاط (أو ≥ 5 نقاط مع "الثالوث المؤسسي")
+• التفسير: الشمعة الجديدة في الدقائق (15, 30, 45, 00) غالباً ما تعكس الاتجاه بفتيلة طويلة
+
+[10] مفتاح الطوارئ - The Momentum Override مع فلتر القمم
+
+🚨 **【مفتاح تجاوز النظام - Momentum Override V7.5 FINAL】**
+
+إذا تحقق الشرط التالي:
+• الشمعة الحالية تخترق مستوى مغلق بـ ≥ 5 نقاط (للقمم التاريخية) أو ≥ 3 نقاط (للمستويات العادية)
+• الشمعة ممتلئة >90% (Marubozu)
+• حجم الشمعة ≥ 1.5x من متوسط آخر 3 شموع
+• ابتلعت آخر 3 شموع معاكسة في أقل من 30 ثانية
+• **السعر ليس ضمن 5 نقاط من قمة تاريخية بدون الثالوث المؤسسي**
+
+✅ **الإجراء الإلزامي:**
+1. تُلغى فوراً جميع الفلاتر التالية:
+   - دقيقة الغدر (إذا كانت نافذة التنفيذ غير مثالية)
+   - السبريد
+   - المسافة الحقيقية (إذا كانت ≥ 5 نقاط)
+   - الفتيلة (إذا كانت < 20%)
+   - أسباب المنع (عدا فحص الفخاخ)
+2. **الإجراء:** دخول فوري مع الاتجاه الانفجاري (نسبة نجاح 98%)
+
+[11] خوارزمية القرار النهائي (Final Decision Matrix) - V7.5 FINAL
+
+🚨 **منطق القرار النهائي لتغطية جميع السيناريوهات (مع بروتوكول الأولوية للانعكاس V7.5):**
+
+# الأولوية الرقمية: ابحث عن أي سبب للانعكاس أولاً، ثم ابحث عن الكسر
+if is_near_historical_peak or distance_to_peak < 8: # إذا كان السعر قريب من قمة تاريخية
+    # قياس قوة الكسر والانعكاس
+    breakout_force = candle_volume / avg_volume if avg_volume > 0 else 1.0
+    has_institutional_fvg = check_for_fvg_behind()
+    is_marubozu = candle_body_ratio > 0.9 and candle_wick_ratio < 0.2
+    has_long_wick = candle_wick_ratio > 0.4
+    has_engulfing = engulfing_ratio > 0.5
+    
+    # فحص الانعكاس أولاً (الأولوية V7.5)
+    if has_long_wick or has_engulfing or candle_body_ratio < 0.5:
+        if distance_to_peak < 5:
+            # السيناريو 1: فخ سيولة مؤكد - انعكاس فوري
+            final_decision = "LIQUIDITY TRAP - IMMEDIATE REVERSAL (SELL) 🔴"
+            confidence = 95
+            reason = f"فخ سيولة مؤكد: قمة تاريخية مع { 'ذيل طويل' if has_long_wick else 'ابتلاع عكسي' if has_engulfing else 'جسم ضعيف' }"
+            success_rate = "95%"
+            entry_type = "REVERSAL_AT_PEAK_MINUS_2"
+        else:
+            # سيناريو انعكاس عادي
+            final_decision = "REVERSAL SIGNAL - SELL 🔴"
+            confidence = 85
+            reason = f"إشارة انعكاس: { 'ذيل طويل' if has_long_wick else 'ابتلاع عكسي' }"
+            success_rate = "85%"
+            entry_type = "REVERSAL_ENTRY"
+    
+    # فحص الكسر (الثانوية)
+    elif breakout_points >= 5 and is_marubozu and breakout_force >= 1.5 and has_institutional_fvg:
+        # السيناريو 2: كسر هيكلي حقيقي مع الثالوث المؤسسي
+        final_decision = "STRUCTURAL BREAKOUT - BUY WITH MOMENTUM 💥🟢"
+        confidence = 98
+        reason = "كسر هيكلي حقيقي: ثالوث مؤسسي مكتمل (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%)"
+        success_rate = "98%"
+        entry_type = "RETEST_ENTRY"
+    
+    else:
+        # السيناريو 3: تذبذب غير واضح
+        final_decision = "HOLD 🟡 - Waiting for clear signal"
+        confidence = 60
+        reason = "تذبذب: لم تتحقق شروط الكسر أو الانعكاس بشكل قاطع"
+        success_rate = "70%"
+        entry_type = "NO_ENTRY"
+
+elif is_near_historical_bottom or distance_to_bottom < 8:
+    # نفس المنطق للقيعان (معكوس)
+    breakout_force = candle_volume / avg_volume if avg_volume > 0 else 1.0
+    has_institutional_fvg = check_for_fvg_behind()
+    is_marubozu = candle_body_ratio > 0.9 and candle_wick_ratio < 0.2
+    has_long_wick = candle_wick_ratio > 0.4
+    has_engulfing = engulfing_ratio > 0.5
+    
+    # فحص الانعكاس أولاً
+    if has_long_wick or has_engulfing or candle_body_ratio < 0.5:
+        if distance_to_bottom < 5:
+            final_decision = "LIQUIDITY TRAP - IMMEDIATE REVERSAL (BUY) 🟢"
+            confidence = 95
+            reason = f"فخ سيولة مؤكد: قاع تاريخي مع { 'ذيل طويل' if has_long_wick else 'ابتلاع عكسي' if has_engulfing else 'جسم ضعيف' }"
+            success_rate = "95%"
+            entry_type = "REVERSAL_AT_BOTTOM_PLUS_2"
+        else:
+            final_decision = "REVERSAL SIGNAL - BUY 🟢"
+            confidence = 85
+            reason = f"إشارة انعكاس: { 'ذيل طويل' if has_long_wick else 'ابتلاع عكسي' }"
+            success_rate = "85%"
+            entry_type = "REVERSAL_ENTRY"
+    
+    elif breakout_points >= 5 and is_marubozu and breakout_force >= 1.5 and has_institutional_fvg:
+        final_decision = "STRUCTURAL BREAKOUT - SELL WITH MOMENTUM 💥🔴"
+        confidence = 98
+        reason = "كسر هيكلي حقيقي: ثالوث مؤسسي مكتمل"
+        success_rate = "98%"
+        entry_type = "RETEST_ENTRY"
+    
+    else:
+        final_decision = "HOLD 🟡"
+        confidence = 60
+        reason = "تذبذب غير واضح"
+        success_rate = "70%"
+        entry_type = "NO_ENTRY"
+
+else:
+    # السعر في منتصف الطريق، اتبع الزخم العادي مع قياس قوة الحجم
+    breakout_force = candle_volume / avg_volume if avg_volume > 0 else 1.0
+    
+    if momentum > 85 and distance_to_level > 3 and breakout_force >= 1.3:
+        final_decision = "MOMENTUM ENTRY (Buy/Sell) with Volume Confirmation 🟢"
+        confidence = 90
+        success_rate = "90%"
+        entry_type = "RETEST_ENTRY"
+    elif engulfing_ratio > 0.5:
+        final_decision = "Flip Trade 🔄"
+        confidence = 85
+        success_rate = "85%"
+        entry_type = "IMMEDIATE_REVERSAL"
+    else:
+        final_decision = "Follow Trend with Caution 🟡"
+        confidence = 70
+        success_rate = "75%"
+        entry_type = "HOLD"
+
+**التطبيق العملي للمناطق الحرجة (الدعم/المقاومة) مع V7.5 FINAL:**
+- **عند مستوى المقاومة / قمة تاريخية:**
+  * ابحث عن دلائل الانعكاس أولاً (ذيل طويل، ابتلاع عكسي، جسم ضعيف) ← القرار: **فخ سيولة - بيع انعكاسي 🔄🔴 مع تنبيه فوري** (نجاح 95%).
+  * إذا لم توجد دلائل انعكاس، افحص الثالوث المؤسسي (اختراق للأعلى بـ ≥ 5 نقاط + جسم > 90% + حجم ≥ 1.5x + FVG) ← القرار: **كسر هيكلي - شراء 💥🟢** (نجاح 98%).
+- **عند مستوى الدعم / قاع تاريخي:**
+  * ابحث عن دلائل الانعكاس أولاً (ذيل طويل سفلي، ابتلاع عكسي صاعد، جسم ضعيف) ← القرار: **فخ سيولة - شراء انعكاسي 🔄🟢** (نجاح 95%).
+  * إذا لم توجد دلائل انعكاس، افحص الثالوث المؤسسي (اختراق للأسفل بـ ≥ 5 نقاط + جسم > 90% + حجم ≥ 1.5x + FVG) ← القرار: **كسر هيكلي - بيع 💥🔴** (نجاح 98%).
+- **إذا شككت (<90% ثقة)** → احتفاظ 🟡
 
 🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصر:
 
@@ -4232,7 +4088,7 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS +
 • نقطة الإلغاء: [السعر الذي يفسد التحليل]
 • 🚨 تنبيه فخ السيولة: [نشط / غير نشط] - [إذا نشط: تفاصيل التنبيه]
 
-الآن قم بتحليل الشارت المرفق بتطبيق جميع التحليلات المتقدمة وأعطني الإجابة بالتنسيق المطلوب.
+الآن قم بتحليل الشارت المرفق **بتركيز كامل على استخراج البيانات من الصورة** بتطبيق جميع التعديلات والتحديثات (V7.5 FINAL - الحل النهائي) وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
 """
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
@@ -7591,8 +7447,6 @@ def main():
     loop.create_task(news_radar_scheduler())
     
     print("✅ Telegram Secure Admin Panel ready...")
-    print("📡 Obeida News Radar V2.0 is running...")
-    print("📢 الأخبار ستنشر تلقائياً في @ObeidaTradingchat")
     
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
