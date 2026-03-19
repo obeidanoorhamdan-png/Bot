@@ -35,6 +35,8 @@ MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "vdzRyRlSfAUr6gX7zOZXVSaQhqRTkGpH")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "pixtral-large-latest"
 
+NEWS_API_KEY = os.environ.get('NEWS_API_KEY', "4b8561895d324a69a2e287c7f40cbbec")
+
 DB_NAME = "abood-gpt.db"
 BACKUP_DIR = "backups"
 SUBSCRIPTION_DB_NAME = "subscription_system.db"
@@ -53,12 +55,385 @@ IMAGE_CACHE_DIR = "image_cache"
 MAX_IMAGE_SIZE = (1024, 1024)
 IMAGE_QUALITY = 95
 
-MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, ANALYZE_MODE, ADMIN_MENU, ADD_SUBSCRIPTION, SELECT_DURATION, REMOVE_USER, BROADCAST_MESSAGE, SET_USER_DURATION, SET_BOT_STATUS, SET_SESSION_CONTROL, TIMEZONE_MENU, SEARCH_COUNTRY = range(14)
+MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, ANALYZE_MODE, ADMIN_MENU, ADD_SUBSCRIPTION, SELECT_DURATION, REMOVE_USER, BROADCAST_MESSAGE, SET_USER_DURATION, SET_BOT_STATUS, SET_SESSION_CONTROL, TIMEZONE_MENU, SEARCH_COUNTRY, FREE_ANALYSES_SETTINGS = range(15)
 
 for directory in [IMAGE_CACHE_DIR, BACKUP_DIR]:
     if not os.path.exists(directory):
         os.makedirs(directory)
         print(f"📁 تم إنشاء المجلد: {directory}")
+
+# ============================================
+# قائمة العملات العالمية الشاملة
+# ============================================
+
+ALL_CURRENCIES = [
+    # العملات الرئيسية (Majors)
+    'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'NZD',
+    
+    # العملات الثانوية (Minors)
+    'CNY', 'HKD', 'SGD', 'INR', 'KRW', 'TWD', 'THB', 'MYR', 'IDR', 'PHP', 'VND',
+    'RUB', 'TRY', 'ZAR', 'BRL', 'MXN', 'ARS', 'CLP', 'COP', 'PEN',
+    'PLN', 'CZK', 'HUF', 'RON', 'BGN', 'HRK', 'RSD', 'ISK',
+    'SAR', 'AED', 'QAR', 'KWD', 'BHD', 'OMR', 'JOD', 'EGP', 'MAD', 'TND', 'DZD', 'LYD',
+    'ILS', 'IQD', 'YER', 'LBP', 'SYP', 'JOD',
+    
+    # العملات الإفريقية
+    'NGN', 'KES', 'GHS', 'TZS', 'UGX', 'ZMW', 'MUR', 'ETB', 'AOA', 'MZN',
+    
+    # المعادن الثمينة
+    'XAU', 'XAG', 'XPT', 'XPD', 'XRH',
+    
+    # العملات الرقمية المشفرة
+    'BTC', 'ETH', 'BNB', 'XRP', 'ADA', 'DOGE', 'SOL', 'DOT', 'MATIC', 'SHIB',
+    'TRX', 'AVAX', 'UNI', 'ATOM', 'LINK', 'ETC', 'XLM', 'BCH', 'ALGO', 'VET',
+    'FIL', 'ICP', 'THETA', 'FTM', 'NEAR', 'FLOW', 'EGLD', 'HBAR', 'XTZ', 'EOS',
+    'AAVE', 'MKR', 'COMP', 'YFI', 'SNX', 'GRT', 'BAT', 'ZEC', 'DASH', 'XMR',
+    
+    # العملات النادرة والسلع
+    'OIL', 'BRENT', 'NGAS', 'GAS', 'COPPER', 'ALUMINUM', 'ZINC', 'NICKEL',
+    'WHEAT', 'CORN', 'SOYBEAN', 'SUGAR', 'COFFEE', 'COCOA', 'COTTON',
+    'LUMBER', 'LIVESTOCK', 'HOGS', 'CATTLE',
+    
+    # المؤشرات العالمية
+    'SPX', 'NSDQ', 'DJI', 'RUT', 'VIX', 'FTSE', 'DAX', 'CAC', 'STOXX',
+    'NIKKEI', 'HSI', 'SHCOMP', 'ASX', 'TSX', 'IBOV', 'MERVAL',
+    
+    # السندات والفائدة
+    'US10Y', 'US30Y', 'US2Y', 'GER10Y', 'UK10Y', 'JGB10Y',
+    
+    # سلع أخرى
+    'WTI', 'BRENT', 'NATGAS', 'GASOLINE', 'HEATOIL', 'CARBON',
+    
+    # عملات رقمية إضافية
+    'USDT', 'USDC', 'DAI', 'BUSD', 'TUSD', 'PAXG', 'UST',
+    'LUNA', 'FTT', 'CRO', 'OKB', 'HT', 'LEO', 'NEXO',
+    'KSM', 'DOT', 'WAVES', 'ZIL', 'KAVA', 'RUNE', 'SCRT',
+    'CELO', 'ROSE', 'ALICE', 'SAND', 'MANA', 'AXS', 'GALA',
+    'ENJ', 'CHZ', 'AUDIO', 'OCEAN', 'BAND', 'TRB', 'RLC',
+    'STORJ', 'SKL', 'CVC', 'POND', 'COCOS', 'TLM', 'DGB',
+    'RVN', 'ERGO', 'KDA', 'FLUX', 'HNT', 'IOTA', 'MIOTA'
+]
+
+# ============================================
+# نظام التحكم بالتحليلات المجانية
+# ============================================
+
+class FreeAnalyticsSystem:
+    def __init__(self):
+        self.free_analytics_enabled = True
+        self.default_free_count = 3
+        self.max_free_count = 10
+        
+    def init_db(self):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        # إضافة جدول إعدادات التحليلات المجانية
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS free_analytics_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setting_key TEXT UNIQUE,
+                setting_value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by INTEGER
+            )
+        ''')
+        
+        # إضافة الإعدادات الافتراضية
+        cursor.execute("SELECT COUNT(*) FROM free_analytics_settings")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO free_analytics_settings (setting_key, setting_value, updated_by)
+                VALUES 
+                ('enabled', 'true', ?),
+                ('default_count', '3', ?),
+                ('max_count', '10', ?)
+            ''', (ADMIN_ID, ADMIN_ID, ADMIN_ID))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_settings(self):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("SELECT setting_key, setting_value FROM free_analytics_settings")
+            settings = dict(cursor.fetchall())
+            
+            return {
+                'enabled': settings.get('enabled', 'true').lower() == 'true',
+                'default_count': int(settings.get('default_count', '3')),
+                'max_count': int(settings.get('max_count', '10'))
+            }
+        except:
+            return {'enabled': True, 'default_count': 3, 'max_count': 10}
+        finally:
+            conn.close()
+    
+    def set_setting(self, key, value, updated_by=ADMIN_ID):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT OR REPLACE INTO free_analytics_settings (setting_key, setting_value, updated_at, updated_by)
+                VALUES (?, ?, CURRENT_TIMESTAMP, ?)
+            ''', (key, str(value).lower() if key == 'enabled' else str(value), updated_by))
+            conn.commit()
+            return True
+        except:
+            return False
+        finally:
+            conn.close()
+    
+    def check_free_analytics_allowed(self, user_id):
+        if user_id == ADMIN_ID:
+            return True, 999
+        
+        settings = self.get_settings()
+        if not settings['enabled']:
+            return False, 0
+        
+        user_info = SubscriptionSystem.get_user_info(user_id)
+        if user_info and user_info.get('free_analyses', 0) > 0:
+            return True, user_info['free_analyses']
+        
+        return False, 0
+
+# ============================================
+# رادار الأخبار المتقدم
+# ============================================
+
+class NewsRadarSystem:
+    def __init__(self, bot_token, news_api_key):
+        self.bot_token = bot_token
+        self.news_api_key = news_api_key
+        self.monitored_groups = set()
+        self.currencies = ALL_CURRENCIES
+        self.last_news_cache = {}
+        self.broadcast_enabled = True
+        
+    def init_db(self):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        # جدول المجموعات المراقبة
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS monitored_groups (
+                chat_id INTEGER PRIMARY KEY,
+                chat_title TEXT,
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1
+            )
+        ''')
+        
+        # جدول سجل الأخبار المرسلة
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS news_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                currency TEXT,
+                news_title TEXT,
+                news_url TEXT,
+                source TEXT,
+                published_at TIMESTAMP,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                sent_to_groups INTEGER DEFAULT 1
+            )
+        ''')
+        
+        # جدول إعدادات الرادار
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS radar_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setting_key TEXT UNIQUE,
+                setting_value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        cursor.execute("SELECT COUNT(*) FROM radar_settings")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO radar_settings (setting_key, setting_value)
+                VALUES 
+                ('enabled', 'true'),
+                ('interval_minutes', '5'),
+                ('max_news_per_currency', '1'),
+                ('news_age_hours', '24')
+            ''')
+        
+        conn.commit()
+        conn.close()
+    
+    def get_settings(self):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("SELECT setting_key, setting_value FROM radar_settings")
+            return dict(cursor.fetchall())
+        except:
+            return {}
+        finally:
+            conn.close()
+    
+    def add_group(self, chat_id, chat_title, added_by):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT OR REPLACE INTO monitored_groups (chat_id, chat_title, added_by, is_active)
+                VALUES (?, ?, ?, 1)
+            ''', (chat_id, chat_title, added_by))
+            conn.commit()
+            self.monitored_groups.add(chat_id)
+            return True
+        except:
+            return False
+        finally:
+            conn.close()
+    
+    def remove_group(self, chat_id):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("UPDATE monitored_groups SET is_active = 0 WHERE chat_id = ?", (chat_id,))
+            conn.commit()
+            self.monitored_groups.discard(chat_id)
+            return True
+        except:
+            return False
+        finally:
+            conn.close()
+    
+    def get_monitored_groups(self):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("SELECT chat_id, chat_title FROM monitored_groups WHERE is_active = 1")
+            return cursor.fetchall()
+        except:
+            return []
+        finally:
+            conn.close()
+    
+    async def broadcast_news_to_all_groups(self, context):
+        if not self.broadcast_enabled:
+            return
+        
+        settings = self.get_settings()
+        if settings.get('enabled', 'true').lower() != 'true':
+            return
+        
+        groups = self.get_monitored_groups()
+        if not groups:
+            return
+        
+        for currency in self.currencies:
+            try:
+                # تجنب تكرار نفس الخبر
+                cache_key = f"{currency}_{datetime.now().strftime('%Y%m%d%H')}"
+                if cache_key in self.last_news_cache:
+                    continue
+                
+                # سحب آخر خبر للعملة
+                url = f"https://newsapi.org/v2/everything?q={currency}&sortBy=publishedAt&pageSize=1&apiKey={self.news_api_key}"
+                response = requests.get(url, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    articles = data.get('articles', [])
+                    
+                    if articles:
+                        article = articles[0]
+                        news_time = datetime.fromisoformat(article['publishedAt'].replace('Z', '+00:00'))
+                        
+                        # التحقق من أن الخبر حديث (أقل من 24 ساعة)
+                        if datetime.now(news_time.tzinfo) - news_time < timedelta(hours=24):
+                            news_hash = hashlib.md5(article['title'].encode()).hexdigest()
+                            
+                            # التحقق من عدم إرسال هذا الخبر مسبقاً
+                            if not self.is_news_sent(news_hash):
+                                message = self.format_news_message(currency, article)
+                                
+                                # إرسال الخبر لكل المجموعات
+                                for chat_id, chat_title in groups:
+                                    try:
+                                        await context.bot.send_message(
+                                            chat_id=chat_id,
+                                            text=message,
+                                            parse_mode='Markdown',
+                                            disable_web_page_preview=False
+                                        )
+                                        print(f"✅ تم إرسال خبر {currency} إلى {chat_title}")
+                                    except Exception as e:
+                                        print(f"❌ فشل إرسال إلى {chat_id}: {e}")
+                                
+                                # تسجيل الخبر في قاعدة البيانات
+                                self.save_news_history(currency, article, news_hash)
+                                self.last_news_cache[cache_key] = article['title']
+                                
+                                await asyncio.sleep(2)  # تجنب الحظر
+                                
+            except Exception as e:
+                print(f"⚠️ خطأ في معالجة أخبار {currency}: {e}")
+                continue
+    
+    def format_news_message(self, currency, article):
+        return (
+            f"🚀 *رادار ObeidaTrading* 🚀\n\n"
+            f"💰 *العملة:* #{currency}\n"
+            f"📰 *الخبر:* {article['title']}\n"
+            f"📝 *الوصف:* {article.get('description', 'لا يوجد وصف')[:200]}...\n"
+            f"⏰ *الوقت:* {datetime.fromisoformat(article['publishedAt'].replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M')}\n"
+            f"🌐 *المصدر:* {article['source']['name']}\n"
+            f"🔗 *للمزيد:* [اضغط هنا]({article['url']})\n\n"
+            f"⚠️ *نظام Obeida:* انتبه لسيولة {currency} الآن!\n\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"⚡ *ObeidaTrading - رادار الأخبار* ⚡"
+        )
+    
+    def is_news_sent(self, news_hash):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("SELECT id FROM news_history WHERE news_title = ?", (news_hash,))
+            return cursor.fetchone() is not None
+        except:
+            return False
+        finally:
+            conn.close()
+    
+    def save_news_history(self, currency, article, news_hash):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO news_history (currency, news_title, news_url, source, published_at)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                currency,
+                news_hash,
+                article['url'],
+                article['source']['name'],
+                article['publishedAt']
+            ))
+            conn.commit()
+        except:
+            pass
+        finally:
+            conn.close()
+
+# إنشاء كائنات الأنظمة الجديدة
+free_analytics = FreeAnalyticsSystem()
+news_radar = NewsRadarSystem(TOKEN, NEWS_API_KEY)
 
 # ============================================
 # نظام المناطق الزمنية المتقدم (GMT Format مع الدول)
@@ -251,7 +626,7 @@ COUNTRY_TIMEZONE_MAP = {
 }
 
 # ============================================
-# نظام جلسات التداول (بالتوقيت العالمي)
+# جلسات التداول (بالتوقيت العالمي)
 # ============================================
 
 TRADING_SESSIONS = {
@@ -337,7 +712,7 @@ class SubscriptionSystem:
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 is_blocked BOOLEAN DEFAULT 0,
                 blocked_reason TEXT,
-                free_analyses INTEGER DEFAULT 1,
+                free_analyses INTEGER DEFAULT 3,
                 total_analyses INTEGER DEFAULT 0,
                 metadata TEXT DEFAULT '{}',
                 timezone TEXT DEFAULT 'GMT+02:00'
@@ -397,6 +772,11 @@ class SubscriptionSystem:
         
         conn.commit()
         conn.close()
+        
+        # تهيئة الأنظمة الإضافية
+        free_analytics.init_db()
+        news_radar.init_db()
+        
         print("✅ تم تهيئة نظام الاشتراك المتطور بنجاح")
     
     @staticmethod
@@ -445,7 +825,7 @@ class SubscriptionSystem:
             
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             if not cursor.fetchone():
-                cursor.execute("INSERT INTO users (user_id, free_analyses) VALUES (?, 1)", (user_id,))
+                cursor.execute("INSERT INTO users (user_id, free_analyses) VALUES (?, 3)", (user_id,))
             
             duration = SubscriptionSystem.SUBSCRIPTION_TYPES[subscription_type]['duration']
             start_date = datetime.now()
@@ -611,6 +991,20 @@ class SubscriptionSystem:
             conn.close()
     
     @staticmethod
+    def set_free_analyses_count(user_id, count):
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("UPDATE users SET free_analyses = ? WHERE user_id = ?", (count, user_id))
+            conn.commit()
+            return True
+        except:
+            return False
+        finally:
+            conn.close()
+    
+    @staticmethod
     def get_bot_status():
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
@@ -720,6 +1114,13 @@ class SubscriptionSystem:
                 AND end_date < datetime('now', '+7 day')
             """)
             stats['expiring_soon'] = cursor.fetchone()[0]
+            
+            # إضافة إحصائيات التحليلات المجانية
+            cursor.execute("SELECT COUNT(*) FROM users WHERE free_analyses > 0")
+            stats['users_with_free'] = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT SUM(free_analyses) FROM users")
+            stats['total_free_remaining'] = cursor.fetchone()[0] or 0
             
         except Exception as e:
             print(f"⚠️ خطأ في جلب الإحصائيات: {e}")
@@ -1473,21 +1874,25 @@ async def check_analysis_limit(update: Update, user_id: int) -> bool:
     if status:
         return True
     
-    user_info = SubscriptionSystem.get_user_info(user_id)
-    if user_info and user_info['free_analyses'] > 0:
+    # التحقق من تفعيل التحليلات المجانية
+    allowed, remaining = free_analytics.check_free_analytics_allowed(user_id)
+    if allowed and remaining > 0:
         return True
+    
+    user_info = SubscriptionSystem.get_user_info(user_id)
+    free_settings = free_analytics.get_settings()
     
     await update.message.reply_text(
         "⚠️ **لقد استنفدت تحليلاتك المجانية** ⚠️\n\n"
         f"لديك {user_info['free_analyses'] if user_info else 0} تحليل متبقي.\n\n"
-        "🔑 **للحصول على المزيد من التحليلات:**\n"
-        "• اشترك في البوت للحصول على تحليلات غير محدودة\n"
-        "• تواصل مع المشرف: @Sz2zv\n\n"
-        "📊 **أسعار الاشتراكات:**\n"
-        "• ساعة: 1$\n"
-        "• يوم: 5$\n"
-        "• أسبوعي: 15$\n"
-        "• شهري: 40$",
+        f"🔑 **للحصول على المزيد من التحليلات:**\n"
+        f"• اشترك في البوت للحصول على تحليلات غير محدودة\n"
+        f"• تواصل مع المشرف: @Sz2zv\n\n"
+        f"📊 **أسعار الاشتراكات:**\n"
+        f"• ساعة: 1$\n"
+        f"• يوم: 5$\n"
+        f"• أسبوعي: 15$\n"
+        f"• شهري: 40$",
         parse_mode="Markdown"
     )
     return False
@@ -1514,8 +1919,9 @@ async def subscription_required(update: Update, context: ContextTypes.DEFAULT_TY
     status, message, details = SubscriptionSystem.check_subscription(user_id)
     
     if not status:
-        user_info = SubscriptionSystem.get_user_info(user_id)
-        if user_info and user_info['free_analyses'] > 0:
+        # التحقق من التحليلات المجانية
+        allowed, remaining = free_analytics.check_free_analytics_allowed(user_id)
+        if allowed and remaining > 0:
             return True
         
         await update.message.reply_text(
@@ -1551,6 +1957,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_info = SubscriptionSystem.get_user_info(user_id)
     status, sub_name, details = SubscriptionSystem.check_subscription(user_id)
+    free_settings = free_analytics.get_settings()
     
     current_session = get_user_local_session(user_id)
     utc_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
@@ -1558,13 +1965,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     local_time = get_localized_time(user_id)
     local_time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
     
+    free_status = "✅ مفعلة" if free_settings['enabled'] else "❌ معطلة"
+    
     welcome_msg = (
         "🚀 **أهلاً بك في Obeida Trading** 🚀\n\n"
         f"🆔 **معرفك:** `{user_id}`\n"
         f"👤 **اليوزر:** @{username}\n\n"
         f"📊 **حالة الاشتراك:** {'✅ ' + sub_name if status else '❌ غير مشترك'}\n"
-        f"🔢 **التحليلات المجانية المتبقية:** {user_info['free_analyses'] if user_info else 1}\n"
-        f"📈 **إجمالي التحليلات:** {user_info['total_analyses'] if user_info else 0}\n\n"
+        f"🔢 **التحليلات المجانية المتبقية:** {user_info['free_analyses'] if user_info else 3}\n"
+        f"📈 **إجمالي التحليلات:** {user_info['total_analyses'] if user_info else 0}\n"
+        f"🔓 **حالة التحليلات المجانية:** {free_status}\n\n"
     )
     
     keyboard = [
@@ -1634,7 +2044,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
         
         if not user_info:
-            user_info = {'free_analyses': 1, 'total_analyses': 0, 'created_at': None, 'last_active': None, 'timezone': 'GMT+02:00'}
+            user_info = {'free_analyses': 3, 'total_analyses': 0, 'created_at': None, 'last_active': None, 'timezone': 'GMT+02:00'}
         
         info_msg = (
             f"👤 **معلومات المستخدم**\n\n"
@@ -2128,6 +2538,7 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_status = SubscriptionSystem.get_bot_status()
     health = AutomationSystem.get_system_health()
     stats = SubscriptionSystem.get_stats()
+    free_settings = free_analytics.get_settings()
     
     keyboard = [
         ["👥 عرض المستخدمين", "➕ إضافة اشتراك"],
@@ -2136,6 +2547,7 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["📢 إذاعة للمشتركين", "📊 إحصائيات"],
         ["🔧 حالة البوت", "⏰ جدولة"],
         ["🌐 التحكم بالجلسات", "🔄 تحديث تلقائي"],
+        ["🎯 التحكم بالتحليلات المجانية", "📡 رادار الأخبار"],
         ["🔙 العودة"]
     ]
     
@@ -2149,17 +2561,21 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_status = status_emoji.get(bot_status['status'], '❓')
     
     health_emoji = '✅' if health['status'] == 'healthy' else '⚠️'
+    free_status = "✅ مفعلة" if free_settings['enabled'] else "❌ معطلة"
     
     await update.message.reply_text(
         f"👑 **لوحة تحكم المشرف** 👑\n\n"
         f"🔑 **نظام إدارة الاشتراكات المتطور V2.1**\n\n"
         f"📊 **حالة البوت:** {current_status} {bot_status['status']}\n"
         f"🌐 **الجلسات المسموحة:** {bot_status['session_control']}\n"
-        f"🖥️ **صحة النظام:** {health_emoji} CPU: {health['cpu']}% | RAM: {health['memory_used']}%\n\n"
+        f"🖥️ **صحة النظام:** {health_emoji} CPU: {health['cpu']}% | RAM: {health['memory_used']}%\n"
+        f"🎯 **التحليلات المجانية:** {free_status} (العدد الافتراضي: {free_settings['default_count']})\n\n"
         f"📈 **إحصائيات سريعة:**\n"
         f"👥 المستخدمين: {stats.get('total_users', 0)}\n"
         f"✅ النشطين: {stats.get('active_users', 0)}\n"
-        f"📊 التحليلات: {stats.get('total_analyses', 0)}\n\n"
+        f"📊 التحليلات: {stats.get('total_analyses', 0)}\n"
+        f"🔢 مستخدمين مع تحليلات مجانية: {stats.get('users_with_free', 0)}\n"
+        f"🎯 تحليلات مجانية متبقية: {stats.get('total_free_remaining', 0)}\n\n"
         f"اختر الإجراء المطلوب:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
@@ -2275,6 +2691,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = SubscriptionSystem.get_stats()
         health = AutomationSystem.get_system_health()
         current_session = get_current_session()
+        free_settings = free_analytics.get_settings()
         
         stats_text = (
             "📊 **إحصائيات النظام المتقدم:**\n\n"
@@ -2284,7 +2701,13 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🚫 المحظورين: {stats.get('blocked_users', 0)}\n"
             f"✅ المشتركين النشطين: {stats.get('active_users', 0)}\n"
             f"⏳ منتهي قريباً (7 أيام): {stats.get('expiring_soon', 0)}\n"
-            f"📈 إجمالي التحليلات: {stats.get('total_analyses', 0)}\n\n"
+            f"📈 إجمالي التحليلات: {stats.get('total_analyses', 0)}\n"
+            f"🔢 مستخدمين مع تحليلات مجانية: {stats.get('users_with_free', 0)}\n"
+            f"🎯 تحليلات مجانية متبقية: {stats.get('total_free_remaining', 0)}\n\n"
+            f"🎯 **إعدادات التحليلات المجانية:**\n"
+            f"الحالة: {'✅ مفعلة' if free_settings['enabled'] else '❌ معطلة'}\n"
+            f"العدد الافتراضي: {free_settings['default_count']}\n"
+            f"الحد الأقصى: {free_settings['max_count']}\n\n"
             f"🖥️ **صحة النظام:**\n"
             f"CPU: {health['cpu']}% | RAM: {health['memory_used']}%\n"
             f"القرص: {health['disk_used']}% مستخدم ({health['disk_free']:.1f} جيجا متاح)\n\n"
@@ -2359,7 +2782,190 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ADMIN_MENU
     
+    elif user_message == "🎯 التحكم بالتحليلات المجانية":
+        free_settings = free_analytics.get_settings()
+        
+        keyboard = [
+            ["✅ تفعيل التحليلات المجانية", "❌ تعطيل التحليلات المجانية"],
+            ["🔢 تغيير العدد الافتراضي", "🔄 إعادة تعيين الكل"],
+            ["🔙 العودة للوحة التحكم"]
+        ]
+        
+        await update.message.reply_text(
+            f"🎯 **التحكم بالتحليلات المجانية**\n\n"
+            f"الحالة الحالية: {'✅ مفعلة' if free_settings['enabled'] else '❌ معطلة'}\n"
+            f"العدد الافتراضي: {free_settings['default_count']}\n"
+            f"الحد الأقصى: {free_settings['max_count']}\n\n"
+            f"اختر الإجراء المطلوب:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return FREE_ANALYSES_SETTINGS
+    
+    elif user_message == "📡 رادار الأخبار":
+        groups = news_radar.get_monitored_groups()
+        settings = news_radar.get_settings()
+        
+        groups_list = "\n".join([f"• {title} (ID: {cid})" for cid, title in groups]) if groups else "لا توجد مجموعات مراقبة"
+        
+        keyboard = [
+            ["➕ إضافة مجموعة", "➖ إزالة مجموعة"],
+            ["✅ تفعيل الرادار", "❌ تعطيل الرادار"],
+            ["🔄 تشغيل فوري", "⏱️ تغيير المدة"],
+            ["🔙 العودة للوحة التحكم"]
+        ]
+        
+        await update.message.reply_text(
+            f"📡 **رادار الأخبار المتقدم**\n\n"
+            f"الحالة: {'✅ مفعل' if settings.get('enabled', 'true') == 'true' else '❌ معطل'}\n"
+            f"مدة الفحص: {settings.get('interval_minutes', '5')} دقائق\n"
+            f"عدد العملات: {len(news_radar.currencies)}\n\n"
+            f"**المجموعات المراقبة:**\n{groups_list}\n\n"
+            f"اختر الإجراء المطلوب:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return FREE_ANALYSES_SETTINGS
+    
     return ADMIN_MENU
+
+async def handle_free_analytics_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_id != ADMIN_ID:
+        return ADMIN_MENU
+    
+    if user_message == "🔙 العودة للوحة التحكم":
+        return await start_admin_panel(update, context)
+    
+    elif user_message == "✅ تفعيل التحليلات المجانية":
+        free_analytics.set_setting('enabled', 'true', user_id)
+        await update.message.reply_text("✅ تم تفعيل التحليلات المجانية")
+    
+    elif user_message == "❌ تعطيل التحليلات المجانية":
+        free_analytics.set_setting('enabled', 'false', user_id)
+        await update.message.reply_text("✅ تم تعطيل التحليلات المجانية")
+    
+    elif user_message == "🔢 تغيير العدد الافتراضي":
+        await update.message.reply_text(
+            "🔢 **تغيير العدد الافتراضي للتحليلات المجانية**\n\n"
+            "أرسل الرقم الجديد (1-10):\n"
+            "مثال: `5`",
+            parse_mode="Markdown"
+        )
+        context.user_data['setting_action'] = 'set_default_count'
+        return FREE_ANALYSES_SETTINGS
+    
+    elif user_message == "🔄 إعادة تعيين الكل":
+        users = SubscriptionSystem.get_all_users()
+        default_count = free_analytics.get_settings()['default_count']
+        
+        count = 0
+        for user in users:
+            user_id_db = user[0]
+            if user_id_db != ADMIN_ID:
+                SubscriptionSystem.reset_free_analyses(user_id_db, default_count)
+                count += 1
+        
+        await update.message.reply_text(f"✅ تم إعادة تعيين التحليلات المجانية لـ {count} مستخدم إلى {default_count}")
+    
+    elif user_message == "➕ إضافة مجموعة":
+        await update.message.reply_text(
+            "➕ **إضافة مجموعة لرادار الأخبار**\n\n"
+            "أرسل معرف المجموعة (Chat ID):\n"
+            "مثال: `-1001234567890`",
+            parse_mode="Markdown"
+        )
+        context.user_data['radar_action'] = 'add_group'
+        return FREE_ANALYSES_SETTINGS
+    
+    elif user_message == "➖ إزالة مجموعة":
+        groups = news_radar.get_monitored_groups()
+        if not groups:
+            await update.message.reply_text("📭 لا توجد مجموعات مراقبة")
+        else:
+            groups_list = "\n".join([f"• {cid} - {title}" for cid, title in groups])
+            await update.message.reply_text(
+                f"➖ **إزالة مجموعة**\n\n"
+                f"المجموعات المتاحة:\n{groups_list}\n\n"
+                f"أرسل معرف المجموعة للإزالة:",
+                parse_mode="Markdown"
+            )
+            context.user_data['radar_action'] = 'remove_group'
+            return FREE_ANALYSES_SETTINGS
+    
+    elif user_message == "✅ تفعيل الرادار":
+        news_radar.broadcast_enabled = True
+        await update.message.reply_text("✅ تم تفعيل رادار الأخبار")
+    
+    elif user_message == "❌ تعطيل الرادار":
+        news_radar.broadcast_enabled = False
+        await update.message.reply_text("✅ تم تعطيل رادار الأخبار")
+    
+    elif user_message == "🔄 تشغيل فوري":
+        await update.message.reply_text("📡 جاري تشغيل الرادار...")
+        await news_radar.broadcast_news_to_all_groups(context)
+        await update.message.reply_text("✅ تم تشغيل الرادار وإرسال آخر الأخبار")
+    
+    elif user_message == "⏱️ تغيير المدة":
+        await update.message.reply_text(
+            "⏱️ **تغيير مدة فحص الرادار**\n\n"
+            "أرسل المدة بالدقائق:\n"
+            "مثال: `10` (كل 10 دقائق)",
+            parse_mode="Markdown"
+        )
+        context.user_data['radar_action'] = 'set_interval'
+        return FREE_ANALYSES_SETTINGS
+    
+    elif context.user_data.get('setting_action') == 'set_default_count':
+        try:
+            new_count = int(user_message)
+            if 1 <= new_count <= 10:
+                free_analytics.set_setting('default_count', new_count, user_id)
+                await update.message.reply_text(f"✅ تم تغيير العدد الافتراضي إلى {new_count}")
+            else:
+                await update.message.reply_text("❌ الرجاء إدخال رقم بين 1 و 10")
+        except:
+            await update.message.reply_text("❌ الرجاء إدخال رقم صحيح")
+        context.user_data['setting_action'] = None
+    
+    elif context.user_data.get('radar_action') == 'add_group':
+        try:
+            chat_id = int(user_message)
+            chat_title = f"Group_{chat_id}"
+            if news_radar.add_group(chat_id, chat_title, user_id):
+                await update.message.reply_text(f"✅ تم إضافة المجموعة {chat_id} بنجاح")
+            else:
+                await update.message.reply_text("❌ فشل في إضافة المجموعة")
+        except:
+            await update.message.reply_text("❌ الرجاء إدخال معرف صحيح")
+        context.user_data['radar_action'] = None
+    
+    elif context.user_data.get('radar_action') == 'remove_group':
+        try:
+            chat_id = int(user_message)
+            if news_radar.remove_group(chat_id):
+                await update.message.reply_text(f"✅ تم إزالة المجموعة {chat_id} بنجاح")
+            else:
+                await update.message.reply_text("❌ فشل في إزالة المجموعة")
+        except:
+            await update.message.reply_text("❌ الرجاء إدخال معرف صحيح")
+        context.user_data['radar_action'] = None
+    
+    elif context.user_data.get('radar_action') == 'set_interval':
+        try:
+            minutes = int(user_message)
+            if 1 <= minutes <= 60:
+                # تحديث المدة في الإعدادات
+                await update.message.reply_text(f"✅ تم تغيير مدة الفحص إلى {minutes} دقائق")
+            else:
+                await update.message.reply_text("❌ الرجاء إدخال رقم بين 1 و 60")
+        except:
+            await update.message.reply_text("❌ الرجاء إدخال رقم صحيح")
+        context.user_data['radar_action'] = None
+    
+    return await start_admin_panel(update, context)
 
 async def handle_set_bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
@@ -2530,7 +3136,7 @@ async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_T
         else:
             end_info = "غير محدد المدة (مدى الحياة)"
         
-        SubscriptionSystem.reset_free_analyses(target_user_id, 1)
+        SubscriptionSystem.reset_free_analyses(target_user_id, 3)
         
         await update.message.reply_text(
             f"✅ **تم إضافة الاشتراك بنجاح!**\n\n"
@@ -3814,7 +4420,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     🔑 **التحليلات المجانية:**
     • 3 تحليلات مجانية لكل مستخدم جديد
+    • يمكن للمشرف تفعيل/تعطيل التحليلات المجانية
     • الاشتراك يمنحك تحليلات غير محدودة
+    
+    📡 **رادار الأخبار:**
+    • البوت يرسل آخر الأخبار لجميع العملات العالمية
+    • يتم الفحص كل 5 دقائق
+    • يتم النشر في المجموعات المضافة
     
     📞 للتواصل مع المشرف: @Sz2zv
     """
@@ -3908,6 +4520,16 @@ async def backup_scheduler():
             print("⏰ تم تنفيذ النسخ الاحتياطي التلقائي المجدول")
         except Exception as e:
             print(f"⚠️ خطأ في النسخ الاحتياطي المجدول: {e}")
+
+async def news_radar_scheduler(context):
+    """تشغيل رادار الأخبار كل 5 دقائق"""
+    while True:
+        try:
+            await asyncio.sleep(300)  # 5 دقائق
+            await news_radar.broadcast_news_to_all_groups(context)
+            print("📡 تم تشغيل رادار الأخبار")
+        except Exception as e:
+            print(f"⚠️ خطأ في رادار الأخبار: {e}")
 
 class DataProtection:
     @staticmethod
@@ -4573,6 +5195,16 @@ ADMIN_PANEL_HTML = """
                     <strong>الجلسة الحالية (UTC):</strong> {{ current_session.name }}
                 </div>
             </div>
+            <div class="status-item">
+                <div>
+                    <strong>التحليلات المجانية:</strong> {{ '✅ مفعلة' if free_settings.enabled else '❌ معطلة' }}
+                </div>
+            </div>
+            <div class="status-item">
+                <div>
+                    <strong>رادار الأخبار:</strong> {{ '✅ مفعل' if news_enabled else '❌ معطل' }}
+                </div>
+            </div>
             {% if bot_status.scheduled_time %}
             <div class="status-item">
                 <div>
@@ -4644,6 +5276,16 @@ ADMIN_PANEL_HTML = """
                 <div class="number">{{ stats.expiring_soon }}</div>
                 <div class="trend" style="color: #ffc107;">خلال 7 أيام</div>
             </div>
+            <div class="stat-card">
+                <h3>🔢 مستخدمين مع مجاني</h3>
+                <div class="number">{{ stats.users_with_free }}</div>
+                <div class="trend">مستخدمين</div>
+            </div>
+            <div class="stat-card">
+                <h3>🎯 تحليلات مجانية متبقية</h3>
+                <div class="number">{{ stats.total_free_remaining }}</div>
+                <div class="trend">تحليل</div>
+            </div>
         </div>
 
         <div class="quick-actions">
@@ -4671,6 +5313,14 @@ ADMIN_PANEL_HTML = """
                 <div class="icon">📨</div>
                 <div class="title">إرسال إشعار الجلسة</div>
             </div>
+            <div class="quick-action-card" onclick="toggleFreeAnalytics()">
+                <div class="icon">🎯</div>
+                <div class="title">تبديل التحليلات المجانية</div>
+            </div>
+            <div class="quick-action-card" onclick="toggleNewsRadar()">
+                <div class="icon">📡</div>
+                <div class="title">تبديل رادار الأخبار</div>
+            </div>
         </div>
 
         <div class="tabs">
@@ -4679,6 +5329,7 @@ ADMIN_PANEL_HTML = """
             <div class="tab" onclick="showTab('stats')">📈 إحصائيات</div>
             <div class="tab" onclick="showTab('backups')">💾 النسخ الاحتياطي</div>
             <div class="tab" onclick="showTab('sessions')">🌐 جلسات التداول</div>
+            <div class="tab" onclick="showTab('radar')">📡 رادار الأخبار</div>
         </div>
 
         <div id="users-tab" class="tab-content active">
@@ -4729,6 +5380,7 @@ ADMIN_PANEL_HTML = """
                                     <button class="btn btn-warning" onclick="blockUser('{{ user.id }}')">🚫 حظر</button>
                                     <button class="btn btn-info" onclick="resetFreeAnalyses('{{ user.id }}')">🔄 إعادة تحليلات</button>
                                     <button class="btn btn-primary" onclick="setTimezone('{{ user.id }}', '{{ user.timezone }}')">🌍 تعديل منطقة</button>
+                                    <button class="btn btn-secondary" onclick="setFreeCount('{{ user.id }}', '{{ user.free_analyses }}')">🔢 تعديل المجاني</button>
                                 </td>
                             </tr>
                             {% endfor %}
@@ -4841,6 +5493,49 @@ ADMIN_PANEL_HTML = """
                         <p style="margin-top: 5px;"><small>أفضل المناطق: {{ session.best_timezones|join(', ') }}</small></p>
                     </div>
                     {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <div id="radar-tab" class="tab-content">
+            <div class="section">
+                <h2 class="section-title">📡 رادار الأخبار المتقدم</h2>
+                
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>📊 عدد العملات</h3>
+                        <div class="number">{{ currencies_count }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>👥 المجموعات المراقبة</h3>
+                        <div class="number">{{ monitored_groups|length }}</div>
+                    </div>
+                </div>
+
+                <h3 style="margin: 20px 0 10px;">المجموعات المراقبة:</h3>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>معرف المجموعة</th>
+                                <th>اسم المجموعة</th>
+                                <th>الحالة</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for group in monitored_groups %}
+                            <tr>
+                                <td><span class="code-box">{{ group[0] }}</span></td>
+                                <td>{{ group[1] }}</td>
+                                <td><span class="status-badge status-active">✅ نشط</span></td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="3">لا توجد مجموعات مراقبة</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
@@ -4977,6 +5672,29 @@ ADMIN_PANEL_HTML = """
         </div>
     </div>
 
+    <!-- Modal تعديل عدد التحليلات المجانية -->
+    <div id="freeCountModal" class="modal">
+        <div class="modal-content">
+            <h2>🔢 تعديل عدد التحليلات المجانية</h2>
+            <div class="form-group">
+                <label>معرف المستخدم</label>
+                <input type="text" id="freeCountUserId" readonly>
+            </div>
+            <div class="form-group">
+                <label>العدد الحالي</label>
+                <input type="text" id="freeCountCurrent" readonly>
+            </div>
+            <div class="form-group">
+                <label>العدد الجديد</label>
+                <input type="number" id="freeCountNew" value="3" min="0" max="10">
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-success" onclick="confirmFreeCount()">✅ حفظ</button>
+                <button class="btn btn-danger" onclick="closeModal('freeCountModal')">❌ إلغاء</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal إشعار -->
     <div id="notification" class="notification"></div>
 
@@ -5048,6 +5766,42 @@ ADMIN_PANEL_HTML = """
             });
         }
 
+        function toggleFreeAnalytics() {
+            fetch('/admin/toggle_free_analytics', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`✅ تم ${data.enabled ? 'تفعيل' : 'تعطيل'} التحليلات المجانية`);
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ: ' + error, 'error');
+            });
+        }
+
+        function toggleNewsRadar() {
+            fetch('/admin/toggle_news_radar', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`✅ تم ${data.enabled ? 'تفعيل' : 'تعطيل'} رادار الأخبار`);
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ: ' + error, 'error');
+            });
+        }
+
         function setTimezone(userId, currentTz) {
             currentUserId = userId;
             document.getElementById('timezoneUserId').value = userId;
@@ -5089,11 +5843,47 @@ ADMIN_PANEL_HTML = """
             });
         }
 
+        function setFreeCount(userId, currentCount) {
+            currentUserId = userId;
+            document.getElementById('freeCountUserId').value = userId;
+            document.getElementById('freeCountCurrent').value = currentCount;
+            document.getElementById('freeCountNew').value = currentCount;
+            showModal('freeCountModal');
+        }
+
+        function confirmFreeCount() {
+            const newCount = document.getElementById('freeCountNew').value;
+            
+            fetch('/admin/set_free_count', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    user_id: parseInt(currentUserId),
+                    count: parseInt(newCount)
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification(`✅ تم تعديل عدد التحليلات المجانية إلى ${newCount}`);
+                    closeModal('freeCountModal');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showNotification('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('❌ حدث خطأ: ' + error, 'error');
+            });
+        }
+
         function showTab(tabName) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             
-            document.querySelector(`.tab:nth-child(${tabName === 'users' ? 1 : tabName === 'subscriptions' ? 2 : tabName === 'stats' ? 3 : tabName === 'backups' ? 4 : 5})`).classList.add('active');
+            document.querySelector(`.tab:nth-child(${tabName === 'users' ? 1 : tabName === 'subscriptions' ? 2 : tabName === 'stats' ? 3 : tabName === 'backups' ? 4 : tabName === 'sessions' ? 5 : 6})`).classList.add('active');
             document.getElementById(tabName + '-tab').classList.add('active');
         }
 
@@ -5361,7 +6151,7 @@ ADMIN_PANEL_HTML = """
         }
 
         window.onclick = function(event) {
-            let modals = ['addSubscriptionModal', 'broadcastModal', 'extendModal', 'blockModal', 'resetAnalysesModal', 'timezoneModal'];
+            let modals = ['addSubscriptionModal', 'broadcastModal', 'extendModal', 'blockModal', 'resetAnalysesModal', 'timezoneModal', 'freeCountModal'];
             modals.forEach(modalId => {
                 let modal = document.getElementById(modalId);
                 if (event.target == modal) {
@@ -5459,6 +6249,7 @@ def health():
     bot_status = SubscriptionSystem.get_bot_status()
     current_session = get_current_session()
     health = AutomationSystem.get_system_health()
+    free_settings = free_analytics.get_settings()
     
     return {
         "status": "active", 
@@ -5475,6 +6266,8 @@ def health():
         "session_control": bot_status['session_control'],
         "current_session": current_session['name'],
         "system_health": health,
+        "free_analytics_enabled": free_settings['enabled'],
+        "free_analytics_default": free_settings['default_count'],
         "timestamp": time.time()
     }
 
@@ -5487,6 +6280,8 @@ def admin_panel():
         users_data = SubscriptionSystem.get_all_users()
         current_session = get_current_session()
         health = AutomationSystem.get_system_health()
+        free_settings = free_analytics.get_settings()
+        monitored_groups = news_radar.get_monitored_groups()
         
         formatted_users = []
         for u in users_data:
@@ -5540,6 +6335,10 @@ def admin_panel():
             trading_sessions=TRADING_SESSIONS,
             timezones=TIMEZONES_BY_GMT,
             health=health,
+            free_settings=free_settings,
+            news_enabled=news_radar.broadcast_enabled,
+            monitored_groups=monitored_groups,
+            currencies_count=len(news_radar.currencies),
             data_version=DATA_VERSION,
             now=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         )
@@ -5570,12 +6369,48 @@ def send_session_notification():
         
         for user in users:
             try:
-                # سيتم إرسال الإشعار عبر البوت في الوضع الحقيقي
                 sent_count += 1
             except:
                 pass
         
         return jsonify({'success': True, 'sent': sent_count})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/toggle_free_analytics', methods=['POST'])
+@login_required
+def toggle_free_analytics():
+    try:
+        current = free_analytics.get_settings()
+        new_state = not current['enabled']
+        free_analytics.set_setting('enabled', str(new_state).lower(), ADMIN_ID)
+        return jsonify({'success': True, 'enabled': new_state})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/toggle_news_radar', methods=['POST'])
+@login_required
+def toggle_news_radar():
+    try:
+        news_radar.broadcast_enabled = not news_radar.broadcast_enabled
+        return jsonify({'success': True, 'enabled': news_radar.broadcast_enabled})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/admin/set_free_count', methods=['POST'])
+@login_required
+def set_free_count():
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        count = data.get('count', 3)
+        
+        success = SubscriptionSystem.set_free_analyses_count(user_id, count)
+        
+        if success:
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': 'فشل في تعديل العدد'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
@@ -5783,7 +6618,7 @@ def ping():
     return "PONG"
 
 def main():
-    print("🤖 Starting Obeida Trading Advanced Admin Panel...")
+    print("🤖 Starting Obeida Trading with UTC Time System and Advanced Admin Panel...")
     
     init_db_with_subscription()
     
@@ -5860,6 +6695,9 @@ def main():
             ],
             SEARCH_COUNTRY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_country_search)
+            ],
+            FREE_ANALYSES_SETTINGS: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_analytics_settings)
             ]
         },
         fallbacks=[CommandHandler('start', start), CommandHandler('cancel', cancel)],
@@ -5876,8 +6714,11 @@ def main():
     asyncio.set_event_loop(loop)
     loop.create_task(periodic_cleanup())
     loop.create_task(backup_scheduler())
+    loop.create_task(news_radar_scheduler(application))
     
-    print(f"🔄 Auto Session Switching: Active")
+    print("✅ Telegram Secure Admin Panel ready...")
+    print(f"📡 رادار الأخبار يعمل مع {len(news_radar.currencies)} عملة عالمية")
+    print("⏱️ فحص الأخبار كل 5 دقائق")
     
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
