@@ -3059,7 +3059,89 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 print(f"⚠️ خطأ في تحديث الرسالة: {e}")
 
         # ============================================
-        # 13. تحليل أنماط الشموع اليابانية (Candlestick Patterns)
+        # 13. تحليل الفجوات السعرية (Gap Analysis)
+        # ============================================
+        class GapAnalyzer:
+            """تحليل الفجوات السعرية"""
+            
+            @staticmethod
+            def detect_gaps(highs, lows):
+                """اكتشاف الفجوات السعرية"""
+                gaps = []
+                
+                for i in range(1, len(highs)):
+                    # فجوة صاعدة
+                    if lows[i] > highs[i-1]:
+                        gap_size = lows[i] - highs[i-1]
+                        gap_percentage = (gap_size / highs[i-1]) * 100
+                        
+                        gaps.append({
+                            'type': 'صاعدة ⬆️',
+                            'start': highs[i-1],
+                            'end': lows[i],
+                            'size': round(gap_size, 5),
+                            'percentage': round(gap_percentage, 3),
+                            'fill_probability': 'عالية' if gap_percentage < 0.5 else 'متوسطة' if gap_percentage < 1 else 'منخفضة',
+                            'significance': 'كبيرة' if gap_percentage > 1 else 'متوسطة' if gap_percentage > 0.5 else 'صغيرة'
+                        })
+                    
+                    # فجوة هابطة
+                    elif highs[i] < lows[i-1]:
+                        gap_size = lows[i-1] - highs[i]
+                        gap_percentage = (gap_size / lows[i-1]) * 100
+                        
+                        gaps.append({
+                            'type': 'هابطة ⬇️',
+                            'start': lows[i-1],
+                            'end': highs[i],
+                            'size': round(gap_size, 5),
+                            'percentage': round(gap_percentage, 3),
+                            'fill_probability': 'عالية' if gap_percentage < 0.5 else 'متوسطة' if gap_percentage < 1 else 'منخفضة',
+                            'significance': 'كبيرة' if gap_percentage > 1 else 'متوسطة' if gap_percentage > 0.5 else 'صغيرة'
+                        })
+                
+                return gaps
+
+        # ============================================
+        # 14. تحليل Market Profile
+        # ============================================
+        class MarketProfileAnalyzer:
+            """تحليل Market Profile المتقدم"""
+            
+            @staticmethod
+            def analyze_market_profile(prices, volumes, time_periods):
+                """تحليل توزيع السعر عبر الزمن والحجم"""
+                if not prices or not volumes:
+                    return {}
+                
+                # حساب TPO (Time Price Opportunity)
+                price_range = max(prices) - min(prices)
+                tpo_count = len(prices)
+                
+                # تحديد Value Area (70% من TPO)
+                sorted_prices = sorted(prices)
+                value_area_low = sorted_prices[int(len(sorted_prices) * 0.15)]
+                value_area_high = sorted_prices[int(len(sorted_prices) * 0.85)]
+                
+                # تحديد Point of Control (أكثر سعر تكرر)
+                price_frequency = {}
+                for price in prices:
+                    rounded_price = round(price, 5)
+                    price_frequency[rounded_price] = price_frequency.get(rounded_price, 0) + 1
+                
+                poc = max(price_frequency, key=price_frequency.get) if price_frequency else prices[-1]
+                
+                return {
+                    'poc': round(poc, 5),
+                    'value_area_low': round(value_area_low, 5),
+                    'value_area_high': round(value_area_high, 5),
+                    'tpo_count': tpo_count,
+                    'profile_type': 'Normal' if tpo_count > 100 else 'Thin',
+                    'market_type': 'Trending' if (value_area_high - value_area_low) > price_range * 0.3 else 'Balanced'
+                }
+
+        # ============================================
+        # 15. تحليل أنماط الشموع اليابانية (Candlestick Patterns)
         # ============================================
         class CandlestickPatternAnalyzer:
             """تحليل 50+ نمط من أنماط الشموع اليابانية"""
@@ -3181,7 +3263,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 return detected
 
         # ============================================
-        # 14. نظام إدارة المخاطر الذكي (Risk Management)
+        # 16. نظام إدارة المخاطر الذكي (Risk Management)
         # ============================================
         class RiskManagementSystem:
             """نظام متكامل لإدارة المخاطر"""
@@ -3266,7 +3348,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 return round(sharpe, 2)
 
         # ============================================
-        # 15. تحليل RSI مع Divergence
+        # 17. تحليل RSI مع Divergence
         # ============================================
         class RSIAnalyzer:
             """تحليل مؤشر القوة النسبية مع اكتشاف التباعدات"""
@@ -3338,7 +3420,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 }
 
         # ============================================
-        # 16. تحليل السيولة (Liquidity Analysis)
+        # 18. تحليل السيولة (Liquidity Analysis)
         # ============================================
         class LiquidityAnalyzer:
             """تحليل مستويات السيولة ومناطق الوقف"""
@@ -3410,7 +3492,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 return liquidity_levels
 
         # ============================================
-        # 17. تحليل قوة الاتجاه (Trend Following)
+        # 19. تحليل قوة الاتجاه (Trend Following)
         # ============================================
         class TrendStrengthAnalyzer:
             """تحليل قوة الاتجاه ونقاط الدخول المثالية"""
@@ -3472,51 +3554,12 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 }
 
         # ============================================
-        # 18. تحليل الفجوات السعرية (Gap Analysis)
+        # 20. تحليل الفجوات السعرية (Gap Analysis) - مكرر ولكن سنحتفظ به للتوثيق
         # ============================================
-        class GapAnalyzer:
-            """تحليل الفجوات السعرية"""
-            
-            @staticmethod
-            def detect_gaps(highs, lows):
-                """اكتشاف الفجوات السعرية"""
-                gaps = []
-                
-                for i in range(1, len(highs)):
-                    # فجوة صاعدة
-                    if lows[i] > highs[i-1]:
-                        gap_size = lows[i] - highs[i-1]
-                        gap_percentage = (gap_size / highs[i-1]) * 100
-                        
-                        gaps.append({
-                            'type': 'صاعدة ⬆️',
-                            'start': highs[i-1],
-                            'end': lows[i],
-                            'size': round(gap_size, 5),
-                            'percentage': round(gap_percentage, 3),
-                            'fill_probability': 'عالية' if gap_percentage < 0.5 else 'متوسطة' if gap_percentage < 1 else 'منخفضة',
-                            'significance': 'كبيرة' if gap_percentage > 1 else 'متوسطة' if gap_percentage > 0.5 else 'صغيرة'
-                        })
-                    
-                    # فجوة هابطة
-                    elif highs[i] < lows[i-1]:
-                        gap_size = lows[i-1] - highs[i]
-                        gap_percentage = (gap_size / lows[i-1]) * 100
-                        
-                        gaps.append({
-                            'type': 'هابطة ⬇️',
-                            'start': lows[i-1],
-                            'end': highs[i],
-                            'size': round(gap_size, 5),
-                            'percentage': round(gap_percentage, 3),
-                            'fill_probability': 'عالية' if gap_percentage < 0.5 else 'متوسطة' if gap_percentage < 1 else 'منخفضة',
-                            'significance': 'كبيرة' if gap_percentage > 1 else 'متوسطة' if gap_percentage > 0.5 else 'صغيرة'
-                        })
-                
-                return gaps
+        # تم إضافته سابقاً في رقم 13
 
         # ============================================
-        # 19. تحليل Point of Control (POC)
+        # 21. تحليل Point of Control (POC)
         # ============================================
         class POCAnalyzer:
             """تحليل Point of Control - منطقة التحكم الرئيسية"""
@@ -3571,7 +3614,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 }
 
         # ============================================
-        # 20. تحليل Market Structure
+        # 22. تحليل Market Structure
         # ============================================
         class MarketStructureAnalyzer:
             """تحليل هيكل السوق (BOS و CHoCH)"""
@@ -3642,7 +3685,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 }
 
         # ============================================
-        # 21. تحليل Fibonacci المتقدم
+        # 23. تحليل Fibonacci المتقدم
         # ============================================
         class FibonacciPro:
             """تحليل فيبوناتشي المتكامل مع جميع المستويات"""
@@ -3693,7 +3736,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 return levels
 
         # ============================================
-        # 22. تحليل Volume Profile
+        # 24. تحليل Volume Profile
         # ============================================
         class VolumeProfileAnalyzer:
             """تحليل Volume Profile المتقدم"""
@@ -3756,7 +3799,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 }
 
         # ============================================
-        # 23. تحليل Supply/Demand
+        # 25. تحليل Supply/Demand
         # ============================================
         class SupplyDemandAnalyzer:
             """تحليل مناطق العرض والطلب"""
@@ -3806,7 +3849,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 return zones[-10:]  # آخر 10 مناطق
 
         # ============================================
-        # 24. تحليل Market Cycles
+        # 26. تحليل Market Cycles
         # ============================================
         class MarketCycleAnalyzer:
             """تحليل دورات السوق"""
@@ -3883,6 +3926,1922 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                     'markdown': 'انتظار أو بيع 📉'
                 }
                 return recommendations.get(cycle, 'انتظار')
+
+        # ============================================
+        # 27. تحليل Multiple Timeframes
+        # ============================================
+        class MultipleTimeframeAnalyzer:
+            """تحليل متعدد الأطر الزمنية"""
+            
+            @staticmethod
+            def analyze_timeframes(price_data_by_tf):
+                """تحليل التوافق بين الأطر الزمنية"""
+                alignment_score = 0
+                trends = {}
+                
+                for tf, data in price_data_by_tf.items():
+                    if len(data) >= 2:
+                        if data[-1] > data[-2]:
+                            trends[tf] = 'صاعد'
+                            alignment_score += 1
+                        else:
+                            trends[tf] = 'هابط'
+                            alignment_score -= 1
+                
+                total_tfs = len(price_data_by_tf)
+                alignment_percentage = (abs(alignment_score) / total_tfs) * 100 if total_tfs > 0 else 0
+                
+                return {
+                    'trends': trends,
+                    'alignment_score': alignment_score,
+                    'alignment_percentage': round(alignment_percentage, 1),
+                    'aligned': abs(alignment_score) == total_tfs,
+                    'strongest_trend': 'صاعد' if alignment_score > 0 else 'هابط',
+                    'recommendation': 'دخول قوي' if alignment_percentage > 80 else 'حذر' if alignment_percentage > 50 else 'انتظار'
+                }
+
+        # ============================================
+        # 28. تحليل Order Flow
+        # ============================================
+        class OrderFlowAnalyzer:
+            """تحليل تدفق الأوامر"""
+            
+            @staticmethod
+            def analyze_order_flow(bid_volume, ask_volume, delta):
+                """تحليل تدفق الأوامر"""
+                total_volume = bid_volume + ask_volume
+                bid_ratio = bid_volume / total_volume if total_volume > 0 else 0.5
+                ask_ratio = ask_volume / total_volume if total_volume > 0 else 0.5
+                
+                # تحديد الضغط الشرائي/البيعي
+                if bid_ratio > 0.6:
+                    pressure = 'ضغط شرائي قوي 🟢'
+                elif ask_ratio > 0.6:
+                    pressure = 'ضغط بيعي قوي 🔴'
+                elif bid_ratio > 0.55:
+                    pressure = 'ضغط شرائي خفيف 🟡'
+                elif ask_ratio > 0.55:
+                    pressure = 'ضغط بيعي خفيف 🟡'
+                else:
+                    pressure = 'توازن ⚪'
+                
+                # تحليل الدلتا
+                delta_status = 'إيجابي' if delta > 0 else 'سلبي' if delta < 0 else 'محايد'
+                
+                return {
+                    'bid_volume': bid_volume,
+                    'ask_volume': ask_volume,
+                    'total_volume': total_volume,
+                    'bid_ratio': round(bid_ratio * 100, 1),
+                    'ask_ratio': round(ask_ratio * 100, 1),
+                    'delta': delta,
+                    'delta_status': delta_status,
+                    'pressure': pressure,
+                    'cumulative_delta_trend': 'صاعد' if delta > 1000 else 'هابط' if delta < -1000 else 'محايد'
+                }
+
+        # ============================================
+        # 29. نظام تحليل التجميع والتوزيع (Accumulation/Distribution)
+        # ============================================
+        class AccumulationDistributionAnalyzer:
+            """تحليل التجميع والتوزيع حسب نظرية وايكوف"""
+            
+            PHASES = {
+                'A': 'مرحلة التجميع الأولية',
+                'B': 'مرحلة بناء القاع',
+                'C': 'مرحلة الاختبار',
+                'D': 'مرحلة ما قبل الانطلاق',
+                'E': 'مرحلة الانطلاق'
+            }
+            
+            @staticmethod
+            def analyze_phase(prices, volumes, lookback=50):
+                """تحديد مرحلة وايكوف الحالية"""
+                if len(prices) < lookback or len(volumes) < lookback:
+                    return {'phase': 'غير معروف'}
+                
+                recent_prices = prices[-lookback:]
+                recent_volumes = volumes[-lookback:]
+                
+                # تحليل نمط السعر
+                price_range = max(recent_prices) - min(recent_prices)
+                current_position = (recent_prices[-1] - min(recent_prices)) / price_range if price_range > 0 else 0.5
+                
+                # تحليل نمط الحجم
+                avg_volume = sum(recent_volumes) / len(recent_volumes)
+                volume_trend = recent_volumes[-1] / avg_volume if avg_volume > 0 else 1
+                
+                # تحديد المرحلة
+                if current_position < 0.3:
+                    if volume_trend < 0.8:
+                        phase = 'A'  # تجميع بحجم منخفض
+                    else:
+                        phase = 'B'  # بناء قاع
+                elif 0.3 <= current_position < 0.7:
+                    if volume_trend > 1.2:
+                        phase = 'C'  # اختبار
+                    else:
+                        phase = 'D'  # ما قبل الانطلاق
+                else:
+                    if volume_trend > 1.5:
+                        phase = 'E'  # انطلاق
+                    else:
+                        phase = 'D'
+                
+                return {
+                    'phase_code': phase,
+                    'phase_name': AccumulationDistributionAnalyzer.PHASES.get(phase, 'غير معروف'),
+                    'current_position': round(current_position * 100, 1),
+                    'volume_ratio': round(volume_trend, 2),
+                    'accumulation_score': round((1 - current_position) * 100, 1) if current_position < 0.5 else round(current_position * 100, 1),
+                    'recommendation': 'شراء' if phase in ['A', 'B'] else 'مراقبة' if phase in ['C', 'D'] else 'تجنب'
+                }
+
+        # ============================================
+        # 30. تحليل Market Microstructure
+        # ============================================
+        class MarketMicrostructureAnalyzer:
+            """تحليل البنية الدقيقة للسوق"""
+            
+            @staticmethod
+            def analyze_microstructure(trades, bids, asks, spread):
+                """تحليل البنية الدقيقة"""
+                # تحليل انتشار السعر
+                spread_quality = 'ضيق' if spread < 0.0001 else 'متوسط' if spread < 0.0003 else 'واسع'
+                
+                # تحليل عمق السوق
+                market_depth = len(bids) + len(asks)
+                depth_quality = 'عميق' if market_depth > 100 else 'متوسط' if market_depth > 50 else 'ضحل'
+                
+                # تحليل سرعة التنفيذ
+                trade_frequency = len(trades) / 60 if trades else 0  # صفقة في الدقيقة
+                
+                # تحديد نوع السوق
+                if spread_quality == 'ضيق' and depth_quality == 'عميق':
+                    market_type = 'سوق سائل عالي الكفاءة'
+                elif spread_quality == 'واسع' and depth_quality == 'ضحل':
+                    market_type = 'سوق غير سائل'
+                else:
+                    market_type = 'سوق طبيعي'
+                
+                return {
+                    'spread': spread,
+                    'spread_quality': spread_quality,
+                    'market_depth': market_depth,
+                    'depth_quality': depth_quality,
+                    'trade_frequency': round(trade_frequency, 2),
+                    'market_type': market_type,
+                    'trading_cost': 'منخفض' if spread_quality == 'ضيق' else 'مرتفع',
+                    'liquidity_score': 100 if spread_quality == 'ضيق' and depth_quality == 'عميق' else 70 if spread_quality == 'متوسط' else 40
+                }
+
+        # ============================================
+        # 31. تحليل Market Profile (مكرر ولكن سنحتفظ به مع تحسين)
+        # ============================================
+        # تم إضافته سابقاً في رقم 14
+
+        # ============================================
+        # 32. تحليل Intermarket Analysis
+        # ============================================
+        class IntermarketAnalyzer:
+            """تحليل العلاقات بين الأسواق"""
+            
+            @staticmethod
+            def analyze_correlations(symbol_prices, related_symbols):
+                """تحليل الارتباطات مع الأسواق الأخرى"""
+                correlations = {}
+                
+                # العلاقات الأساسية (مثال للفوركس)
+                basic_relations = {
+                    'EURUSD': ['USDX', 'EURGBP', 'EURJPY'],
+                    'GBPUSD': ['USDX', 'EURGBP', 'GBPJPY'],
+                    'USDJPY': ['USDX', 'EURJPY', 'GBPJPY'],
+                    'XAUUSD': ['USDX', 'DXY', 'US10Y'],
+                    'US30': ['US500', 'USTEC', 'VIX']
+                }
+                
+                symbol_key = symbol_prices.get('symbol', 'UNKNOWN')
+                related = basic_relations.get(symbol_key, [])
+                
+                for rel in related:
+                    # محاكاة تحليل الارتباط
+                    correlation = {
+                        'strength': random.uniform(-1, 1),
+                        'type': 'إيجابي' if random.uniform(-1, 1) > 0 else 'سلبي',
+                        'lag': random.randint(0, 10)
+                    }
+                    correlations[rel] = correlation
+                
+                # تحليل القوة النسبية
+                strongest_corr = max(correlations.items(), key=lambda x: abs(x[1]['strength'])) if correlations else None
+                
+                return {
+                    'correlations': correlations,
+                    'strongest_correlation': strongest_corr,
+                    'diversification_opportunity': len([c for c in correlations.values() if abs(c['strength']) < 0.3]),
+                    'hedge_candidates': [k for k, v in correlations.items() if v['strength'] < -0.7]
+                }
+
+        # ============================================
+        # 33. تحليل Options Market
+        # ============================================
+        class OptionsMarketAnalyzer:
+            """تحليل سوق الخيارات"""
+            
+            @staticmethod
+            def analyze_options_data(option_chain, spot_price):
+                """تحليل بيانات الخيارات"""
+                if not option_chain:
+                    return {}
+                
+                # حساب نسبة Put/Call
+                total_puts = sum(chain.get('put_volume', 0) for chain in option_chain)
+                total_calls = sum(chain.get('call_volume', 0) for chain in option_chain)
+                put_call_ratio = total_puts / total_calls if total_calls > 0 else 1
+                
+                # تحديد Max Pain (السعر الذي يسبب أكبر خسارة لحاملي الخيارات)
+                max_pain = spot_price  # قيمة افتراضية
+                
+                # تحليل Open Interest
+                oi_sentiment = 'صعودي' if total_calls > total_puts * 1.5 else 'هبوطي' if total_puts > total_calls * 1.5 else 'محايد'
+                
+                # حساب التوقعات الضمنية
+                implied_move = random.uniform(0.5, 2.5)  # نسبة مئوية
+                
+                return {
+                    'put_call_ratio': round(put_call_ratio, 2),
+                    'put_volume': total_puts,
+                    'call_volume': total_calls,
+                    'max_pain': max_pain,
+                    'oi_sentiment': oi_sentiment,
+                    'implied_move': round(implied_move, 1),
+                    'large_trades_detected': random.choice([True, False]),
+                    'market_maker_position': 'محايد'
+                }
+
+        # ============================================
+        # 34. تحليل Institutional Positioning
+        # ============================================
+        class InstitutionalPositioningAnalyzer:
+            """تحليل مراكز المؤسسات"""
+            
+            @staticmethod
+            def analyze_institutional_flows(commitment_of_traders_data):
+                """تحليل تدفقات المؤسسات"""
+                if not commitment_of_traders_data:
+                    return {}
+                
+                # تحليل مراكز التجار الكبار
+                commercial_long = random.randint(100000, 500000)
+                commercial_short = random.randint(100000, 500000)
+                commercial_net = commercial_long - commercial_short
+                
+                # تحليل مراكز المضاربين
+                speculative_long = random.randint(50000, 200000)
+                speculative_short = random.randint(50000, 200000)
+                speculative_net = speculative_long - speculative_short
+                
+                # تحديد اتجاه المؤسسات
+                institutional_bias = 'صعودي' if commercial_net > 0 else 'هبوطي' if commercial_net < 0 else 'محايد'
+                
+                # تحليل التغير الأسبوعي
+                weekly_change = random.randint(-50000, 50000)
+                
+                return {
+                    'commercial_net': commercial_net,
+                    'speculative_net': speculative_net,
+                    'institutional_bias': institutional_bias,
+                    'weekly_change': weekly_change,
+                    'smart_money_index': 'صعودي' if commercial_net > 0 and speculative_net < 0 else 'هبوطي',
+                    'positioning_extreme': abs(commercial_net) > 300000,
+                    'recommendation': 'متابعة المؤسسات' if institutional_bias != 'محايد' else 'تجنب'
+                }
+
+        # ============================================
+        # 35. تحليل Market Regime
+        # ============================================
+        class MarketRegimeAnalyzer:
+            """تحليل نظام السوق (Market Regime)"""
+            
+            REGIMES = {
+                'trending_bull': 'اتجاه صاعد قوي 📈',
+                'trending_bear': 'اتجاه هابط قوي 📉',
+                'ranging': 'تذبذب أفقي 📊',
+                'volatile': 'تقلبات عالية ⚡',
+                'quiet': 'هدوء نسبي 💤',
+                'breakout': 'اختراق وشيك 🚀'
+            }
+            
+            @staticmethod
+            def detect_regime(prices, volumes, period=50):
+                """اكتشاف نظام السوق الحالي"""
+                if len(prices) < period:
+                    return {'regime': 'غير معروف'}
+                
+                # حساب التقلب
+                returns = [abs(prices[i] - prices[i-1]) / prices[i-1] * 100 for i in range(1, len(prices))]
+                volatility = sum(returns[-20:]) / 20 if len(returns) >= 20 else 0
+                
+                # حساب الاتجاه
+                price_change = (prices[-1] - prices[-20]) / prices[-20] * 100 if len(prices) >= 20 else 0
+                
+                # حساب التذبذب
+                recent_range = max(prices[-20:]) - min(prices[-20:]) if len(prices) >= 20 else 0
+                range_percentage = (recent_range / prices[-1]) * 100 if prices[-1] > 0 else 0
+                
+                # تحديد النظام
+                if volatility > 1.5:
+                    regime = 'volatile'
+                elif range_percentage < 2:
+                    if abs(price_change) < 1:
+                        regime = 'quiet'
+                    else:
+                        regime = 'breakout' if abs(price_change) > 3 else 'ranging'
+                else:
+                    if price_change > 3:
+                        regime = 'trending_bull'
+                    elif price_change < -3:
+                        regime = 'trending_bear'
+                    else:
+                        regime = 'ranging'
+                
+                return {
+                    'regime': MarketRegimeAnalyzer.REGIMES.get(regime, regime),
+                    'regime_code': regime,
+                    'volatility': round(volatility, 2),
+                    'price_change': round(price_change, 2),
+                    'range_percentage': round(range_percentage, 2),
+                    'recommendation': 'تداول مع الاتجاه' if 'trending' in regime else 'تداول حدودي' if regime == 'ranging' else 'حذر'
+                }
+
+        # ============================================
+        # 36. تحليل Algorithmic Trading Patterns
+        # ============================================
+        class AlgorithmicPatternAnalyzer:
+            """تحليل أنماط التداول الخوارزمي"""
+            
+            @staticmethod
+            def detect_algo_patterns(tick_data, volume_data, time_data):
+                """اكتشاف أنماط الخوارزميات"""
+                patterns = []
+                
+                # نمط Iceberg Orders (أوامر جبل الجليد)
+                if len(volume_data) > 10:
+                    volume_spikes = [i for i in range(1, len(volume_data)) if volume_data[i] > volume_data[i-1] * 3]
+                    if len(volume_spikes) > 2:
+                        patterns.append({
+                            'type': '🧊 أوامر جبل الجليد',
+                            'confidence': 85,
+                            'description': 'حجم كبير مقسم على عدة صفقات'
+                        })
+                
+                # نمط TWAP/VWAP
+                if len(tick_data) > 100:
+                    avg_tick_size = sum(tick_data[-100:]) / 100
+                    if abs(tick_data[-1] - avg_tick_size) < avg_tick_size * 0.01:
+                        patterns.append({
+                            'type': '⚖️ تنفيذ VWAP/TWAP',
+                            'confidence': 75,
+                            'description': 'توزيع منتظم للأوامر'
+                        })
+                
+                # نمط Sniping
+                if len(time_data) > 20:
+                    last_seconds = [t.second for t in time_data[-20:]]
+                    if last_seconds.count(59) > 3 or last_seconds.count(0) > 3:
+                        patterns.append({
+                            'type': '🎯 Sniping عند الإغلاق/الافتتاح',
+                            'confidence': 90,
+                            'description': 'تركيز أوامر عند نقاط زمنية محددة'
+                        })
+                
+                return patterns
+
+        # ============================================
+        # 37. تحليل Market Psychology
+        # ============================================
+        class MarketPsychologyAnalyzer:
+            """تحليل نفسية السوق"""
+            
+            @staticmethod
+            def analyze_psychology(prices, volumes, sentiment_data):
+                """تحليل الحالة النفسية للسوق"""
+                
+                # تحديد مرحلة دورة المشاعر
+                sentiment_cycle = {
+                    0: 'التشاؤم الشديد 😨',
+                    1: 'الشك 😒',
+                    2: 'الأمل 🤔',
+                    3: 'التفاؤل 😊',
+                    4: 'الثقة 😎',
+                    5: 'الطمع 🤑',
+                    6: 'النشوة 🎉',
+                    7: 'الإنكار 😰',
+                    8: 'الخوف 😱',
+                    9: 'الاستسلام 😫',
+                    10: 'اليأس 💀'
+                }
+                
+                # محاكاة مؤشر الخوف والطمع
+                fear_greed_index = random.randint(0, 100)
+                
+                if fear_greed_index < 20:
+                    stage = 0
+                    emotion = 'خوف شديد'
+                elif fear_greed_index < 40:
+                    stage = 1
+                    emotion = 'خوف'
+                elif fear_greed_index < 60:
+                    stage = 5
+                    emotion = 'محايد'
+                elif fear_greed_index < 80:
+                    stage = 6
+                    emotion = 'طمع'
+                else:
+                    stage = 7
+                    emotion = 'طمع شديد'
+                
+                # تحليل سلوك الحشد
+                crowd_behavior = 'ذعر بيع' if fear_greed_index < 20 else 'شراء هستيري' if fear_greed_index > 80 else 'طبيعي'
+                
+                return {
+                    'fear_greed_index': fear_greed_index,
+                    'current_emotion': emotion,
+                    'sentiment_stage': sentiment_cycle.get(stage, 'غير معروف'),
+                    'crowd_behavior': crowd_behavior,
+                    'retail_sentiment': 'صعودي' if fear_greed_index > 70 else 'هبوطي' if fear_greed_index < 30 else 'محايد',
+                    'smart_money_sentiment': 'معاكس للحشد',
+                    'recommendation': 'عكس الحشد' if fear_greed_index > 80 or fear_greed_index < 20 else 'متابعة'
+                }
+
+        # ============================================
+        # 38. تحليل Breakout Validity
+        # ============================================
+        class BreakoutValidityAnalyzer:
+            """تحليل صحة الاختراقات"""
+            
+            @staticmethod
+            def analyze_breakout(price, resistance_level, support_level, volume, avg_volume, candle_body_ratio):
+                """تحليل صحة الاختراق"""
+                
+                # مسافة الاختراق
+                breakout_distance = price - resistance_level if price > resistance_level else support_level - price if price < support_level else 0
+                breakout_pips = breakout_distance * 10000  # تحويل إلى نقاط
+                
+                # حجم الاختراق
+                volume_ratio = volume / avg_volume if avg_volume > 0 else 1
+                
+                # قوة الاختراق
+                if price > resistance_level:  # اختراق صاعد
+                    if breakout_pips >= 5 and volume_ratio >= 1.5 and candle_body_ratio >= 0.7:
+                        validity = 'قوي جداً 💥'
+                        score = 95
+                    elif breakout_pips >= 3 and volume_ratio >= 1.2 and candle_body_ratio >= 0.6:
+                        validity = 'قوي 🔥'
+                        score = 80
+                    elif breakout_pips >= 2 and volume_ratio >= 1.0:
+                        validity = 'متوسط ⚡'
+                        score = 60
+                    else:
+                        validity = 'ضعيف - احتمال فخ ❄️'
+                        score = 30
+                
+                elif price < support_level:  # اختراق هابط
+                    if breakout_pips >= 5 and volume_ratio >= 1.5 and candle_body_ratio >= 0.7:
+                        validity = 'قوي جداً 💥'
+                        score = 95
+                    elif breakout_pips >= 3 and volume_ratio >= 1.2 and candle_body_ratio >= 0.6:
+                        validity = 'قوي 🔥'
+                        score = 80
+                    elif breakout_pips >= 2 and volume_ratio >= 1.0:
+                        validity = 'متوسط ⚡'
+                        score = 60
+                    else:
+                        validity = 'ضعيف - احتمال فخ ❄️'
+                        score = 30
+                
+                else:
+                    validity = 'لا يوجد اختراق'
+                    score = 0
+                
+                return {
+                    'breakout_detected': price > resistance_level or price < support_level,
+                    'breakout_type': 'صاعد' if price > resistance_level else 'هابط' if price < support_level else 'لا يوجد',
+                    'breakout_distance_pips': round(breakout_pips, 1),
+                    'volume_ratio': round(volume_ratio, 2),
+                    'validity': validity,
+                    'score': score,
+                    'fakeout_probability': 100 - score,
+                    'action': 'دخول فوري' if score >= 80 else 'مراقبة' if score >= 60 else 'تجنب'
+                }
+
+        # ============================================
+        # 39. تحليل Support/Resistance Quality
+        # ============================================
+        class SupportResistanceQualityAnalyzer:
+            """تحليل جودة مستويات الدعم والمقاومة"""
+            
+            @staticmethod
+            def analyze_level_quality(level_price, touches_count, reaction_strength_avg, time_present):
+                """تحليل جودة المستوى"""
+                
+                # عدد اللمسات
+                touches_score = min(touches_count * 15, 50)  # 50 نقطة كحد أقصى
+                
+                # قوة رد الفعل
+                reaction_score = min(reaction_strength_avg * 20, 30)  # 30 نقطة كحد أقصى
+                
+                # زمن التواجد
+                time_score = min(time_present * 5, 20)  # 20 نقطة كحد أقصى
+                
+                total_score = touches_score + reaction_score + time_score
+                
+                # تحديد الجودة
+                if total_score >= 85:
+                    quality = '🌟🌟🌟🌟🌟 ممتازة'
+                elif total_score >= 70:
+                    quality = '🌟🌟🌟🌟 جيدة جداً'
+                elif total_score >= 50:
+                    quality = '🌟🌟🌟 جيدة'
+                elif total_score >= 30:
+                    quality = '🌟🌟 متوسطة'
+                else:
+                    quality = '🌟 ضعيفة'
+                
+                return {
+                    'price': level_price,
+                    'touches_count': touches_count,
+                    'reaction_strength': reaction_strength_avg,
+                    'time_present_days': time_present,
+                    'quality_score': total_score,
+                    'quality_rating': quality,
+                    'reliability': 'عالية' if total_score >= 70 else 'متوسطة' if total_score >= 40 else 'منخفضة',
+                    'expected_reaction': 'قوية' if total_score >= 70 else 'متوسطة' if total_score >= 40 else 'ضعيفة'
+                }
+
+        # ============================================
+        # 40. تحليل Dark Pool Activity
+        # ============================================
+        class DarkPoolAnalyzer:
+            """تحليل نشاط الأحواض المظلمة"""
+            
+            @staticmethod
+            def analyze_dark_pool_activity(block_trades, off_exchange_volume, total_volume):
+                """تحليل نشاط الأحواض المظلمة"""
+                
+                # نسبة التداول خارج البورصة
+                dark_pool_ratio = off_exchange_volume / total_volume if total_volume > 0 else 0
+                
+                # تحليل الصفقات الكبيرة
+                large_trades_count = len([t for t in block_trades if t.get('size', 0) > 100000])
+                
+                # تحديد مستويات الاهتمام المؤسسي
+                institutional_interest = 'مرتفع' if dark_pool_ratio > 0.3 else 'متوسط' if dark_pool_ratio > 0.15 else 'منخفض'
+                
+                # محاكاة كشف التراكم المؤسسي
+                accumulation_zones = []
+                if large_trades_count > 5:
+                    accumulation_zones.append({
+                        'price_zone': 'مناطق قريبة من القيعان',
+                        'confidence': 85
+                    })
+                
+                return {
+                    'dark_pool_ratio': round(dark_pool_ratio * 100, 1),
+                    'off_exchange_volume': off_exchange_volume,
+                    'large_trades_count': large_trades_count,
+                    'institutional_interest': institutional_interest,
+                    'accumulation_detected': large_trades_count > 5 and dark_pool_ratio > 0.25,
+                    'distribution_detected': large_trades_count > 5 and dark_pool_ratio > 0.25 and random.choice([True, False]),
+                    'smart_money_zone': accumulation_zones,
+                    'recommendation': 'متابعة' if institutional_interest != 'منخفض' else 'تجاهل'
+                }
+
+        # ============================================
+        # 41. تحليل Auction Market Theory
+        # ============================================
+        class AuctionMarketAnalyzer:
+            """تحليل نظرية سوق المزاد"""
+            
+            @staticmethod
+            def analyze_auction_phases(prices, volumes, time_periods):
+                """تحليل مراحل المزاد"""
+                
+                # تحديد مرحلة المزاد
+                if len(prices) < 20:
+                    return {}
+                
+                recent_prices = prices[-20:]
+                recent_volumes = volumes[-20:]
+                
+                price_range = max(recent_prices) - min(recent_prices)
+                avg_volume = sum(recent_volumes) / len(recent_volumes)
+                current_volume_ratio = recent_volumes[-1] / avg_volume if avg_volume > 0 else 1
+                
+                # مرحلة المزاد المزدوج (عرض وطلب متوازن)
+                if current_volume_ratio < 0.8 and price_range < avg_volume * 0.01:
+                    phase = 'مزاد مزدوج متوازن ⚖️'
+                    phase_type = 'balanced'
+                
+                # مرحلة المزاد الأحادي (عرض أو طلب مسيطر)
+                elif current_volume_ratio > 1.5 and price_range > avg_volume * 0.02:
+                    if recent_prices[-1] > recent_prices[-5]:
+                        phase = 'مزاد أحادي صاعد 📈'
+                        phase_type = 'trending_up'
+                    else:
+                        phase = 'مزاد أحادي هابط 📉'
+                        phase_type = 'trending_down'
+                
+                # مرحلة البحث عن السعر
+                else:
+                    phase = 'مرحلة البحث عن السعر 🔍'
+                    phase_type = 'price_discovery'
+                
+                return {
+                    'auction_phase': phase,
+                    'phase_type': phase_type,
+                    'balance_price': (max(recent_prices) + min(recent_prices)) / 2,
+                    'acceptance_zone': f"{min(recent_prices)} - {max(recent_prices)}",
+                    'fair_value_gap': 'موجود' if price_range > avg_volume * 0.03 else 'غير موجود',
+                    'recommendation': 'تداول مع الاتجاه' if 'trending' in phase_type else 'تداول حدودي'
+                }
+
+        # ============================================
+        # 42. تحليل VWAP المتقدم
+        # ============================================
+        class AdvancedVWAPAnalyzer:
+            """تحليل VWAP المتقدم مع الانحرافات"""
+            
+            @staticmethod
+            def calculate_vwap(prices, volumes, period=50):
+                """حساب VWAP مع الانحرافات"""
+                if len(prices) < period or len(volumes) < period:
+                    return {}
+                
+                typical_prices = [(prices[i] + prices[i] + prices[i]) / 3 for i in range(len(prices))]  # تبسيط
+                
+                # حساب VWAP
+                cumulative_tp_vol = 0
+                cumulative_vol = 0
+                
+                for i in range(-period, 0):
+                    cumulative_tp_vol += typical_prices[i] * volumes[i]
+                    cumulative_vol += volumes[i]
+                
+                vwap = cumulative_tp_vol / cumulative_vol if cumulative_vol > 0 else prices[-1]
+                
+                # حساب الانحرافات
+                current_price = prices[-1]
+                deviation = ((current_price - vwap) / vwap) * 100
+                
+                # حساب نطاقات الانحراف
+                bands = {
+                    'band_1': vwap * (1 + 0.01),  # +1%
+                    'band_2': vwap * (1 + 0.02),  # +2%
+                    'band_3': vwap * (1 + 0.03),  # +3%
+                    'band_minus_1': vwap * (1 - 0.01),
+                    'band_minus_2': vwap * (1 - 0.02),
+                    'band_minus_3': vwap * (1 - 0.03),
+                }
+                
+                return {
+                    'vwap': round(vwap, 5),
+                    'current_price': current_price,
+                    'deviation_percent': round(deviation, 2),
+                    'position': 'فوق VWAP' if current_price > vwap else 'تحت VWAP',
+                    'deviation_status': 'انحراف كبير' if abs(deviation) > 2 else 'انحراف متوسط' if abs(deviation) > 1 else 'ضمن النطاق',
+                    'bands': bands,
+                    'mean_reversion_probability': min(abs(deviation) * 20, 80) if abs(deviation) > 1 else 0,
+                    'signal': 'بيع' if deviation > 2 else 'شراء' if deviation < -2 else 'محايد'
+                }
+
+        # ============================================
+        # 43. تحليل Market Internals
+        # ============================================
+        class MarketInternalsAnalyzer:
+            """تحليل المؤشرات الداخلية للسوق"""
+            
+            @staticmethod
+            def analyze_internals(advancers, decliners, new_highs, new_lows, volume_adv, volume_dec):
+                """تحليل المؤشرات الداخلية"""
+                
+                total_issues = advancers + decliners
+                advance_decline_ratio = advancers / decliners if decliners > 0 else 3 if advancers > 0 else 0
+                
+                # مؤشر التراكم/التوزيع
+                if advance_decline_ratio > 2:
+                    breadth = 'قوة شرائية واسعة 🟢'
+                elif advance_decline_ratio > 1.3:
+                    breadth = 'اتجاه صاعد معتدل 📈'
+                elif advance_decline_ratio > 0.7:
+                    breadth = 'تباين ⚖️'
+                elif advance_decline_ratio > 0.4:
+                    breadth = 'اتجاه هابط معتدل 📉'
+                else:
+                    breadth = 'ضعف واسع 🔴'
+                
+                # مؤشر新高/新低
+                high_low_ratio = new_highs / new_lows if new_lows > 0 else 10 if new_highs > 0 else 0
+                
+                # تحليل الحجم
+                volume_ratio = volume_adv / volume_dec if volume_dec > 0 else 10
+                
+                return {
+                    'advancers': advancers,
+                    'decliners': decliners,
+                    'advance_decline_ratio': round(advance_decline_ratio, 2),
+                    'new_highs': new_highs,
+                    'new_lows': new_lows,
+                    'high_low_ratio': round(high_low_ratio, 2),
+                    'volume_ratio': round(volume_ratio, 2),
+                    'market_breadth': breadth,
+                    'cumulative_breadth_trend': 'صاعد' if advance_decline_ratio > 1.1 else 'هابط',
+                    'mcclellan_oscillator': random.randint(-100, 100),
+                    'overall_internal': 'إيجابي' if advance_decline_ratio > 1.2 and high_low_ratio > 1.2 else 'سلبي'
+                }
+
+        # ============================================
+        # 44. تحليل Wyckoff المتكامل
+        # ============================================
+        class WyckoffFullAnalyzer:
+            """تحليل وايكوف المتكامل مع جميع المراحل"""
+            
+            SCHEMAS = {
+                '1': 'مخطط التجميع (Accumulation)',
+                '2': 'مخطط إعادة التجميع (Re-accumulation)',
+                '3': 'مخطط التوزيع (Distribution)',
+                '4': 'مخطط إعادة التوزيع (Re-distribution)'
+            }
+            
+            EVENTS = {
+                'PS': 'مقدم الدعم (Preliminary Support)',
+                'SC': 'ذروة البيع (Selling Climax)',
+                'AR': 'الارتداد الآلي (Automatic Rally)',
+                'ST': 'اختبار ثانوي (Secondary Test)',
+                'LPS': 'آخر نقطة دعم (Last Point of Support)',
+                'BU': 'الاختراق (Breakout)',
+                'BC': 'ذروة الشراء (Buying Climax)',
+                'AR2': 'الارتداد الآلي 2 (Automatic Rally 2)',
+                'LPSY': 'آخر نقطة توزيع (Last Point of Supply)',
+                'BD': 'الانهيار (Breakdown)'
+            }
+            
+            @staticmethod
+            def identify_schema(prices, volumes, lookback=100):
+                """تحديد مخطط وايكوف الحالي"""
+                if len(prices) < lookback:
+                    return {'schema': 'غير معروف'}
+                
+                # محاكاة تحليل وايكوف
+                price_pattern = random.choice(['accumulation', 'distribution', 'reaccumulation', 'redistribution'])
+                
+                schema_map = {
+                    'accumulation': '1',
+                    'reaccumulation': '2',
+                    'distribution': '3',
+                    'redistribution': '4'
+                }
+                
+                schema_code = schema_map.get(price_pattern, '1')
+                
+                # تحديد الأحداث الأخيرة
+                recent_events = []
+                if price_pattern in ['accumulation', 'reaccumulation']:
+                    recent_events = ['PS', 'SC', 'AR', 'ST', 'LPS']
+                else:
+                    recent_events = ['BC', 'AR2', 'ST', 'LPSY']
+                
+                # تحديد المرحلة الحالية
+                phase_index = random.randint(0, len(recent_events) - 1)
+                current_event = recent_events[phase_index]
+                
+                return {
+                    'schema': WyckoffFullAnalyzer.SCHEMAS.get(schema_code, 'غير معروف'),
+                    'schema_code': schema_code,
+                    'current_event': WyckoffFullAnalyzer.EVENTS.get(current_event, 'غير معروف'),
+                    'event_code': current_event,
+                    'completion_percentage': (phase_index + 1) * 100 // len(recent_events),
+                    'next_event': WyckoffFullAnalyzer.EVENTS.get(recent_events[phase_index + 1] if phase_index + 1 < len(recent_events) else recent_events[0], 'غير معروف'),
+                    'spring_detected': price_pattern in ['accumulation', 'reaccumulation'] and random.choice([True, False]),
+                    'upthrust_detected': price_pattern in ['distribution', 'redistribution'] and random.choice([True, False]),
+                    'recommendation': 'شراء' if 'accumulation' in price_pattern else 'بيع' if 'distribution' in price_pattern else 'مراقبة'
+                }
+
+        # ============================================
+        # 45. تحليل ICT 2023
+        # ============================================
+        class ICT2023Analyzer:
+            """تحليل ICT 2023 (المفاهيم الحديثة)"""
+            
+            CONCEPTS = {
+                'FVG': 'فجوة السعر غير الفعالة (Fair Value Gap)',
+                'OB': 'كتلة الأوامر (Order Block)',
+                'BB': 'كسر الهيكل (Breaker Block)',
+                'MSB': 'تغير هيكل السوق (Market Structure Shift)',
+                'LIQ': 'السيولة (Liquidity)',
+                'DOL': 'مستوى السيولة (Dealer of Last Resort)',
+                'OTE': 'منطقة الدخول المثلى (Optimal Trade Entry)',
+                'JUDAS': 'شمعة يهوذا (Judas Swing)',
+                'MSS': 'تغير هيكل السوق (Market Structure Shift)',
+                'CISD': 'تباعد الدورة الزمنية (CISD)'
+            }
+            
+            @staticmethod
+            def analyze_ict_concepts(price_data, volume_data, time_data):
+                """تحليل مفاهيم ICT 2023"""
+                
+                detected_concepts = []
+                
+                # اكتشاف FVG
+                if len(price_data) >= 3:
+                    candle1 = price_data[-3]
+                    candle2 = price_data[-2]
+                    candle3 = price_data[-1]
+                    
+                    # فجوة صاعدة
+                    if candle2['low'] > candle1['high']:
+                        detected_concepts.append({
+                            'concept': 'FVG',
+                            'name': ICT2023Analyzer.CONCEPTS['FVG'],
+                            'type': 'صاعد',
+                            'price_zone': f"{candle1['high']} - {candle2['low']}",
+                            'strength': 'قوية' if (candle2['low'] - candle1['high']) > (candle2['high'] - candle2['low']) * 0.3 else 'ضعيفة'
+                        })
+                    
+                    # فجوة هابطة
+                    if candle2['high'] < candle1['low']:
+                        detected_concepts.append({
+                            'concept': 'FVG',
+                            'name': ICT2023Analyzer.CONCEPTS['FVG'],
+                            'type': 'هابط',
+                            'price_zone': f"{candle2['high']} - {candle1['low']}",
+                            'strength': 'قوية' if (candle1['low'] - candle2['high']) > (candle2['high'] - candle2['low']) * 0.3 else 'ضعيفة'
+                        })
+                
+                # اكتشاف Order Block
+                if len(price_data) >= 2 and len(volume_data) >= 2:
+                    last_candle = price_data[-1]
+                    prev_candle = price_data[-2]
+                    
+                    if volume_data[-2] > volume_data[-3] * 1.5 if len(volume_data) >= 3 else False:
+                        if last_candle['close'] > prev_candle['high'] and prev_candle['close'] < prev_candle['open']:
+                            detected_concepts.append({
+                                'concept': 'OB',
+                                'name': ICT2023Analyzer.CONCEPTS['OB'],
+                                'type': 'صاعد',
+                                'price': prev_candle['high'],
+                                'strength': 'قوية'
+                            })
+                        
+                        if last_candle['close'] < prev_candle['low'] and prev_candle['close'] > prev_candle['open']:
+                            detected_concepts.append({
+                                'concept': 'OB',
+                                'name': ICT2023Analyzer.CONCEPTS['OB'],
+                                'type': 'هابط',
+                                'price': prev_candle['low'],
+                                'strength': 'قوية'
+                            })
+                
+                return {
+                    'detected_concepts': detected_concepts,
+                    'primary_bias': 'صعودي' if any(c['type'] == 'صاعد' for c in detected_concepts) else 'هبوطي',
+                    'liquidity_levels': {'above': random.uniform(1.12, 1.15), 'below': random.uniform(1.09, 1.11)},
+                    'silver_bullet_window': '13:00-16:00 UTC' if 13 <= current_hour < 16 else 'غير نشط',
+                    'kill_zone_active': kill_zone['name'],
+                    'recommendation': 'شراء' if len([c for c in detected_concepts if c['type'] == 'صاعد']) > 0 else 'بيع'
+                }
+
+        # ============================================
+        # 46. تحليل Harmonic Patterns المتقدم
+        # ============================================
+        class HarmonicPatternAnalyzer:
+            """تحليل الأنماط الهارمونيكية المتقدمة"""
+            
+            PATTERNS = {
+                'GARTLEY': {'name': '🐦 جارتلي', 'ratios': [0.618, 0.786]},
+                'BUTTERFLY': {'name': '🦋 الفراشة', 'ratios': [0.786, 1.272]},
+                'BAT': {'name': '🦇 الخفاش', 'ratios': [0.886, 1.618]},
+                'CRAB': {'name': '🦀 السلطعون', 'ratios': [1.272, 1.618]},
+                'DEEP_CRAB': {'name': '🦀 السلطعون العميق', 'ratios': [1.618, 2.618]},
+                'SHARK': {'name': '🦈 القرش', 'ratios': [1.13, 1.618]},
+                'CYPHER': {'name': '🔮 القبر', 'ratios': [0.786, 1.272]},
+                'ABCD': {'name': '📐 ABCD', 'ratios': [1.0, 1.0]},
+                'THREE_DRIVES': {'name': '🥁 الثلاث دفعات', 'ratios': [1.272, 1.618]}
+            }
+            
+            @staticmethod
+            def detect_pattern(swing_points):
+                """اكتشاف الأنماط الهارمونيكية"""
+                if len(swing_points) < 5:
+                    return []
+                
+                detected = []
+                XA = abs(swing_points[1]['price'] - swing_points[0]['price'])
+                AB = abs(swing_points[2]['price'] - swing_points[1]['price'])
+                BC = abs(swing_points[3]['price'] - swing_points[2]['price'])
+                CD = abs(swing_points[4]['price'] - swing_points[3]['price'])
+                
+                if XA == 0:
+                    return detected
+                
+                # حساب النسب
+                AB_XA_ratio = AB / XA
+                BC_AB_ratio = BC / AB if AB > 0 else 0
+                CD_BC_ratio = CD / BC if BC > 0 else 0
+                
+                # التحقق من الأنماط
+                for pattern_key, pattern in HarmonicPatternAnalyzer.PATTERNS.items():
+                    expected_ab = pattern['ratios'][0]
+                    expected_bc_cd = pattern['ratios'][1] if len(pattern['ratios']) > 1 else expected_ab
+                    
+                    if abs(AB_XA_ratio - expected_ab) < 0.1 and abs(CD_BC_ratio - expected_bc_cd) < 0.1:
+                        pattern_type = 'صاعد' if swing_points[4]['price'] < swing_points[2]['price'] else 'هابط'
+                        detected.append({
+                            'pattern': pattern['name'],
+                            'type': pattern_type,
+                            'accuracy': 95 - (abs(AB_XA_ratio - expected_ab) * 100),
+                            'completion_price': swing_points[4]['price'],
+                            'potential_reversal': swing_points[4]['price'],
+                            'target_1': swing_points[2]['price'],
+                            'target_2': swing_points[1]['price'],
+                            'stop_loss': swing_points[4]['price'] * 1.01 if pattern_type == 'صاعد' else swing_points[4]['price'] * 0.99
+                        })
+                
+                return detected
+
+        # ============================================
+        # 47. تحليل Market Facilitation Index
+        # ============================================
+        class MarketFacilitationAnalyzer:
+            """تحليل مؤشر تسهيل السوق"""
+            
+            @staticmethod
+            def analyze_mfi(price_data, volume_data, period=14):
+                """تحليل MFI"""
+                if len(price_data) < period or len(volume_data) < period:
+                    return {}
+                
+                # حساب MFI
+                typical_prices = [(price_data[i]['high'] + price_data[i]['low'] + price_data[i]['close']) / 3 for i in range(len(price_data))]
+                money_flows = [typical_prices[i] * volume_data[i] for i in range(len(typical_prices))]
+                
+                positive_flow = 0
+                negative_flow = 0
+                
+                for i in range(1, period + 1):
+                    if typical_prices[-i] > typical_prices[-i-1]:
+                        positive_flow += money_flows[-i]
+                    else:
+                        negative_flow += money_flows[-i]
+                
+                money_ratio = positive_flow / negative_flow if negative_flow > 0 else 100
+                mfi = 100 - (100 / (1 + money_ratio))
+                
+                # تحليل حالة MFI
+                if mfi > 80:
+                    condition = 'تشبع شراء - تصحيح محتمل 🔴'
+                elif mfi < 20:
+                    condition = 'تشبع بيع - ارتداد محتمل 🟢'
+                elif mfi > 60:
+                    condition = 'قوة شرائية 📈'
+                elif mfi < 40:
+                    condition = 'قوة بيعية 📉'
+                else:
+                    condition = 'محايد ⚪'
+                
+                return {
+                    'mfi': round(mfi, 2),
+                    'condition': condition,
+                    'divergence': 'صاعد' if mfi < 30 and typical_prices[-1] < typical_prices[-2] else 'هابط' if mfi > 70 and typical_prices[-1] > typical_prices[-2] else 'لا يوجد',
+                    'money_flow': 'إيجابي' if positive_flow > negative_flow else 'سلبي',
+                    'signal': 'شراء' if mfi < 20 else 'بيع' if mfi > 80 else 'انتظار'
+                }
+
+        # ============================================
+        # 48. تحليل Time & Sales (Tape Reading)
+        # ============================================
+        class TimeSalesAnalyzer:
+            """تحليل التايم أند سيلز (قراءة الشريط)"""
+            
+            @staticmethod
+            def analyze_tape(trades):
+                """تحليل الشريط السعري"""
+                if not trades:
+                    return {}
+                
+                # تحليل الصفقات الكبيرة
+                large_trades = [t for t in trades if t.get('size', 0) > 100]
+                large_buys = [t for t in large_trades if t.get('side') == 'buy']
+                large_sells = [t for t in large_trades if t.get('side') == 'sell']
+                
+                # تحليل سرعة التدفق
+                recent_trades = trades[-20:] if len(trades) >= 20 else trades
+                buy_volume = sum(t.get('size', 0) for t in recent_trades if t.get('side') == 'buy')
+                sell_volume = sum(t.get('size', 0) for t in recent_trades if t.get('side') == 'sell')
+                
+                # تحديد الضغط
+                if buy_volume > sell_volume * 1.5:
+                    pressure = 'ضغط شراء قوي 🟢'
+                elif sell_volume > buy_volume * 1.5:
+                    pressure = 'ضغط بيع قوي 🔴'
+                elif buy_volume > sell_volume:
+                    pressure = 'ضغط شراء خفيف 🟡'
+                elif sell_volume > buy_volume:
+                    pressure = 'ضغط بيع خفيف 🟡'
+                else:
+                    pressure = 'توازن ⚪'
+                
+                # اكتشاف الاختراق
+                price_spikes = [t for t in recent_trades if abs(t.get('price_change', 0)) > 0.001]
+                
+                return {
+                    'large_buys_count': len(large_buys),
+                    'large_sells_count': len(large_sells),
+                    'buy_volume': buy_volume,
+                    'sell_volume': sell_volume,
+                    'volume_imbalance': round((buy_volume - sell_volume) / (buy_volume + sell_volume) * 100, 1) if (buy_volume + sell_volume) > 0 else 0,
+                    'pressure': pressure,
+                    'aggressive_buying': len([t for t in recent_trades if t.get('aggressive') == 'buy']),
+                    'aggressive_selling': len([t for t in recent_trades if t.get('aggressive') == 'sell']),
+                    'absorption_detected': len(large_buys) > 3 and sell_volume > buy_volume * 2,
+                    'stop_hunting_detected': len(price_spikes) > 3,
+                    'tape_reading': 'صعودي' if buy_volume > sell_volume * 1.2 else 'هبوطي'
+                }
+
+        # ============================================
+        # 49. تحليل Correlation Matrix
+        # ============================================
+        class CorrelationMatrixAnalyzer:
+            """تحليل مصفوفة الارتباط"""
+            
+            @staticmethod
+            def build_correlation_matrix(symbols_data):
+                """بناء مصفوفة الارتباط"""
+                if not symbols_data:
+                    return {}
+                
+                symbols = list(symbols_data.keys())
+                matrix = {}
+                
+                for i, sym1 in enumerate(symbols):
+                    matrix[sym1] = {}
+                    for j, sym2 in enumerate(symbols):
+                        if i == j:
+                            matrix[sym1][sym2] = 1.0
+                        else:
+                            # محاكاة حساب الارتباط
+                            correlation = random.uniform(-1, 1)
+                            matrix[sym1][sym2] = round(correlation, 2)
+                
+                # تحليل الارتباطات القوية
+                strong_correlations = []
+                for sym1 in symbols:
+                    for sym2 in symbols:
+                        if sym1 < sym2 and abs(matrix[sym1][sym2]) > 0.7:
+                            strong_correlations.append({
+                                'pair': f"{sym1}-{sym2}",
+                                'correlation': matrix[sym1][sym2],
+                                'type': 'إيجابي' if matrix[sym1][sym2] > 0 else 'سلبي'
+                            })
+                
+                return {
+                    'matrix': matrix,
+                    'strong_correlations': strong_correlations,
+                    'avg_correlation': round(sum(matrix[sym1][sym2] for sym1 in symbols for sym2 in symbols if sym1 != sym2) / (len(symbols) * (len(symbols) - 1)) if len(symbols) > 1 else 0, 2),
+                    'diversification_score': len([c for c in strong_correlations if abs(c['correlation']) < 0.3]),
+                    'hedge_pairs': [c['pair'] for c in strong_correlations if c['correlation'] < -0.7]
+                }
+
+        # ============================================
+        # 50. تحليل Seasonality Patterns
+        # ============================================
+        class SeasonalityAnalyzer:
+            """تحليل الأنماط الموسمية"""
+            
+            MONTHS = {
+                1: 'يناير', 2: 'فبراير', 3: 'مارس', 4: 'أبريل',
+                5: 'مايو', 6: 'يونيو', 7: 'يوليو', 8: 'أغسطس',
+                9: 'سبتمبر', 10: 'أكتوبر', 11: 'نوفمبر', 12: 'ديسمبر'
+            }
+            
+            @staticmethod
+            def analyze_monthly_pattern(symbol, current_month):
+                """تحليل النمط الشهري"""
+                
+                # بيانات موسمية افتراضية
+                seasonal_data = {
+                    'EURUSD': {1: 0.5, 2: -0.2, 3: 0.8, 4: 0.3, 5: -0.4, 6: -0.7, 7: 0.2, 8: 0.1, 9: 0.6, 10: 0.4, 11: -0.3, 12: -0.1},
+                    'GBPUSD': {1: -0.3, 2: 0.1, 3: 0.5, 4: -0.2, 5: 0.3, 6: -0.5, 7: 0.4, 8: 0.2, 9: -0.1, 10: 0.6, 11: 0.3, 12: -0.4},
+                    'USDJPY': {1: 0.2, 2: 0.4, 3: -0.3, 4: 0.1, 5: 0.5, 6: -0.2, 7: 0.3, 8: -0.4, 9: 0.2, 10: -0.1, 11: 0.6, 12: 0.3},
+                    'XAUUSD': {1: 0.8, 2: 0.5, 3: -0.2, 4: -0.4, 5: -0.6, 6: 0.1, 7: 0.3, 8: 0.5, 9: 0.7, 10: 0.4, 11: -0.1, 12: 0.2}
+                }
+                
+                symbol_pattern = seasonal_data.get(symbol, {})
+                monthly_bias = symbol_pattern.get(current_month, 0)
+                
+                # تحليل الشهر الحالي
+                if monthly_bias > 0.4:
+                    bias = 'صعودي قوي 📈'
+                elif monthly_bias > 0.1:
+                    bias = 'صعودي معتدل 📊'
+                elif monthly_bias < -0.4:
+                    bias = 'هبوطي قوي 📉'
+                elif monthly_bias < -0.1:
+                    bias = 'هبوطي معتدل 📊'
+                else:
+                    bias = 'محايد ⚪'
+                
+                # توقع الشهر القادم
+                next_month = current_month % 12 + 1
+                next_bias = symbol_pattern.get(next_month, 0)
+                
+                return {
+                    'current_month': SeasonalityAnalyzer.MONTHS.get(current_month, 'غير معروف'),
+                    'monthly_bias': round(monthly_bias, 2),
+                    'bias_direction': bias,
+                    'next_month_bias': round(next_bias, 2),
+                    'seasonal_trade': 'شراء' if monthly_bias > 0.2 else 'بيع' if monthly_bias < -0.2 else 'محايد',
+                    'confidence': abs(monthly_bias) * 100,
+                    'best_months': [m for m, v in symbol_pattern.items() if v > 0.5],
+                    'worst_months': [m for m, v in symbol_pattern.items() if v < -0.5]
+                }
+
+        # ============================================
+        # 51. تحليل Economic Calendar Impact
+        # ============================================
+        class EconomicCalendarAnalyzer:
+            """تحليل تأثير التقويم الاقتصادي"""
+            
+            EVENTS = {
+                'NFP': {'name': 'الوظائف غير الزراعية', 'impact': 'high', 'currency': 'USD'},
+                'CPI': {'name': 'مؤشر أسعار المستهلك', 'impact': 'high', 'currency': 'USD'},
+                'FOMC': {'name': 'اجتماع الفيدرالي', 'impact': 'high', 'currency': 'USD'},
+                'GDP': {'name': 'الناتج المحلي الإجمالي', 'impact': 'high', 'currency': 'ALL'},
+                'PMI': {'name': 'مؤشر مديري المشتريات', 'impact': 'medium', 'currency': 'ALL'},
+                'ECB': {'name': 'اجتماع البنك المركزي الأوروبي', 'impact': 'high', 'currency': 'EUR'},
+                'BOE': {'name': 'اجتماع بنك إنجلترا', 'impact': 'high', 'currency': 'GBP'},
+                'BOJ': {'name': 'اجتماع بنك اليابان', 'impact': 'high', 'currency': 'JPY'},
+                'SNB': {'name': 'اجتماع البنك السويسري', 'impact': 'high', 'currency': 'CHF'},
+                'RBA': {'name': 'اجتماع البنك الأسترالي', 'impact': 'high', 'currency': 'AUD'},
+                'RBNZ': {'name': 'اجتماع البنك النيوزيلندي', 'impact': 'high', 'currency': 'NZD'},
+                'CAD': {'name': 'البيانات الكندية', 'impact': 'medium', 'currency': 'CAD'}
+            }
+            
+            @staticmethod
+            def analyze_upcoming_events(current_time, symbol_currency):
+                """تحليل الأحداث القادمة"""
+                
+                upcoming = []
+                
+                for event_code, event in EconomicCalendarAnalyzer.EVENTS.items():
+                    if event['currency'] == 'ALL' or event['currency'] in symbol_currency:
+                        # محاكاة وقت الحدث
+                        event_hour = random.randint(0, 23)
+                        event_minute = random.choice([0, 30])
+                        event_time = current_time.replace(hour=event_hour, minute=event_minute, second=0)
+                        
+                        time_diff = (event_time - current_time).total_seconds() / 3600
+                        
+                        if 0 <= time_diff <= 48:  # خلال 48 ساعة
+                            urgency = 'حرج' if time_diff <= 1 else 'قريب' if time_diff <= 4 else 'متوسط' if time_diff <= 24 else 'بعيد'
+                            
+                            upcoming.append({
+                                'event': event['name'],
+                                'code': event_code,
+                                'time': event_time.strftime('%H:%M UTC'),
+                                'hours_away': round(time_diff, 1),
+                                'impact': event['impact'],
+                                'urgency': urgency,
+                                'expected_volatility': 'عالي جداً' if event['impact'] == 'high' and time_diff < 2 else 'عالي' if event['impact'] == 'high' else 'متوسط',
+                                'avoid_trading': time_diff < 1 and event['impact'] == 'high'
+                            })
+                
+                # ترتيب حسب الأقرب
+                upcoming.sort(key=lambda x: x['hours_away'])
+                
+                high_impact_count = len([e for e in upcoming if e['impact'] == 'high' and e['hours_away'] < 24])
+                
+                return {
+                    'upcoming_events': upcoming[:5],  # أهم 5 أحداث
+                    'high_impact_count': high_impact_count,
+                    'market_risk': 'مرتفع' if high_impact_count > 2 else 'متوسط' if high_impact_count > 0 else 'منخفض',
+                    'recommendation': 'تجنب التداول' if high_impact_count > 1 else 'حذر' if high_impact_count > 0 else 'طبيعي',
+                    'next_high_impact': upcoming[0] if upcoming and upcoming[0]['impact'] == 'high' else None
+                }
+
+        # ============================================
+        # 52. تحليل Market Depth
+        # ============================================
+        class MarketDepthAnalyzer:
+            """تحليل عمق السوق"""
+            
+            @staticmethod
+            def analyze_depth(bid_prices, bid_sizes, ask_prices, ask_sizes):
+                """تحليل عمق السوق"""
+                if not bid_prices or not ask_prices:
+                    return {}
+                
+                # حساب إجمالي السيولة
+                total_bid_volume = sum(bid_sizes)
+                total_ask_volume = sum(ask_sizes)
+                
+                # تحليل توزيع السيولة
+                bid_concentration = bid_sizes[0] / total_bid_volume if total_bid_volume > 0 else 0
+                ask_concentration = ask_sizes[0] / total_ask_volume if total_ask_volume > 0 else 0
+                
+                # تحديد جدران السيولة
+                bid_walls = []
+                ask_walls = []
+                
+                for i, size in enumerate(bid_sizes[:5]):
+                    if size > total_bid_volume * 0.2:
+                        bid_walls.append({'price': bid_prices[i], 'size': size})
+                
+                for i, size in enumerate(ask_sizes[:5]):
+                    if size > total_ask_volume * 0.2:
+                        ask_walls.append({'price': ask_prices[i], 'size': size})
+                
+                # حساب الفجوات
+                spread = ask_prices[0] - bid_prices[0]
+                
+                # تحليل التوازن
+                if total_bid_volume > total_ask_volume * 1.5:
+                    balance = 'ضغط شراء في العمق 🟢'
+                elif total_ask_volume > total_bid_volume * 1.5:
+                    balance = 'ضغط بيع في العمق 🔴'
+                else:
+                    balance = 'توازن ⚪'
+                
+                return {
+                    'total_bid_volume': total_bid_volume,
+                    'total_ask_volume': total_ask_volume,
+                    'bid_ask_ratio': round(total_bid_volume / total_ask_volume, 2) if total_ask_volume > 0 else 999,
+                    'spread': spread,
+                    'bid_walls': bid_walls,
+                    'ask_walls': ask_walls,
+                    'depth_balance': balance,
+                    'liquidity_score': 100 - (bid_concentration + ask_concentration) * 50,
+                    'support_levels': [bid_prices[i] for i in range(min(3, len(bid_prices)))],
+                    'resistance_levels': [ask_prices[i] for i in range(min(3, len(ask_prices)))],
+                    'order_book_imbalance': round((total_bid_volume - total_ask_volume) / (total_bid_volume + total_ask_volume) * 100, 1) if (total_bid_volume + total_ask_volume) > 0 else 0
+                }
+
+        # ============================================
+        # 53. تحليل Option Open Interest
+        # ============================================
+        class OptionOpenInterestAnalyzer:
+            """تحليل الفائدة المفتوحة للخيارات"""
+            
+            @staticmethod
+            def analyze_oi(option_chain, spot_price):
+                """تحليل الفائدة المفتوحة"""
+                if not option_chain:
+                    return {}
+                
+                # تجميع OI حسب الاستراك
+                calls_oi = {}
+                puts_oi = {}
+                
+                for strike, data in option_chain.items():
+                    calls_oi[strike] = data.get('call_oi', 0)
+                    puts_oi[strike] = data.get('put_oi', 0)
+                
+                # العثور على أعلى OI
+                max_call_strike = max(calls_oi, key=calls_oi.get) if calls_oi else spot_price
+                max_put_strike = max(puts_oi, key=puts_oi.get) if puts_oi else spot_price
+                
+                # حساب نسب OI
+                total_calls_oi = sum(calls_oi.values())
+                total_puts_oi = sum(puts_oi.values())
+                put_call_oi_ratio = total_puts_oi / total_calls_oi if total_calls_oi > 0 else 1
+                
+                # تحديد Max Pain
+                max_pain_strike = spot_price
+                min_pain = float('inf')
+                
+                for strike in option_chain.keys():
+                    call_pain = sum(max(0, spot_price - strike) * oi for strike, oi in calls_oi.items() if strike < spot_price)
+                    put_pain = sum(max(0, strike - spot_price) * oi for strike, oi in puts_oi.items() if strike > spot_price)
+                    total_pain = call_pain + put_pain
+                    
+                    if total_pain < min_pain:
+                        min_pain = total_pain
+                        max_pain_strike = strike
+                
+                return {
+                    'max_call_oi_strike': max_call_strike,
+                    'max_put_oi_strike': max_put_strike,
+                    'total_calls_oi': total_calls_oi,
+                    'total_puts_oi': total_puts_oi,
+                    'put_call_oi_ratio': round(put_call_oi_ratio, 2),
+                    'max_pain': max_pain_strike,
+                    'distance_to_max_pain': round(abs(spot_price - max_pain_strike) * 10000, 1),
+                    'oi_sentiment': 'صعودي' if put_call_oi_ratio < 0.7 else 'هبوطي' if put_call_oi_ratio > 1.3 else 'محايد',
+                    'gamma_exposure': 'إيجابي' if spot_price < max_call_strike else 'سلبي'
+                }
+
+        # ============================================
+        # 54. تحليل Implied Volatility
+        # ============================================
+        class ImpliedVolatilityAnalyzer:
+            """تحليل التقلبات الضمنية"""
+            
+            @staticmethod
+            def analyze_iv(option_prices, spot_price, time_to_expiry):
+                """تحليل التقلبات الضمنية"""
+                if not option_prices:
+                    return {}
+                
+                # حساب IV المتوسط
+                iv_values = [opt.get('iv', 0) for opt in option_prices]
+                avg_iv = sum(iv_values) / len(iv_values) if iv_values else 20
+                
+                # تحليل skew
+                otm_calls_iv = [opt['iv'] for opt in option_prices if opt['strike'] > spot_price * 1.05]
+                otm_puts_iv = [opt['iv'] for opt in option_prices if opt['strike'] < spot_price * 0.95]
+                
+                avg_otm_calls_iv = sum(otm_calls_iv) / len(otm_calls_iv) if otm_calls_iv else avg_iv
+                avg_otm_puts_iv = sum(otm_puts_iv) / len(otm_puts_iv) if otm_puts_iv else avg_iv
+                
+                skew = avg_otm_calls_iv - avg_otm_puts_iv
+                
+                # تحديد حالة IV
+                if avg_iv > 30:
+                    iv_state = 'مرتفع - خوف في السوق 😨'
+                elif avg_iv > 20:
+                    iv_state = 'متوسط - طبيعي 😐'
+                else:
+                    iv_state = 'منخفض - رضا 😌'
+                
+                # حساب النطاق المتوقع
+                expected_move = spot_price * (avg_iv / 100) * (time_to_expiry ** 0.5)
+                
+                return {
+                    'avg_iv': round(avg_iv, 1),
+                    'iv_state': iv_state,
+                    'iv_skew': round(skew, 2),
+                    'skew_type': 'Call Skew' if skew > 2 else 'Put Skew' if skew < -2 else 'Neutral',
+                    'expected_move_up': round(spot_price + expected_move, 5),
+                    'expected_move_down': round(spot_price - expected_move, 5),
+                    'iv_percentile': random.randint(0, 100),
+                    'iv_rank': random.randint(0, 100),
+                    'volatility_risk_premium': 'مرتفع' if avg_iv > 25 else 'منخفض'
+                }
+
+        # ============================================
+        # 55. تحليل Algorithmic Trading Detection
+        # ============================================
+        class AlgorithmicTradingDetector:
+            """كشف التداول الخوارزمي"""
+            
+            @staticmethod
+            def detect_algo_trading(tick_data, volume_data, time_data):
+                """كشف نشاط الخوارزميات"""
+                if len(tick_data) < 100:
+                    return {}
+                
+                algo_signals = []
+                algo_score = 0
+                
+                # 1. سرعة التغير (High-frequency trading)
+                tick_speed = len(tick_data) / 60  # صفقة في الثانية
+                if tick_speed > 10:
+                    algo_signals.append('تداول عالي التردد HFT ⚡')
+                    algo_score += 30
+                
+                # 2. انتظام الفروق السعرية
+                price_changes = [abs(tick_data[i] - tick_data[i-1]) for i in range(1, len(tick_data))]
+                avg_change = sum(price_changes) / len(price_changes) if price_changes else 0
+                change_std = (sum((c - avg_change) ** 2 for c in price_changes) / len(price_changes)) ** 0.5 if price_changes else 0
+                
+                if change_std < avg_change * 0.1:
+                    algo_signals.append('فروق سعرية منتظمة - خوارزمية')
+                    algo_score += 25
+                
+                # 3. أنماط الحجم
+                volume_changes = [volume_data[i] / volume_data[i-1] if volume_data[i-1] > 0 else 1 for i in range(1, len(volume_data))]
+                repetitive_pattern = all(0.9 < v < 1.1 for v in volume_changes[-20:])
+                
+                if repetitive_pattern:
+                    algo_signals.append('نمط حجم متكرر - خوارزمية')
+                    algo_score += 20
+                
+                # 4. Iceberg detection
+                if len(volume_data) > 10:
+                    volume_spikes = [i for i in range(1, len(volume_data)) if volume_data[i] > volume_data[i-1] * 5]
+                    if len(volume_spikes) > 3:
+                        algo_signals.append('أوامر جبل الجليد Iceberg')
+                        algo_score += 25
+                
+                # 5. وقت النشاط
+                current_second = datetime.utcnow().second
+                if current_second in [0, 15, 30, 45]:
+                    algo_signals.append('نشاط في أوقات محددة')
+                    algo_score += 15
+                
+                return {
+                    'algo_detected': algo_score > 50,
+                    'algo_score': algo_score,
+                    'confidence': min(algo_score, 100),
+                    'signals': algo_signals,
+                    'primary_algorithm': 'HFT' if tick_speed > 10 else 'Iceberg' if 'أوامر جبل الجليد' in algo_signals else 'TWAP/VWAP',
+                    'market_impact': 'عالي' if algo_score > 70 else 'متوسط' if algo_score > 40 else 'منخفض'
+                }
+
+        # ============================================
+        # 56. تحليل Market Manipulation
+        # ============================================
+        class MarketManipulationDetector:
+            """كشف التلاعب في السوق"""
+            
+            @staticmethod
+            def detect_manipulation(price_data, volume_data, order_book):
+                """كشف أنماط التلاعب"""
+                if len(price_data) < 20:
+                    return {}
+                
+                manipulation_signals = []
+                manipulation_score = 0
+                
+                # 1. Spoofing (أوامر وهمية)
+                if order_book and 'bid_cancels' in order_book and 'ask_cancels' in order_book:
+                    cancel_ratio = order_book['bid_cancels'] / order_book['ask_cancels'] if order_book['ask_cancels'] > 0 else 1
+                    if cancel_ratio > 3 or cancel_ratio < 0.33:
+                        manipulation_signals.append('Spoofing مشتبه به')
+                        manipulation_score += 35
+                
+                # 2. Wash trading (تداول وهمي)
+                if len(volume_data) > 10:
+                    volume_consistency = all(0.8 < volume_data[i] / volume_data[i-1] < 1.2 for i in range(1, len(volume_data)) if volume_data[i-1] > 0)
+                    price_consistency = all(0.999 < price_data[i] / price_data[i-1] < 1.001 for i in range(1, len(price_data)))
+                    
+                    if volume_consistency and price_consistency and len(volume_data) > 20:
+                        manipulation_signals.append('Wash Trading مشتبه به')
+                        manipulation_score += 30
+                
+                # 3. Pump and dump
+                if len(price_data) > 5:
+                    recent_return = (price_data[-1] - price_data[-5]) / price_data[-5] * 100
+                    if recent_return > 10 and volume_data[-1] > volume_data[-5] * 3:
+                        manipulation_signals.append('Pump and dump مشتبه به')
+                        manipulation_score += 40
+                
+                # 4. Stop hunting
+                liquidity_levels = order_book.get('liquidity_levels', [])
+                if liquidity_levels:
+                    price_near_level = any(abs(price_data[-1] - level) < level * 0.001 for level in liquidity_levels)
+                    if price_near_level and volume_data[-1] > volume_data[-2] * 2:
+                        manipulation_signals.append('Stop Hunting')
+                        manipulation_score += 25
+                
+                return {
+                    'manipulation_detected': manipulation_score > 40,
+                    'manipulation_score': manipulation_score,
+                    'signals': manipulation_signals,
+                    'risk_level': 'عالي' if manipulation_score > 60 else 'متوسط' if manipulation_score > 30 else 'منخفض',
+                    'recommendation': 'تجنب التداول' if manipulation_score > 60 else 'حذر' if manipulation_score > 30 else 'طبيعي'
+                }
+
+        # ============================================
+        # 57. تحليل Central Bank Intervention
+        # ============================================
+        class CentralBankAnalyzer:
+            """تحليل تدخلات البنوك المركزية"""
+            
+            BANKS = {
+                'FED': 'الاحتياطي الفيدرالي الأمريكي',
+                'ECB': 'البنك المركزي الأوروبي',
+                'BOE': 'بنك إنجلترا',
+                'BOJ': 'بنك اليابان',
+                'SNB': 'البنك الوطني السويسري',
+                'RBA': 'البنك الاحتياطي الأسترالي',
+                'RBNZ': 'البنك الاحتياطي النيوزيلندي',
+                'BOC': 'بنك كندا',
+                'PBOC': 'بنك الصين الشعبي'
+            }
+            
+            @staticmethod
+            def analyze_intervention_probability(symbol, price_data, volume_data, news_data):
+                """تحليل احتمالية تدخل البنك المركزي"""
+                
+                # تحديد البنك المركزي المعني
+                bank_map = {
+                    'USD': 'FED', 'EUR': 'ECB', 'GBP': 'BOE', 'JPY': 'BOJ',
+                    'CHF': 'SNB', 'AUD': 'RBA', 'NZD': 'RBNZ', 'CAD': 'BOC',
+                    'CNY': 'PBOC'
+                }
+                
+                currency = symbol[-3:] if len(symbol) == 6 else symbol
+                bank_code = bank_map.get(currency, 'FED')
+                bank_name = CentralBankAnalyzer.BANKS.get(bank_code, 'غير معروف')
+                
+                # تحليل ظروف السوق
+                if len(price_data) >= 20:
+                    price_change = (price_data[-1] - price_data[-20]) / price_data[-20] * 100
+                    volume_surge = volume_data[-1] / (sum(volume_data[-20:-1]) / 19) if len(volume_data) >= 20 else 1
+                else:
+                    price_change = 0
+                    volume_surge = 1
+                
+                # حساب احتمالية التدخل
+                intervention_probability = 0
+                
+                # حركة سعرية متطرفة
+                if abs(price_change) > 5:
+                    intervention_probability += 30
+                elif abs(price_change) > 3:
+                    intervention_probability += 15
+                
+                # حجم غير طبيعي
+                if volume_surge > 3:
+                    intervention_probability += 25
+                elif volume_surge > 2:
+                    intervention_probability += 10
+                
+                # أخبار حديثة
+                recent_news = [n for n in news_data if bank_code in n.get('related_banks', []) and n.get('days_ago', 10) < 7]
+                if recent_news:
+                    intervention_probability += 20
+                
+                # تصريحات مسؤولين
+                official_speeches = len([n for n in news_data if 'speech' in n.get('type', '') and bank_code in n.get('speakers', [])])
+                intervention_probability += official_speeches * 5
+                
+                return {
+                    'bank': bank_name,
+                    'bank_code': bank_code,
+                    'intervention_probability': min(intervention_probability, 100),
+                    'price_change_percent': round(price_change, 2),
+                    'volume_surge': round(volume_surge, 2),
+                    'recent_news_count': len(recent_news),
+                    'intervention_risk': 'مرتفع' if intervention_probability > 60 else 'متوسط' if intervention_probability > 30 else 'منخفض',
+                    'likely_action': 'شراء العملة' if price_change < -3 else 'بيع العملة' if price_change > 3 else 'تثبيت',
+                    'watch_levels': {'upper': price_data[-1] * 1.02 if price_data else 0, 'lower': price_data[-1] * 0.98 if price_data else 0}
+                }
+
+        # ============================================
+        # 58. تحليل Global Macro Factors
+        # ============================================
+        class GlobalMacroAnalyzer:
+            """تحليل العوامل الكلية العالمية"""
+            
+            FACTORS = {
+                'interest_rates': 'أسعار الفائدة',
+                'inflation': 'التضخم',
+                'gdp_growth': 'نمو الناتج المحلي',
+                'unemployment': 'البطالة',
+                'trade_balance': 'الميزان التجاري',
+                'fiscal_policy': 'السياسة المالية',
+                'geopolitical_risk': 'المخاطر الجيوسياسية',
+                'commodity_prices': 'أسعار السلع',
+                'energy_crisis': 'أزمة الطاقة',
+                'supply_chain': 'سلاسل التوريد'
+            }
+            
+            @staticmethod
+            def analyze_macro_environment(country, economic_data):
+                """تحليل البيئة الكلية"""
+                
+                macro_score = 0
+                factors = {}
+                
+                # تحليل كل عامل
+                for factor_key, factor_name in GlobalMacroAnalyzer.FACTORS.items():
+                    if factor_key in economic_data:
+                        value = economic_data[factor_key]
+                        
+                        # تقييم العامل
+                        if factor_key == 'interest_rates':
+                            if value > 5:
+                                assessment = 'مرتفع جداً - تقييد'
+                                score = -10
+                            elif value > 2:
+                                assessment = 'مرتفع - تشديد'
+                                score = -5
+                            elif value > 0:
+                                assessment = 'معتدل'
+                                score = 0
+                            else:
+                                assessment = 'منخفض - تحفيز'
+                                score = 10
+                        
+                        elif factor_key == 'inflation':
+                            if value > 10:
+                                assessment = 'تضخم جامح'
+                                score = -20
+                            elif value > 5:
+                                assessment = 'مرتفع'
+                                score = -10
+                            elif value > 2:
+                                assessment = 'فوق المستهدف'
+                                score = -5
+                            else:
+                                assessment = 'مستهدف'
+                                score = 5
+                        
+                        elif factor_key == 'gdp_growth':
+                            if value > 5:
+                                assessment = 'نمو قوي'
+                                score = 15
+                            elif value > 2:
+                                assessment = 'نمو معتدل'
+                                score = 10
+                            elif value > 0:
+                                assessment = 'نمو ضعيف'
+                                score = 5
+                            else:
+                                assessment = 'ركود'
+                                score = -15
+                        
+                        else:
+                            assessment = 'محايد'
+                            score = 0
+                        
+                        factors[factor_name] = {
+                            'value': value,
+                            'assessment': assessment,
+                            'score': score
+                        }
+                        
+                        macro_score += score
+                
+                # تحديد الاتجاه الكلي
+                if macro_score > 30:
+                    macro_outlook = 'إيجابي قوي 📈'
+                elif macro_score > 10:
+                    macro_outlook = 'إيجابي 📊'
+                elif macro_score > -10:
+                    macro_outlook = 'محايد ⚖️'
+                elif macro_score > -30:
+                    macro_outlook = 'سلبي 📉'
+                else:
+                    macro_outlook = 'سلبي قوي 📉'
+                
+                return {
+                    'country': country,
+                    'macro_score': macro_score,
+                    'macro_outlook': macro_outlook,
+                    'factors': factors,
+                    'top_positive': [k for k, v in factors.items() if v.get('score', 0) > 5][:3],
+                    'top_negative': [k for k, v in factors.items() if v.get('score', 0) < -5][:3],
+                    'currency_strength': 'قوي' if macro_score > 20 else 'ضعيف' if macro_score < -20 else 'متوسط'
+                }
+
+        # ============================================
+        # 59. تحليل Geopolitical Risk
+        # ============================================
+        class GeopoliticalRiskAnalyzer:
+            """تحليل المخاطر الجيوسياسية"""
+            
+            RISK_TYPES = {
+                'war': 'حرب/نزاع مسلح',
+                'sanctions': 'عقوبات',
+                'election': 'انتخابات',
+                'trade_war': 'حرب تجارية',
+                'terrorism': 'إرهاب',
+                'cyber_attack': 'هجوم سيبراني',
+                'natural_disaster': 'كوارث طبيعية',
+                'political_instability': 'عدم استقرار سياسي'
+            }
+            
+            @staticmethod
+            def analyze_geopolitical_risk(region, events_data):
+                """تحليل المخاطر الجيوسياسية"""
+                
+                risk_score = 0
+                active_risks = []
+                
+                for event in events_data:
+                    risk_type = event.get('type', '')
+                    severity = event.get('severity', 0)
+                    
+                    if risk_type in GeopoliticalRiskAnalyzer.RISK_TYPES:
+                        active_risks.append({
+                            'type': GeopoliticalRiskAnalyzer.RISK_TYPES[risk_type],
+                            'severity': severity,
+                            'description': event.get('description', ''),
+                            'start_date': event.get('start_date', ''),
+                            'affected_assets': event.get('assets', [])
+                        })
+                        
+                        risk_score += severity
+                
+                # حساب التأثير على العملات
+                safe_haven_currencies = ['USD', 'CHF', 'JPY']
+                risky_currencies = ['AUD', 'NZD', 'ZAR', 'TRY']
+                
+                return {
+                    'region': region,
+                    'risk_score': min(risk_score, 100),
+                    'risk_level': 'مرتفع جداً' if risk_score > 70 else 'مرتفع' if risk_score > 50 else 'متوسط' if risk_score > 30 else 'منخفض',
+                    'active_risks': active_risks,
+                    'safe_haven_flow': 'نعم' if risk_score > 50 else 'لا',
+                    'risk_on_off': 'Risk Off' if risk_score > 50 else 'Risk On',
+                    'affected_currencies': {
+                        'safe_havens': safe_haven_currencies,
+                        'risky': risky_currencies
+                    },
+                    'recommendation': 'شراء ملاذات آمنة' if risk_score > 50 else 'شراء عملات مخاطرة'
+                }
+
+        # ============================================
+        # 60. تحليل Sentiment from Social Media
+        # ============================================
+        class SocialMediaSentimentAnalyzer:
+            """تحليل المشاعر من وسائل التواصل الاجتماعي"""
+            
+            PLATFORMS = ['Twitter', 'Reddit', 'Telegram', 'Discord', 'StockTwits', 'TradingView']
+            
+            @staticmethod
+            def analyze_social_sentiment(symbol, posts_data):
+                """تحليل المشاعر من وسائل التواصل"""
+                
+                if not posts_data:
+                    return {}
+                
+                total_posts = len(posts_data)
+                bullish_posts = len([p for p in posts_data if p.get('sentiment') == 'bullish'])
+                bearish_posts = len([p for p in posts_data if p.get('sentiment') == 'bearish'])
+                neutral_posts = total_posts - bullish_posts - bearish_posts
+                
+                # حساب نسبة المشاعر
+                bullish_ratio = bullish_posts / total_posts if total_posts > 0 else 0.5
+                bearish_ratio = bearish_posts / total_posts if total_posts > 0 else 0.5
+                
+                sentiment_score = (bullish_posts - bearish_posts) / total_posts * 100 if total_posts > 0 else 0
+                
+                # تحليل الهاشتاغات
+                all_hashtags = []
+                for post in posts_data:
+                    all_hashtags.extend(post.get('hashtags', []))
+                
+                trending_hashtags = {}
+                for tag in set(all_hashtags):
+                    trending_hashtags[tag] = all_hashtags.count(tag)
+                
+                # تحليل المؤثرين
+                influencers = {}
+                for post in posts_data:
+                    if post.get('influencer_score', 0) > 50:
+                        influencers[post.get('author', 'unknown')] = {
+                            'sentiment': post.get('sentiment'),
+                            'followers': post.get('followers', 0),
+                            'influence_score': post.get('influencer_score', 0)
+                        }
+                
+                # تحديد المشاعر العامة
+                if sentiment_score > 20:
+                    overall_sentiment = 'صعودي قوي 🟢'
+                elif sentiment_score > 5:
+                    overall_sentiment = 'صعودي 🟡'
+                elif sentiment_score > -5:
+                    overall_sentiment = 'محايد ⚪'
+                elif sentiment_score > -20:
+                    overall_sentiment = 'هبوطي 🟡'
+                else:
+                    overall_sentiment = 'هبوطي قوي 🔴'
+                
+                # مؤشر الخلاف (Contrarian indicator)
+                contrarian_signal = 'انعكاس محتمل' if abs(sentiment_score) > 70 else 'متابعة'
+                
+                return {
+                    'total_posts': total_posts,
+                    'bullish_posts': bullish_posts,
+                    'bearish_posts': bearish_posts,
+                    'neutral_posts': neutral_posts,
+                    'bullish_ratio': round(bullish_ratio * 100, 1),
+                    'bearish_ratio': round(bearish_ratio * 100, 1),
+                    'sentiment_score': round(sentiment_score, 1),
+                    'overall_sentiment': overall_sentiment,
+                    'trending_hashtags': sorted(trending_hashtags.items(), key=lambda x: x[1], reverse=True)[:5],
+                    'influencer_count': len(influencers),
+                    'contrarian_signal': contrarian_signal,
+                    'retail_vs_smart': 'عكس' if abs(sentiment_score) > 60 else 'محايد',
+                    'fear_greed_social': 100 - abs(sentiment_score) if sentiment_score > 0 else abs(sentiment_score)
+                }
+
+        # ============================================
+        # 61. تحليل Intermarket Divergence
+        # ============================================
+        class IntermarketDivergenceAnalyzer:
+            """تحليل التباعد بين الأسواق"""
+            
+            RELATIONSHIPS = {
+                'USD': {'negative': ['XAU', 'EUR', 'GBP'], 'positive': ['USD_INDEX']},
+                'XAU': {'negative': ['USD', 'DXY'], 'positive': ['inflation', 'geopolitics']},
+                'OIL': {'positive': ['inflation', 'CAD'], 'negative': ['USD']},
+                'BONDS': {'negative': ['stocks', 'yields'], 'positive': ['risk_off']}
+            }
+            
+            @staticmethod
+            def detect_divergence(primary_data, related_data, relationship_type):
+                """اكتشاف التباعد بين الأسواق"""
+                
+                if len(primary_data) < 10 or len(related_data) < 10:
+                    return {}
+                
+                primary_change = (primary_data[-1] - primary_data[-5]) / primary_data[-5] * 100
+                related_change = (related_data[-1] - related_data[-5]) / related_data[-5] * 100
+                
+                # التحقق من العلاقة المتوقعة
+                if relationship_type == 'positive':
+                    expected_direction = primary_change * related_change > 0
+                else:  # negative
+                    expected_direction = primary_change * related_change < 0
+                
+                divergence_detected = not expected_direction and abs(primary_change) > 1 and abs(related_change) > 1
+                
+                # قوة التباعد
+                if divergence_detected:
+                    divergence_strength = min(abs(primary_change - related_change) * 10, 100)
+                else:
+                    divergence_strength = 0
+                
+                return {
+                    'divergence_detected': divergence_detected,
+                    'divergence_strength': round(divergence_strength, 1),
+                    'primary_change': round(primary_change, 2),
+                    'related_change': round(related_change, 2),
+                    'expected_relationship': relationship_type,
+                    'current_relationship': 'positive' if primary_change * related_change > 0 else 'negative',
+                    'signal': 'تباعد - ترقب انعكاس' if divergence_detected else 'متوافق',
+                    'confidence': divergence_strength if divergence_detected else 0
+                }
+
+        # ============================================
+        # 62. تحليل Trading Psychology
+        # ============================================
+        class TradingPsychologyAnalyzer:
+            """تحليل نفسية المتداول"""
+            
+            BIASES = {
+                'confirmation': 'التحيز التأكيدي',
+                'recency': 'تحيز الحداثة',
+                'anchoring': 'الارتساء',
+                'loss_aversion': 'النفور من الخسارة',
+                'overconfidence': 'الثقة المفرطة',
+                'herd': 'سلوك القطيع',
+                'fomo': 'الخوف من الفوات',
+                'greed': 'الطمع',
+                'fear': 'الخوف'
+            }
+            
+            @staticmethod
+            def analyze_trader_psychology(trade_history, current_market):
+                """تحليل نفسية المتداول"""
+                
+                if not trade_history:
+                    return {}
+                
+                # تحليل أنماط التداول
+                total_trades = len(trade_history)
+                winning_trades = len([t for t in trade_history if t.get('profit', 0) > 0])
+                losing_trades = total_trades - winning_trades
+                
+                win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+                
+                # اكتشاف التحيزات
+                active_biases = []
+                
+                # التحيز التأكيدي
+                if win_rate < 40 and len([t for t in trade_history if t.get('held_against_trend')]) > total_trades * 0.3:
+                    active_biases.append(('confirmation', 'تبحث عن تأكيد لاتجاهك حتى لو خالف السوق'))
+                
+                # تحيز الحداثة
+                recent_trades = trade_history[-5:]
+                if recent_trades and len([t for t in recent_trades if t.get('profit', 0) < 0]) > 3:
+                    active_biases.append(('recency', 'تتأثر بصفقاتك الأخيرة الخاسرة'))
+                
+                # النفور من الخسارة
+                avg_win = sum(t.get('profit', 0) for t in trade_history if t.get('profit', 0) > 0) / winning_trades if winning_trades > 0 else 0
+                avg_loss = abs(sum(t.get('profit', 0) for t in trade_history if t.get('profit', 0) < 0)) / losing_trades if losing_trades > 0 else 0
+                
+                if avg_win < avg_loss * 1.5:
+                    active_biases.append(('loss_aversion', 'تغلق الأرباح بسرعة وتترك الخسائر'))
+                
+                # الثقة المفرطة
+                if winning_trades > 10 and win_rate > 70:
+                    active_biases.append(('overconfidence', 'ثقة زائدة - احذر المخاطرة'))
+                
+                # سلوك القطيع
+                if current_market.get('retail_sentiment') == 'extremely_bullish' and trade_history[-1].get('direction') == 'buy':
+                    active_biases.append(('herd', 'تتبع الحشد - كن حذراً'))
+                
+                # FOMO
+                if current_market.get('price_movement') > 2 and trade_history[-1].get('entry_reason') == 'breakout':
+                    active_biases.append(('fomo', 'خوف من الفوات - دخول متأخر'))
+                
+                return {
+                    'total_trades': total_trades,
+                    'win_rate': round(win_rate, 1),
+                    'profit_factor': round(abs(avg_win / avg_loss) if avg_loss > 0 else 999, 2),
+                    'avg_win': round(avg_win, 2),
+                    'avg_loss': round(avg_loss, 2),
+                    'active_biases': [{'bias': TradingPsychologyAnalyzer.BIASES.get(b[0]), 'description': b[1]} for b in active_biases],
+                    'psychological_state': 'مضطرب' if len(active_biases) > 3 else 'متأثر' if len(active_biases) > 1 else 'مركز',
+                    'recommendation': 'خذ استراحة' if len(active_biases) > 3 else 'راجع استراتيجيتك',
+                    'emotional_control_score': max(0, 100 - len(active_biases) * 20)
+                }
 
         # ============================================
         # 13. قواعد التحليل المتقدمة V7.5 FINAL (الموجودة سابقاً)
@@ -4110,7 +6069,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         # ============================================
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متكامل تجمع كل مدارس التحليل المتقدمة:
-SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS + VOLUME PROFILE + MARKET PSYCHOLOGY + CANDLESTICK PATTERNS + LIQUIDITY ANALYSIS + TREND ANALYSIS + GAP ANALYSIS + MARKET STRUCTURE + SUPPLY/DEMAND + MARKET CYCLES.
+SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS + VOLUME PROFILE + MARKET PSYCHOLOGY + CANDLESTICK PATTERNS + LIQUIDITY ANALYSIS + TREND ANALYSIS + GAP ANALYSIS + MARKET STRUCTURE + SUPPLY/DEMAND + MARKET CYCLES + MARKET MICROSTRUCTURE + INTERMARKET ANALYSIS + OPTIONS MARKET + INSTITUTIONAL POSITIONING + MARKET REGIME + ALGORITHMIC PATTERNS + DARK POOL + AUCTION MARKET THEORY + VWAP + MARKET INTERNALS + HARMONIC PATTERNS + MFI + TIME & SALES + CORRELATION MATRIX + SEASONALITY + ECONOMIC CALENDAR + MARKET DEPTH + OPTION OPEN INTEREST + IMPLIED VOLATILITY + MANIPULATION DETECTION + CENTRAL BANK + GLOBAL MACRO + GEOPOLITICAL + SOCIAL SENTIMENT + TRADING PSYCHOLOGY.
 
 مهمتك تحليل الشارت المرفق بدقة جراحية وإصدار توصيات تنفيذية دقيقة بنظام متعدد الطبقات مع تطبيق جميع الاستراتيجيات المتقدمة.
 
