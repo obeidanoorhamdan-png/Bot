@@ -18,7 +18,9 @@ import random
 import string
 import uuid
 import secrets
+import feedparser
 from datetime import datetime, timedelta
+from typing import Dict, List, Set, Tuple, Optional
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 from telegram.error import NetworkError, TimedOut
@@ -28,6 +30,10 @@ from PIL import Image
 import pytz
 import psutil
 
+# إعداد التسجيل
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 # --- الإعدادات الأساسية ---
 TOKEN = os.environ.get('TOKEN', "8583903565:AAFveu3KYGkPsC8L6WyermoaZ1tI_EtFHHs")
 
@@ -35,11 +41,10 @@ MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "vdzRyRlSfAUr6gX7zOZXVSaQhqRTkGpH")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MISTRAL_MODEL = "pixtral-large-latest"
 
-NEWS_API_KEY = os.environ.get('NEWS_API_KEY', "4b8561895d324a69a2e287c7f40cbbec")
-
 DB_NAME = "abood-gpt.db"
 BACKUP_DIR = "backups"
 SUBSCRIPTION_DB_NAME = "subscription_system.db"
+NEWS_RADAR_DB = "news_radar.db"
 DATA_VERSION = "2.1.0"
 
 ADMIN_ID = 6207431030
@@ -93,56 +98,532 @@ def format_analysis_with_copy_button(analysis_text):
     return formatted_text
 
 # ============================================
-# قائمة العملات العالمية الشاملة
+# نظام رادار الأخبار المتقدم (Obeida News Radar V2.0)
 # ============================================
 
-ALL_CURRENCIES = [
-    # العملات الرئيسية (Majors)
-    'USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'NZD',
+class ObeidaNewsRadar:
+    """
+    نظام رادار الأخبار المتقدم من Obeida Trading
+    - يدعم جميع عملات العالم
+    - يستخدم RSS من Investing.com
+    - يرسل تلقائياً للقنوات والمجموعات
+    """
     
-    # العملات الثانوية (Minors)
-    'CNY', 'HKD', 'SGD', 'INR', 'KRW', 'TWD', 'THB', 'MYR', 'IDR', 'PHP', 'VND',
-    'RUB', 'TRY', 'ZAR', 'BRL', 'MXN', 'ARS', 'CLP', 'COP', 'PEN',
-    'PLN', 'CZK', 'HUF', 'RON', 'BGN', 'HRK', 'RSD', 'ISK',
-    'SAR', 'AED', 'QAR', 'KWD', 'BHD', 'OMR', 'JOD', 'EGP', 'MAD', 'TND', 'DZD', 'LYD',
-    'ILS', 'IQD', 'YER', 'LBP', 'SYP', 'JOD',
+    def __init__(self, bot_token: str, chat_id: str = None):
+        self.bot_token = bot_token
+        self.default_chat_id = chat_id or '@ObeidaTrading'
+        self.rss_url = 'https://sa.investing.com/rss/news.rss'
+        self.db_name = NEWS_RADAR_DB
+        self.last_guid = ""
+        self.processed_news: Set[str] = set()
+        self.monitored_groups: Set[str] = set()
+        self.broadcast_enabled = True
+        
+        # تهيئة قاعدة البيانات
+        self.init_db()
+        
+        # تحميل GUIDs السابقة
+        self.load_processed_news()
+        
+        logger.info("📡 نظام رادار Obeida Trading قيد التشغيل...")
+
+    # ============================================
+    # قاموس العملات الشامل (جميع عملات العالم)
+    # ============================================
+    CURRENCY_MAP = {
+        # العملات الرئيسية (Majors)
+        "دولار": "USD 🇺🇸",
+        "يورو": "EUR 🇪🇺", 
+        "إسترليني": "GBP 🇬🇧",
+        "ين": "JPY 🇯🇵",
+        "فرنك": "CHF 🇨🇭",
+        "كندي": "CAD 🇨🇦",
+        "أسترالي": "AUD 🇦🇺",
+        "نيوزيلندي": "NZD 🇳🇿",
+        
+        # المعادن الثمينة
+        "ذهب": "XAU 🟡",
+        "فضة": "XAG ⚪",
+        "بلاتين": "XPT ⚪",
+        "بلاديوم": "XPD ⚪",
+        
+        # العملات الرقمية المشفرة
+        "بتكوين": "BTC ₿",
+        "بيتكوين": "BTC ₿",
+        "إيثريوم": "ETH 💎",
+        "عملات رقمية": "CRYPTO 💱",
+        "بينانس": "BNB 🔶",
+        "ريبل": "XRP 💠",
+        "كاردانو": "ADA 🔷",
+        "دوجكوين": "DOGE 🐕",
+        "سولانا": "SOL ☀️",
+        "بولكادوت": "DOT 🎯",
+        
+        # النفط والطاقة
+        "نفط": "OIL 🛢️",
+        "خام": "CRUDE 🛢️",
+        "برنت": "BRENT 🛢️",
+        "غاز": "NATGAS 🔥",
+        "بنزين": "GASOLINE ⛽",
+        
+        # العملات الآسيوية
+        "يوان": "CNY 🇨🇳",
+        "دولار هونغ كونغ": "HKD 🇭🇰",
+        "دولار سنغافوري": "SGD 🇸🇬",
+        "روبيه هندي": "INR 🇮🇳",
+        "وون": "KRW 🇰🇷",
+        "بات": "THB 🇹🇭",
+        "رينغيت": "MYR 🇲🇾",
+        "روبيه إندونيسي": "IDR 🇮🇩",
+        "بيزو فلبيني": "PHP 🇵🇭",
+        "دونغ": "VND 🇻🇳",
+        
+        # العملات العربية
+        "ريال سعودي": "SAR 🇸🇦",
+        "درهم": "AED 🇦🇪",
+        "ريال قطري": "QAR 🇶🇦",
+        "دينار كويتي": "KWD 🇰🇼",
+        "دينار بحريني": "BHD 🇧🇭",
+        "ريال عماني": "OMR 🇴🇲",
+        "دينار أردني": "JOD 🇯🇴",
+        "جنيه مصري": "EGP 🇪🇬",
+        "دينار عراقي": "IQD 🇮🇶",
+        "ليرة سورية": "SYP 🇸🇾",
+        "ليرة لبنانية": "LBP 🇱🇧",
+        "دينار ليبي": "LYD 🇱🇾",
+        "دينار تونسي": "TND 🇹🇳",
+        "دينار جزائري": "DZD 🇩🇿",
+        "درهم مغربي": "MAD 🇲🇦",
+        "أوقية موريتانية": "MRU 🇲🇷",
+        
+        # العملات الأوروبية الأخرى
+        "كرونة سويدية": "SEK 🇸🇪",
+        "كرونة نرويجية": "NOK 🇳🇴",
+        "كرونة دنماركية": "DKK 🇩🇰",
+        "زلوتي": "PLN 🇵🇱",
+        "كرونة تشيكية": "CZK 🇨🇿",
+        "فورنت": "HUF 🇭🇺",
+        "ليو": "RON 🇷🇴",
+        "ليف": "BGN 🇧🇬",
+        "كونا": "HRK 🇭🇷",
+        "دينار صربي": "RSD 🇷🇸",
+        "كرونة آيسلندية": "ISK 🇮🇸",
+        
+        # العملات الأفريقية
+        "نيرة": "NGN 🇳🇬",
+        "شلن كيني": "KES 🇰🇪",
+        "سيدي": "GHS 🇬🇭",
+        "راند": "ZAR 🇿🇦",
+        "شلن تنزاني": "TZS 🇹🇿",
+        "شلن أوغندي": "UGX 🇺🇬",
+        "كواشا": "ZMW 🇿🇲",
+        "روبية موريشيوسية": "MUR 🇲🇺",
+        "بير": "ETB 🇪🇹",
+        "كوانزا": "AOA 🇦🇴",
+        "ميتيكال": "MZN 🇲🇿",
+        
+        # العملات الأمريكية
+        "بيزو مكسيكي": "MXN 🇲🇽",
+        "ريال برازيلي": "BRL 🇧🇷",
+        "بيزو أرجنتيني": "ARS 🇦🇷",
+        "بيزو تشيلي": "CLP 🇨🇱",
+        "بيزو كولومبي": "COP 🇨🇴",
+        "سول": "PEN 🇵🇪",
+        
+        # المؤشرات العالمية
+        "مؤشر": "INDEX 📊",
+        "داو جونز": "DJI 📈",
+        "ناسداك": "NDQ 📈",
+        "ستاندرد آند بورز": "SPX 📈",
+        "فوتسي": "FTSE 🇬🇧",
+        "داكس": "DAX 🇩🇪",
+        "كاك": "CAC 🇫🇷",
+        "نيكاي": "N225 🇯🇵",
+        "هانغ سنغ": "HSI 🇭🇰",
+        "شنغهاي": "SSEC 🇨🇳",
+        
+        # السندات والفائدة
+        "سندات": "BOND 📉",
+        "فائدة": "RATE 💹",
+        "احتياطي": "FED 🏦",
+        "مركزي": "CB 🏛️",
+        
+        # السلع
+        "قمح": "WHEAT 🌾",
+        "ذرة": "CORN 🌽",
+        "فول": "SOYBEAN 🌱",
+        "سكر": "SUGAR 🍬",
+        "بن": "COFFEE ☕",
+        "كاكاو": "COCOA 🍫",
+        "قطن": "COTTON 👕",
+        "حديد": "IRON ⚙️",
+        "نحاس": "COPPER 🔌",
+        "ألمنيوم": "ALUMINUM 🥫",
+        "زنك": "ZINC ⚡",
+        "نيكل": "NICKEL 🔋"
+    }
     
-    # العملات الإفريقية
-    'NGN', 'KES', 'GHS', 'TZS', 'UGX', 'ZMW', 'MUR', 'ETB', 'AOA', 'MZN',
+    # كلمات مفتاحية موسعة لكل عملة
+    CURRENCY_KEYWORDS = {
+        "دولار": ["دولار", "us dollar", "usd", "dollar", "الولايات المتحدة", "america", "us economy", "الفيدرالي", "الاحتياطي الفيدرالي", "federal reserve", "fed"],
+        "يورو": ["يورو", "euro", "eur", "european", "البنك المركزي الأوروبي", "ecb", "الاتحاد الأوروبي"],
+        "إسترليني": ["إسترليني", "pound", "gbp", "sterling", "بريطانيا", "uk", "boe", "بنك إنجلترا"],
+        "ين": ["ين", "yen", "jpy", "اليابان", "japan", "boj", "بنك اليابان"],
+        "فرنك": ["فرنك", "swiss", "chf", "سويسرا", "البنك الوطني السويسري"],
+        "كندي": ["كندي", "canadian", "cad", "كندا", "bank of canada"],
+        "أسترالي": ["أسترالي", "australian", "aud", "أستراليا", "rba"],
+        "نيوزيلندي": ["نيوزيلندي", "new zealand", "nzd", "نيوزيلندا", "rbnz"],
+        "ذهب": ["ذهب", "gold", "xau", "الذهب", "المعدن النفيس"],
+        "فضة": ["فضة", "silver", "xag"],
+        "نفط": ["نفط", "oil", "خام", "crude", "brent", "wti", "بترول", "petroleum", "أوبك", "opec"],
+        "بتكوين": ["بتكوين", "bitcoin", "btc", "بيتكوين", "عملات رقمية", "crypto"],
+        "إيثريوم": ["إيثريوم", "ethereum", "eth"],
+    }
     
-    # المعادن الثمينة
-    'XAU', 'XAG', 'XPT', 'XPD', 'XRH',
+    def init_db(self):
+        """تهيئة قاعدة البيانات لتخزين الأخبار المرسلة"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        
+        # جدول الأخبار المرسلة
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sent_news (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guid TEXT UNIQUE,
+                title TEXT,
+                link TEXT,
+                published TEXT,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                currency_tag TEXT,
+                chat_id TEXT
+            )
+        ''')
+        
+        # جدول المجموعات المراقبة
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS monitored_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id TEXT UNIQUE,
+                chat_title TEXT,
+                added_by INTEGER,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1
+            )
+        ''')
+        
+        # جدول إعدادات الرادار
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS radar_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # إضافة الإعدادات الافتراضية
+        cursor.execute("SELECT COUNT(*) FROM radar_settings")
+        if cursor.fetchone()[0] == 0:
+            default_settings = [
+                ('enabled', 'true'),
+                ('check_interval', '300'),
+                ('max_age_hours', '24'),
+                ('broadcast_enabled', 'true')
+            ]
+            cursor.executemany("INSERT INTO radar_settings (key, value) VALUES (?, ?)", default_settings)
+        
+        conn.commit()
+        conn.close()
+        logger.info("✅ تم تهيئة قاعدة بيانات رادار الأخبار")
     
-    # العملات الرقمية المشفرة
-    'BTC', 'ETH', 'BNB', 'XRP', 'ADA', 'DOGE', 'SOL', 'DOT', 'MATIC', 'SHIB',
-    'TRX', 'AVAX', 'UNI', 'ATOM', 'LINK', 'ETC', 'XLM', 'BCH', 'ALGO', 'VET',
-    'FIL', 'ICP', 'THETA', 'FTM', 'NEAR', 'FLOW', 'EGLD', 'HBAR', 'XTZ', 'EOS',
-    'AAVE', 'MKR', 'COMP', 'YFI', 'SNX', 'GRT', 'BAT', 'ZEC', 'DASH', 'XMR',
+    def load_processed_news(self):
+        """تحميل GUIDs الأخبار التي تمت معالجتها سابقاً"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute("SELECT guid FROM sent_news ORDER BY id DESC LIMIT 100")
+        rows = cursor.fetchall()
+        for row in rows:
+            self.processed_news.add(row[0])
+            if not self.last_guid:
+                self.last_guid = row[0]
+        conn.close()
+        logger.info(f"📚 تم تحميل {len(self.processed_news)} خبر سابق")
     
-    # العملات النادرة والسلع
-    'OIL', 'BRENT', 'NGAS', 'GAS', 'COPPER', 'ALUMINUM', 'ZINC', 'NICKEL',
-    'WHEAT', 'CORN', 'SOYBEAN', 'SUGAR', 'COFFEE', 'COCOA', 'COTTON',
-    'LUMBER', 'LIVESTOCK', 'HOGS', 'CATTLE',
+    def get_currency_tag(self, title: str) -> str:
+        """
+        استخراج العملة المتأثرة من عنوان الخبر
+        تدعم جميع عملات العالم
+        """
+        title_lower = title.lower()
+        matched_currencies = []
+        
+        # البحث في الكلمات المفتاحية الموسعة
+        for currency, tag in self.CURRENCY_MAP.items():
+            if currency in title:
+                matched_currencies.append(tag)
+                continue
+            
+            # البحث في الكلمات المفتاحية الإضافية
+            if currency in self.CURRENCY_KEYWORDS:
+                for keyword in self.CURRENCY_KEYWORDS[currency]:
+                    if keyword in title_lower:
+                        matched_currencies.append(tag)
+                        break
+        
+        if matched_currencies:
+            # إزالة التكرار وإرجاع أول 3 عملات
+            unique_tags = list(set(matched_currencies))
+            return " ".join(unique_tags[:3])
+        
+        return "#سوق_عام 🌐"
     
-    # المؤشرات العالمية
-    'SPX', 'NSDQ', 'DJI', 'RUT', 'VIX', 'FTSE', 'DAX', 'CAC', 'STOXX',
-    'NIKKEI', 'HSI', 'SHCOMP', 'ASX', 'TSX', 'IBOV', 'MERVAL',
+    def format_news_message(self, title: str, link: str, published: str, currency_tag: str) -> str:
+        """تنسيق رسالة الخبر للإرسال"""
+        published_time = ""
+        try:
+            # محاولة تحويل الوقت
+            from dateutil import parser
+            pub_date = parser.parse(published)
+            published_time = pub_date.strftime("%Y-%m-%d %H:%M")
+        except:
+            published_time = "حديث"
+        
+        message = (
+            f"🚀 <b> Obeida Trading - أخبار عاجلة</b> 🚀\n\n"
+            f"📰 <b>🛑 الخبر 🛑:</b>\n"
+            f"{title}\n\n"
+            f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
+            f"⏰ <b>الوقت:</b> {published_time}\n\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"⚡ <b>للتحليل الفوري:</b> @ObeidaTrading\n"
+            f"💬 <b>مناقشة الأخبار:</b> @ObeidaTradingchat"
+        )
+        return message
     
-    # السندات والفائدة
-    'US10Y', 'US30Y', 'US2Y', 'GER10Y', 'UK10Y', 'JGB10Y',
+    def send_telegram_message(self, chat_id: str, text: str):
+        """إرسال رسالة إلى تليجرام"""
+        url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": False
+        }
+        try:
+            response = requests.post(url, data=payload, timeout=10)
+            if response.status_code == 200:
+                logger.info(f"✅ تم الإرسال إلى {chat_id}")
+                return True
+            else:
+                logger.error(f"❌ فشل الإرسال: {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في الإرسال: {e}")
+            return False
     
-    # سلع أخرى
-    'WTI', 'BRENT', 'NATGAS', 'GASOLINE', 'HEATOIL', 'CARBON',
+    def is_news_recent(self, published: str, max_hours: int = 24) -> bool:
+        """التحقق من أن الخبر حديث"""
+        try:
+            from dateutil import parser
+            pub_date = parser.parse(published)
+            now = datetime.now(pub_date.tzinfo) if pub_date.tzinfo else datetime.now()
+            age = now - pub_date
+            return age.total_seconds() <= max_hours * 3600
+        except:
+            # إذا فشل تحليل الوقت، نعتبره مقبول
+            return True
     
-    # عملات رقمية إضافية
-    'USDT', 'USDC', 'DAI', 'BUSD', 'TUSD', 'PAXG', 'UST',
-    'LUNA', 'FTT', 'CRO', 'OKB', 'HT', 'LEO', 'NEXO',
-    'KSM', 'DOT', 'WAVES', 'ZIL', 'KAVA', 'RUNE', 'SCRT',
-    'CELO', 'ROSE', 'ALICE', 'SAND', 'MANA', 'AXS', 'GALA',
-    'ENJ', 'CHZ', 'AUDIO', 'OCEAN', 'BAND', 'TRB', 'RLC',
-    'STORJ', 'SKL', 'CVC', 'POND', 'COCOS', 'TLM', 'DGB',
-    'RVN', 'ERGO', 'KDA', 'FLUX', 'HNT', 'IOTA', 'MIOTA'
-]
+    def save_sent_news(self, guid: str, title: str, link: str, published: str, currency_tag: str, chat_id: str):
+        """حفظ الخبر المرسل في قاعدة البيانات"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT OR IGNORE INTO sent_news (guid, title, link, published, currency_tag, chat_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (guid, title, link, published, currency_tag, chat_id))
+            conn.commit()
+            self.processed_news.add(guid)
+            self.last_guid = guid
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في حفظ الخبر: {e}")
+        finally:
+            conn.close()
+    
+    def add_monitored_group(self, chat_id: str, chat_title: str, added_by: int = 0) -> bool:
+        """إضافة مجموعة للمراقبة"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT OR REPLACE INTO monitored_groups (chat_id, chat_title, added_by, is_active)
+                VALUES (?, ?, ?, 1)
+            ''', (chat_id, chat_title, added_by))
+            conn.commit()
+            self.monitored_groups.add(chat_id)
+            logger.info(f"✅ تم إضافة المجموعة {chat_title}")
+            return True
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في إضافة المجموعة: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def remove_monitored_group(self, chat_id: str) -> bool:
+        """إزالة مجموعة من المراقبة"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("UPDATE monitored_groups SET is_active = 0 WHERE chat_id = ?", (chat_id,))
+            conn.commit()
+            self.monitored_groups.discard(chat_id)
+            logger.info(f"✅ تم إزالة المجموعة {chat_id}")
+            return True
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في إزالة المجموعة: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def get_monitored_groups(self) -> List[tuple]:
+        """الحصول على قائمة المجموعات المراقبة"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT chat_id, chat_title FROM monitored_groups WHERE is_active = 1")
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في جلب المجموعات: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    def get_setting(self, key: str, default: str = None) -> str:
+        """الحصول على إعداد معين"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT value FROM radar_settings WHERE key = ?", (key,))
+            result = cursor.fetchone()
+            return result[0] if result else default
+        except:
+            return default
+        finally:
+            conn.close()
+    
+    def set_setting(self, key: str, value: str):
+        """تحديث إعداد معين"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        try:
+            cursor.execute('''
+                INSERT OR REPLACE INTO radar_settings (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+            ''', (key, value))
+            conn.commit()
+            logger.info(f"✅ تم تحديث الإعداد {key} = {value}")
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في تحديث الإعداد: {e}")
+        finally:
+            conn.close()
+    
+    async def process_news(self):
+        """معالجة الأخبار الجديدة"""
+        if not self.broadcast_enabled:
+            return
+        
+        enabled = self.get_setting('enabled', 'true')
+        if enabled != 'true':
+            return
+        
+        try:
+            feed = feedparser.parse(self.rss_url)
+            
+            if not feed.entries:
+                logger.warning("⚠️ لا توجد أخبار في التغذية")
+                return
+            
+            latest_entry = feed.entries[0]
+            
+            # التحقق من أن الخبر جديد
+            if latest_entry.guid in self.processed_news:
+                return
+            
+            # التحقق من أن الخبر حديث
+            max_age_hours = int(self.get_setting('max_age_hours', '24'))
+            if not self.is_news_recent(latest_entry.published, max_age_hours):
+                logger.info("⏰ الخبر قديم، تم تخطيه")
+                return
+            
+            title = latest_entry.title
+            link = latest_entry.link
+            published = latest_entry.published
+            
+            # استخراج العملة المتأثرة
+            currency_tag = self.get_currency_tag(title)
+            
+            # تنسيق الرسالة
+            message = self.format_news_message(title, link, published, currency_tag)
+            
+            # إرسال إلى القناة الافتراضية
+            if self.default_chat_id:
+                self.send_telegram_message(self.default_chat_id, message)
+                self.save_sent_news(latest_entry.guid, title, link, published, currency_tag, self.default_chat_id)
+            
+            # إرسال إلى المجموعات المراقبة
+            groups = self.get_monitored_groups()
+            for chat_id, chat_title in groups:
+                self.send_telegram_message(chat_id, message)
+                self.save_sent_news(latest_entry.guid, title, link, published, currency_tag, chat_id)
+            
+            logger.info(f"✅ تم نشر خبر جديد: {title[:50]}...")
+            
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في معالجة الأخبار: {e}")
+    
+    async def start_radar(self):
+        """بدء تشغيل الرادار"""
+        logger.info("📡 رادار Obeida Trading يعمل الآن...")
+        
+        check_interval = int(self.get_setting('check_interval', '300'))
+        
+        while True:
+            try:
+                await self.process_news()
+            except Exception as e:
+                logger.error(f"⚠️ خطأ في دورة الرادار: {e}")
+            
+            await asyncio.sleep(check_interval)
+    
+    def get_stats(self) -> Dict:
+        """الحصول على إحصائيات الرادار"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        stats = {}
+        
+        try:
+            cursor.execute("SELECT COUNT(*) FROM sent_news")
+            stats['total_news'] = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM sent_news WHERE date(sent_at) = date('now')")
+            stats['today_news'] = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM monitored_groups WHERE is_active = 1")
+            stats['active_groups'] = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT currency_tag, COUNT(*) FROM sent_news GROUP BY currency_tag ORDER BY COUNT(*) DESC LIMIT 5")
+            stats['top_currencies'] = cursor.fetchall()
+            
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في جلب الإحصائيات: {e}")
+        finally:
+            conn.close()
+        
+        stats['broadcast_enabled'] = self.broadcast_enabled
+        stats['enabled'] = self.get_setting('enabled', 'true')
+        stats['check_interval'] = self.get_setting('check_interval', '300')
+        
+        return stats
+
 
 # ============================================
 # نظام التحكم بالتحليلات المجانية
@@ -231,239 +712,9 @@ class FreeAnalyticsSystem:
         
         return False, 0
 
-# ============================================
-# رادار الأخبار المتقدم
-# ============================================
-
-class NewsRadarSystem:
-    def __init__(self, bot_token, news_api_key):
-        self.bot_token = bot_token
-        self.news_api_key = news_api_key
-        self.monitored_groups = set()
-        self.currencies = ALL_CURRENCIES
-        self.last_news_cache = {}
-        self.broadcast_enabled = True
-        
-    def init_db(self):
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        
-        # جدول المجموعات المراقبة
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS monitored_groups (
-                chat_id INTEGER PRIMARY KEY,
-                chat_title TEXT,
-                added_by INTEGER,
-                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT 1
-            )
-        ''')
-        
-        # جدول سجل الأخبار المرسلة
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS news_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                currency TEXT,
-                news_title TEXT,
-                news_url TEXT,
-                source TEXT,
-                published_at TIMESTAMP,
-                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                sent_to_groups INTEGER DEFAULT 1
-            )
-        ''')
-        
-        # جدول إعدادات الرادار
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS radar_settings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                setting_key TEXT UNIQUE,
-                setting_value TEXT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute("SELECT COUNT(*) FROM radar_settings")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute('''
-                INSERT INTO radar_settings (setting_key, setting_value)
-                VALUES 
-                ('enabled', 'true'),
-                ('interval_minutes', '5'),
-                ('max_news_per_currency', '1'),
-                ('news_age_hours', '24')
-            ''')
-        
-        conn.commit()
-        conn.close()
-    
-    def get_settings(self):
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("SELECT setting_key, setting_value FROM radar_settings")
-            return dict(cursor.fetchall())
-        except:
-            return {}
-        finally:
-            conn.close()
-    
-    def add_group(self, chat_id, chat_title, added_by):
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('''
-                INSERT OR REPLACE INTO monitored_groups (chat_id, chat_title, added_by, is_active)
-                VALUES (?, ?, ?, 1)
-            ''', (chat_id, chat_title, added_by))
-            conn.commit()
-            self.monitored_groups.add(chat_id)
-            return True
-        except:
-            return False
-        finally:
-            conn.close()
-    
-    def remove_group(self, chat_id):
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("UPDATE monitored_groups SET is_active = 0 WHERE chat_id = ?", (chat_id,))
-            conn.commit()
-            self.monitored_groups.discard(chat_id)
-            return True
-        except:
-            return False
-        finally:
-            conn.close()
-    
-    def get_monitored_groups(self):
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("SELECT chat_id, chat_title FROM monitored_groups WHERE is_active = 1")
-            return cursor.fetchall()
-        except:
-            return []
-        finally:
-            conn.close()
-    
-    async def broadcast_news_to_all_groups(self, context):
-        if not self.broadcast_enabled:
-            return
-        
-        settings = self.get_settings()
-        if settings.get('enabled', 'true').lower() != 'true':
-            return
-        
-        groups = self.get_monitored_groups()
-        if not groups:
-            return
-        
-        for currency in self.currencies:
-            try:
-                # تجنب تكرار نفس الخبر
-                cache_key = f"{currency}_{datetime.now().strftime('%Y%m%d%H')}"
-                if cache_key in self.last_news_cache:
-                    continue
-                
-                # سحب آخر خبر للعملة
-                url = f"https://newsapi.org/v2/everything?q={currency}&sortBy=publishedAt&pageSize=1&apiKey={self.news_api_key}"
-                response = requests.get(url, timeout=10)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    articles = data.get('articles', [])
-                    
-                    if articles:
-                        article = articles[0]
-                        news_time = datetime.fromisoformat(article['publishedAt'].replace('Z', '+00:00'))
-                        
-                        # التحقق من أن الخبر حديث (أقل من 24 ساعة)
-                        if datetime.now(news_time.tzinfo) - news_time < timedelta(hours=24):
-                            news_hash = hashlib.md5(article['title'].encode()).hexdigest()
-                            
-                            # التحقق من عدم إرسال هذا الخبر مسبقاً
-                            if not self.is_news_sent(news_hash):
-                                message = self.format_news_message(currency, article)
-                                
-                                # إرسال الخبر لكل المجموعات
-                                for chat_id, chat_title in groups:
-                                    try:
-                                        await context.bot.send_message(
-                                            chat_id=chat_id,
-                                            text=message,
-                                            parse_mode='Markdown',
-                                            disable_web_page_preview=False
-                                        )
-                                        print(f"✅ تم إرسال خبر {currency} إلى {chat_title}")
-                                    except Exception as e:
-                                        print(f"❌ فشل إرسال إلى {chat_id}: {e}")
-                                
-                                # تسجيل الخبر في قاعدة البيانات
-                                self.save_news_history(currency, article, news_hash)
-                                self.last_news_cache[cache_key] = article['title']
-                                
-                                await asyncio.sleep(2)  # تجنب الحظر
-                                
-            except Exception as e:
-                print(f"⚠️ خطأ في معالجة أخبار {currency}: {e}")
-                continue
-    
-    def format_news_message(self, currency, article):
-        return (
-            f"🚀 *رادار ObeidaTrading* 🚀\n\n"
-            f"💰 *العملة:* #{currency}\n"
-            f"📰 *الخبر:* {article['title']}\n"
-            f"📝 *الوصف:* {article.get('description', 'لا يوجد وصف')[:200]}...\n"
-            f"⏰ *الوقت:* {datetime.fromisoformat(article['publishedAt'].replace('Z', '+00:00')).strftime('%Y-%m-%d %H:%M')}\n"
-            f"🌐 *المصدر:* {article['source']['name']}\n"
-            f"🔗 *للمزيد:* [اضغط هنا]({article['url']})\n\n"
-            f"⚠️ *نظام Obeida:* انتبه لسيولة {currency} الآن!\n\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"⚡ *ObeidaTrading - رادار الأخبار* ⚡"
-        )
-    
-    def is_news_sent(self, news_hash):
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("SELECT id FROM news_history WHERE news_title = ?", (news_hash,))
-            return cursor.fetchone() is not None
-        except:
-            return False
-        finally:
-            conn.close()
-    
-    def save_news_history(self, currency, article, news_hash):
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('''
-                INSERT INTO news_history (currency, news_title, news_url, source, published_at)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (
-                currency,
-                news_hash,
-                article['url'],
-                article['source']['name'],
-                article['publishedAt']
-            ))
-            conn.commit()
-        except:
-            pass
-        finally:
-            conn.close()
-
 # إنشاء كائنات الأنظمة الجديدة
 free_analytics = FreeAnalyticsSystem()
-news_radar = NewsRadarSystem(TOKEN, NEWS_API_KEY)
+news_radar = ObeidaNewsRadar(TOKEN, '@ObeidaTrading')
 
 # ============================================
 # نظام المناطق الزمنية المتقدم (GMT Format مع الدول)
@@ -805,7 +1056,6 @@ class SubscriptionSystem:
         
         # تهيئة الأنظمة الإضافية
         free_analytics.init_db()
-        news_radar.init_db()
         
         print("✅ تم تهيئة نظام الاشتراك المتطور بنجاح")
     
@@ -3679,6 +3929,7 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     health = AutomationSystem.get_system_health()
     stats = SubscriptionSystem.get_stats()
     free_settings = free_analytics.get_settings()
+    radar_stats = news_radar.get_stats()
     
     keyboard = [
         ["👥 عرض المستخدمين", "➕ إضافة اشتراك"],
@@ -3703,6 +3954,7 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     health_emoji = '✅' if health['status'] == 'healthy' else '⚠️'
     free_status = "✅ مفعلة" if free_settings['enabled'] else "❌ معطلة"
+    radar_status = "✅ مفعل" if radar_stats['enabled'] == 'true' and news_radar.broadcast_enabled else "❌ معطل"
     
     await update.message.reply_text(
         f"👑 **لوحة تحكم المشرف** 👑\n\n"
@@ -3710,7 +3962,8 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 **حالة البوت:** {current_status} {bot_status['status']}\n"
         f"🌐 **الجلسات المسموحة:** {bot_status['session_control']}\n"
         f"🖥️ **صحة النظام:** {health_emoji} CPU: {health['cpu']}% | RAM: {health['memory_used']}%\n"
-        f"🎯 **التحليلات المجانية:** {free_status} (العدد الافتراضي: {free_settings['default_count']})\n\n"
+        f"🎯 **التحليلات المجانية:** {free_status} (العدد الافتراضي: {free_settings['default_count']})\n"
+        f"📡 **رادار الأخبار:** {radar_status} (أخبار اليوم: {radar_stats.get('today_news', 0)})\n\n"
         f"📈 **إحصائيات سريعة:**\n"
         f"👥 المستخدمين: {stats.get('total_users', 0)}\n"
         f"✅ النشطين: {stats.get('active_users', 0)}\n"
@@ -3882,6 +4135,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         health = AutomationSystem.get_system_health()
         current_session = get_current_session()
         free_settings = free_analytics.get_settings()
+        radar_stats = news_radar.get_stats()
         
         stats_text = (
             "📊 **إحصائيات النظام المتقدم:**\n\n"
@@ -3898,6 +4152,10 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"الحالة: {'✅ مفعلة' if free_settings['enabled'] else '❌ معطلة'}\n"
             f"العدد الافتراضي: {free_settings['default_count']}\n"
             f"الحد الأقصى: {free_settings['max_count']}\n\n"
+            f"📡 **إحصائيات رادار الأخبار:**\n"
+            f"إجمالي الأخبار: {radar_stats.get('total_news', 0)}\n"
+            f"أخبار اليوم: {radar_stats.get('today_news', 0)}\n"
+            f"المجموعات النشطة: {radar_stats.get('active_groups', 0)}\n\n"
             f"🖥️ **صحة النظام:**\n"
             f"CPU: {health['cpu']}% | RAM: {health['memory_used']}%\n"
             f"القرص: {health['disk_used']}% مستخدم ({health['disk_free']:.1f} جيجا متاح)\n\n"
@@ -3994,7 +4252,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif user_message == "📡 رادار الأخبار":
         groups = news_radar.get_monitored_groups()
-        settings = news_radar.get_settings()
+        settings = news_radar.get_stats()
         
         groups_list = "\n".join([f"• {title} (ID: {cid})" for cid, title in groups]) if groups else "لا توجد مجموعات مراقبة"
         
@@ -4002,14 +4260,19 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ["➕ إضافة مجموعة", "➖ إزالة مجموعة"],
             ["✅ تفعيل الرادار", "❌ تعطيل الرادار"],
             ["🔄 تشغيل فوري", "⏱️ تغيير المدة"],
+            ["📊 إحصائيات الرادار"],
             ["🔙 العودة للوحة التحكم"]
         ]
         
         await update.message.reply_text(
-            f"📡 **رادار الأخبار المتقدم**\n\n"
-            f"الحالة: {'✅ مفعل' if settings.get('enabled', 'true') == 'true' else '❌ معطل'}\n"
-            f"مدة الفحص: {settings.get('interval_minutes', '5')} دقائق\n"
-            f"عدد العملات: {len(news_radar.currencies)}\n\n"
+            f"📡 **رادار الأخبار المتقدم Obeida News Radar V2.0**\n\n"
+            f"الحالة: {'✅ مفعل' if settings.get('enabled', 'true') == 'true' and news_radar.broadcast_enabled else '❌ معطل'}\n"
+            f"مدة الفحص: {settings.get('check_interval', '300')} ثانية\n"
+            f"عدد العملات المدعومة: {len(news_radar.CURRENCY_MAP)}\n\n"
+            f"**إحصائيات الرادار:**\n"
+            f"📰 إجمالي الأخبار: {settings.get('total_news', 0)}\n"
+            f"📅 أخبار اليوم: {settings.get('today_news', 0)}\n"
+            f"👥 المجموعات النشطة: {settings.get('active_groups', 0)}\n\n"
             f"**المجموعات المراقبة:**\n{groups_list}\n\n"
             f"اختر الإجراء المطلوب:",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
@@ -4107,26 +4370,46 @@ async def handle_free_analytics_settings(update: Update, context: ContextTypes.D
     
     elif user_message == "✅ تفعيل الرادار":
         news_radar.broadcast_enabled = True
+        news_radar.set_setting('enabled', 'true')
         await update.message.reply_text("✅ تم تفعيل رادار الأخبار")
     
     elif user_message == "❌ تعطيل الرادار":
         news_radar.broadcast_enabled = False
+        news_radar.set_setting('enabled', 'false')
         await update.message.reply_text("✅ تم تعطيل رادار الأخبار")
     
     elif user_message == "🔄 تشغيل فوري":
         await update.message.reply_text("📡 جاري تشغيل الرادار...")
-        await news_radar.broadcast_news_to_all_groups(context)
+        await news_radar.process_news()
         await update.message.reply_text("✅ تم تشغيل الرادار وإرسال آخر الأخبار")
     
     elif user_message == "⏱️ تغيير المدة":
         await update.message.reply_text(
             "⏱️ **تغيير مدة فحص الرادار**\n\n"
-            "أرسل المدة بالدقائق:\n"
-            "مثال: `10` (كل 10 دقائق)",
+            "أرسل المدة بالثواني:\n"
+            "مثال: `300` (كل 5 دقائق)\n"
+            "مثال: `600` (كل 10 دقائق)",
             parse_mode="Markdown"
         )
         context.user_data['radar_action'] = 'set_interval'
         return FREE_ANALYSES_SETTINGS
+    
+    elif user_message == "📊 إحصائيات الرادار":
+        radar_stats = news_radar.get_stats()
+        
+        stats_text = (
+            "📡 **إحصائيات رادار الأخبار المتقدم**\n\n"
+            f"📰 **إجمالي الأخبار:** {radar_stats.get('total_news', 0)}\n"
+            f"📅 **أخبار اليوم:** {radar_stats.get('today_news', 0)}\n"
+            f"👥 **المجموعات النشطة:** {radar_stats.get('active_groups', 0)}\n"
+            f"⏱️ **مدة الفحص:** {radar_stats.get('check_interval', '300')} ثانية\n\n"
+            f"**أكثر العملات ظهوراً:**\n"
+        )
+        
+        for currency, count in radar_stats.get('top_currencies', []):
+            stats_text += f"  • {currency}: {count} خبر\n"
+        
+        await update.message.reply_text(stats_text, parse_mode="Markdown")
     
     elif context.user_data.get('setting_action') == 'set_default_count':
         try:
@@ -4142,9 +4425,9 @@ async def handle_free_analytics_settings(update: Update, context: ContextTypes.D
     
     elif context.user_data.get('radar_action') == 'add_group':
         try:
-            chat_id = int(user_message)
+            chat_id = user_message
             chat_title = f"Group_{chat_id}"
-            if news_radar.add_group(chat_id, chat_title, user_id):
+            if news_radar.add_monitored_group(chat_id, chat_title, user_id):
                 await update.message.reply_text(f"✅ تم إضافة المجموعة {chat_id} بنجاح")
             else:
                 await update.message.reply_text("❌ فشل في إضافة المجموعة")
@@ -4154,8 +4437,8 @@ async def handle_free_analytics_settings(update: Update, context: ContextTypes.D
     
     elif context.user_data.get('radar_action') == 'remove_group':
         try:
-            chat_id = int(user_message)
-            if news_radar.remove_group(chat_id):
+            chat_id = user_message
+            if news_radar.remove_monitored_group(chat_id):
                 await update.message.reply_text(f"✅ تم إزالة المجموعة {chat_id} بنجاح")
             else:
                 await update.message.reply_text("❌ فشل في إزالة المجموعة")
@@ -4165,12 +4448,12 @@ async def handle_free_analytics_settings(update: Update, context: ContextTypes.D
     
     elif context.user_data.get('radar_action') == 'set_interval':
         try:
-            minutes = int(user_message)
-            if 1 <= minutes <= 60:
-                # تحديث المدة في الإعدادات
-                await update.message.reply_text(f"✅ تم تغيير مدة الفحص إلى {minutes} دقائق")
+            seconds = int(user_message)
+            if 30 <= seconds <= 3600:
+                news_radar.set_setting('check_interval', str(seconds))
+                await update.message.reply_text(f"✅ تم تغيير مدة الفحص إلى {seconds} ثانية")
             else:
-                await update.message.reply_text("❌ الرجاء إدخال رقم بين 1 و 60")
+                await update.message.reply_text("❌ الرجاء إدخال رقم بين 30 و 3600")
         except:
             await update.message.reply_text("❌ الرجاء إدخال رقم صحيح")
         context.user_data['radar_action'] = None
@@ -4567,7 +4850,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     📡 **رادار الأخبار:**
     • البوت يرسل آخر الأخبار لجميع العملات العالمية
     • يتم الفحص كل 5 دقائق
-    • يتم النشر في المجموعات المضافة
+    • يتم النشر في القناة والمجموعات المضافة
     
     📞 للتواصل مع المشرف: @Sz2zv
     """
@@ -4662,12 +4945,12 @@ async def backup_scheduler():
         except Exception as e:
             print(f"⚠️ خطأ في النسخ الاحتياطي المجدول: {e}")
 
-async def news_radar_scheduler(context):
+async def news_radar_scheduler():
     """تشغيل رادار الأخبار كل 5 دقائق"""
     while True:
         try:
             await asyncio.sleep(300)  # 5 دقائق
-            await news_radar.broadcast_news_to_all_groups(context)
+            await news_radar.process_news()
             print("📡 تم تشغيل رادار الأخبار")
         except Exception as e:
             print(f"⚠️ خطأ في رادار الأخبار: {e}")
@@ -4706,9 +4989,26 @@ class DataProtection:
             print(f"⚠️ خطأ في نسخ قاعدة بيانات الاشتراك: {e}")
     
     @staticmethod
+    def backup_radar_db():
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = os.path.join(BACKUP_DIR, f"radar_backup_{timestamp}.db")
+            if os.path.exists(NEWS_RADAR_DB):
+                shutil.copy2(NEWS_RADAR_DB, backup_file)
+                print(f"💾 تم نسخ قاعدة بيانات الرادار: {backup_file}")
+                
+                backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith('radar_backup_')])
+                while len(backups) > 20:
+                    oldest = backups.pop(0)
+                    os.remove(os.path.join(BACKUP_DIR, oldest))
+        except Exception as e:
+            print(f"⚠️ خطأ في نسخ قاعدة بيانات الرادار: {e}")
+    
+    @staticmethod
     def auto_backup():
         DataProtection.backup_database()
         DataProtection.backup_codes_db()
+        DataProtection.backup_radar_db()
 
 # ============================================
 # Flask Server
@@ -5640,7 +5940,7 @@ ADMIN_PANEL_HTML = """
 
         <div id="radar-tab" class="tab-content">
             <div class="section">
-                <h2 class="section-title">📡 رادار الأخبار المتقدم</h2>
+                <h2 class="section-title">📡 رادار الأخبار المتقدم V2.0</h2>
                 
                 <div class="stats-grid">
                     <div class="stat-card">
@@ -5650,6 +5950,14 @@ ADMIN_PANEL_HTML = """
                     <div class="stat-card">
                         <h3>👥 المجموعات المراقبة</h3>
                         <div class="number">{{ monitored_groups|length }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>📰 إجمالي الأخبار</h3>
+                        <div class="number">{{ radar_stats.total_news if radar_stats else 0 }}</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>📅 أخبار اليوم</h3>
+                        <div class="number">{{ radar_stats.today_news if radar_stats else 0 }}</div>
                     </div>
                 </div>
 
@@ -6338,6 +6646,7 @@ def logout():
 def home():
     bot_status = SubscriptionSystem.get_bot_status()
     stats = SubscriptionSystem.get_stats()
+    radar_stats = news_radar.get_stats()
     
     return f"""
     <!DOCTYPE html>
@@ -6370,6 +6679,10 @@ def home():
                 <h3>📊 إجمالي التحليلات</h3>
                 <p style="font-size: 2em;">{stats.get('total_analyses', 0)}</p>
             </div>
+            <div class="stat">
+                <h3>📡 أخبار اليوم</h3>
+                <p style="font-size: 2em;">{radar_stats.get('today_news', 0)}</p>
+            </div>
         </div>
         
         <div class="status">
@@ -6391,6 +6704,7 @@ def health():
     current_session = get_current_session()
     health = AutomationSystem.get_system_health()
     free_settings = free_analytics.get_settings()
+    radar_stats = news_radar.get_stats()
     
     return {
         "status": "active", 
@@ -6409,6 +6723,12 @@ def health():
         "system_health": health,
         "free_analytics_enabled": free_settings['enabled'],
         "free_analytics_default": free_settings['default_count'],
+        "news_radar": {
+            "enabled": radar_stats.get('enabled') == 'true',
+            "total_news": radar_stats.get('total_news', 0),
+            "today_news": radar_stats.get('today_news', 0),
+            "active_groups": radar_stats.get('active_groups', 0)
+        },
         "timestamp": time.time()
     }
 
@@ -6423,6 +6743,7 @@ def admin_panel():
         health = AutomationSystem.get_system_health()
         free_settings = free_analytics.get_settings()
         monitored_groups = news_radar.get_monitored_groups()
+        radar_stats = news_radar.get_stats()
         
         formatted_users = []
         for u in users_data:
@@ -6477,9 +6798,10 @@ def admin_panel():
             timezones=TIMEZONES_BY_GMT,
             health=health,
             free_settings=free_settings,
-            news_enabled=news_radar.broadcast_enabled,
+            news_enabled=radar_stats.get('enabled') == 'true' and news_radar.broadcast_enabled,
             monitored_groups=monitored_groups,
-            currencies_count=len(news_radar.currencies),
+            currencies_count=len(news_radar.CURRENCY_MAP),
+            radar_stats=radar_stats,
             data_version=DATA_VERSION,
             now=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         )
@@ -6534,6 +6856,7 @@ def toggle_free_analytics():
 def toggle_news_radar():
     try:
         news_radar.broadcast_enabled = not news_radar.broadcast_enabled
+        news_radar.set_setting('enabled', str(news_radar.broadcast_enabled).lower())
         return jsonify({'success': True, 'enabled': news_radar.broadcast_enabled})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -6690,6 +7013,7 @@ def create_backup():
     try:
         DataProtection.backup_database()
         DataProtection.backup_codes_db()
+        DataProtection.backup_radar_db()
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
@@ -6718,6 +7042,8 @@ def restore_backup(filename):
             shutil.copy2(filepath, DB_NAME)
         elif 'subscription_backup' in filename:
             shutil.copy2(filepath, SUBSCRIPTION_DB_NAME)
+        elif 'radar_backup' in filename:
+            shutil.copy2(filepath, NEWS_RADAR_DB)
         
         return jsonify({'success': True})
     except Exception as e:
@@ -6729,11 +7055,13 @@ def export_data():
     try:
         users = SubscriptionSystem.get_all_users()
         stats = SubscriptionSystem.get_stats()
+        radar_stats = news_radar.get_stats()
         
         data = {
             'export_date': datetime.now().isoformat(),
             'data_version': DATA_VERSION,
             'stats': stats,
+            'radar_stats': radar_stats,
             'users': users
         }
         
@@ -6759,12 +7087,13 @@ def ping():
     return "PONG"
 
 def main():
-    print("🤖 Starting Obeida Trading with UTC Time System and Advanced Admin Panel...")
+    print("🤖 Starting Obeida Trading with Advanced News Radar V2.0...")
     
     init_db_with_subscription()
     
     DataProtection.backup_database()
     DataProtection.backup_codes_db()
+    DataProtection.backup_radar_db()
     
     flask_thread = threading.Thread(target=run_flask_server, daemon=True)
     flask_thread.start()
@@ -6855,9 +7184,10 @@ def main():
     asyncio.set_event_loop(loop)
     loop.create_task(periodic_cleanup())
     loop.create_task(backup_scheduler())
-    loop.create_task(news_radar_scheduler(application))
+    loop.create_task(news_radar_scheduler())
     
     print("✅ Telegram Secure Admin Panel ready...")
+    print("📡 Obeida News Radar V2.0 is running...")
     
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
