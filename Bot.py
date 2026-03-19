@@ -2558,7 +2558,7 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
                     print(f"⚠️ خطأ في حذف الملف المؤقت: {e}")
     
     return MAIN_MENU
-
+    
 async def analyze_chart_image(update, context, image_path, candle, trade_time, symbol):
     try:
         user_id = update.effective_user.id
@@ -2598,26 +2598,15 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         else:
             time_status = "✅ توقيت مستقر للتحليل"
 
-        # ========== التعديل 1: تحسين تعريف momentum_boost ==========
+        # تحسين تعريف momentum_boost
         momentum_boost_from_time = seconds_remaining <= 10 and candle.startswith('S')
         
-        # محاولة تقدير وجود زخم من الشموع
-        estimated_momentum_from_candles = False
-        try:
-            # إذا كان الاتجاه صاعد والجسم كبير، هذا مؤشر زخم
-            if 'current_direction' in locals() and 'candle_body_ratio' in locals():
-                if current_direction == "UP" and candle_body_ratio > 0.7:
-                    estimated_momentum_from_candles = True
-        except:
-            pass
-        
         # تقدير الزخم من الظروف المتاحة
+        estimated_momentum_from_candles = False
         if candle.startswith('S') and seconds_remaining < 15:
             estimated_momentum_from_candles = True
         
-        # يتم تفعيل Boost إذا تحقق شرط الوقت أو شرط الاتجاه
-        momentum_boost = momentum_boost_from_time or estimated_momentum_from_candles
-        # ============================================================
+        momentum_boost = momentum_boost_from_time or estimated_momentum_from_candels
         
         candle_closing_status = f"الوقت المتبقي: {seconds_remaining} ثانية"
         if seconds_remaining < 5:
@@ -2676,29 +2665,106 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 return candle_volume / avg_volume
             return 1.0
 
+        # ========== تفعيل دوال التحليل بدلاً من القيم الافتراضية ==========
         def has_institutional_fvg(chart_data):
-            return False
+            """تحقق من وجود فجوة سعرية مؤسسية (FVG)"""
+            try:
+                # إذا كان هناك بيانات من التحليل البصري
+                if 'fvg_detected' in chart_data and chart_data['fvg_detected']:
+                    return True
+                
+                # تقدير وجود FVG بناءً على سلوك الشموع
+                if 'candles' in chart_data and len(chart_data['candles']) >= 3:
+                    # فحص آخر 3 شموع: إذا كانت هناك فجوة بين High شمعة و Low الشمعة التي بعدها
+                    c1 = chart_data['candles'][-3]  # شمعة -3
+                    c2 = chart_data['candles'][-2]  # شمعة -2
+                    c3 = chart_data['candles'][-1]  # شمعة -1
+                    
+                    # فجوة صاعدة: Low الشمعة الحالية > High الشمعة السابقة
+                    if c3['low'] > c2['high'] * 1.001:  # فجوة 0.1%
+                        return True
+                    
+                    # فجوة هابطة: High الشمعة الحالية < Low الشمعة السابقة
+                    if c3['high'] < c2['low'] * 0.999:
+                        return True
+                
+                return False
+            except:
+                return False
 
         def check_liquidity_sweep(chart_data):
-            return False
+            """تحقق من وجود سحب سيولة"""
+            try:
+                if 'liquidity_sweep_detected' in chart_data:
+                    return chart_data['liquidity_sweep_detected']
+                
+                # تقدير سحب السيولة: لمس قمة/قاع سابق وارتداد سريع
+                if 'swing_highs' in chart_data and 'current_price' in chart_data:
+                    for high in chart_data['swing_highs']:
+                        if abs(chart_data['current_price'] - high) < 2:  # في حدود نقطتين
+                            return True
+                
+                return False
+            except:
+                return False
 
         def identify_liquidity_layers(chart_data):
+            """تحديد طبقات السيولة"""
             liquidity_layers = {
                 "internal": [],
                 "external": [],
                 "retail": []
             }
+            
+            try:
+                # السيولة الداخلية (FVGs صغيرة)
+                if 'fvgs' in chart_data:
+                    for fvg in chart_data['fvgs']:
+                        if abs(fvg['end'] - fvg['start']) < 5:  # فجوة صغيرة
+                            liquidity_layers["internal"].append(fvg)
+                
+                # السيولة الخارجية (قمم وقيعان تاريخية)
+                if 'swing_highs' in chart_data:
+                    for high in chart_data['swing_highs'][-3:]:  # آخر 3 قمم
+                        liquidity_layers["external"].append({"type": "high", "price": high})
+                
+                if 'swing_lows' in chart_data:
+                    for low in chart_data['swing_lows'][-3:]:  # آخر 3 قيعان
+                        liquidity_layers["external"].append({"type": "low", "price": low})
+                
+                # سيولة التجزئة (قمم/قيعان متساوية)
+                if 'equal_highs' in chart_data:
+                    for eq_high in chart_data['equal_highs']:
+                        liquidity_layers["retail"].append({"type": "equal_high", "price": eq_high})
+                
+                if 'equal_lows' in chart_data:
+                    for eq_low in chart_data['equal_lows']:
+                        liquidity_layers["retail"].append({"type": "equal_low", "price": eq_low})
+            
+            except Exception as e:
+                print(f"خطأ في identify_liquidity_layers: {e}")
+            
             return liquidity_layers
+        # ================================================================
 
-        def is_in_golden_execution_window(current_second, candle_type):
-            seconds_in_candle = 60 - current_second
+        def is_in_golden_execution_window(current_second, candle_type, momentum_boost=False):
+            """نافذة التنفيذ الذهبية - أكثر مرونة مع الزخم"""
+            seconds_in_candle = 60 - current_second if current_second > 0 else 0
             
             if candle_type.startswith('S'):
-                return 5 <= seconds_in_candle <= 25
+                # فريمات الثواني: أكثر مرونة مع الزخم
+                if momentum_boost:
+                    return 3 <= seconds_in_candle <= 30  # أوسع مع الزخم
+                else:
+                    return 5 <= seconds_in_candle <= 25  # طبيعي
             else:
-                return 10 <= seconds_in_candle <= 40
+                # فريمات الدقائق
+                if momentum_boost:
+                    return 8 <= seconds_in_candle <= 45  # أوسع مع الزخم
+                else:
+                    return 10 <= seconds_in_candle <= 40  # طبيعي
             
-        # ========== التعديل 2: دالة exclusionary_scan المعدلة ==========
+        # ========== دالة exclusionary_scan المعدلة (أكثر مرونة) ==========
         def exclusionary_scan(distance_to_peak, distance_to_bottom, is_at_historical_peak, is_at_historical_bottom, 
                               candle_body_ratio, candle_wick_ratio, volume_ratio, avg_volume_ratio, 
                               engulfing_ratio, is_trap_minute, seconds_remaining, momentum_boost, 
@@ -2708,78 +2774,128 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             passed = True
             reversal_signal = None
             
-            # تحديد مسافة الأمان ونسب الجسم المطلوبة بناءً على وجود زخم
-            required_safety_distance = 3 if momentum_boost else 5
-            required_body_ratio = 0.75 if momentum_boost else 0.9
-            required_breakout_force = 1.3 if momentum_boost else 1.5
+            # تحديد مسافة الأمان ونسب الجسم المطلوبة - مرونة حسب الزخم
+            if momentum_boost:
+                required_safety_distance = 2  # نقطتين فقط مع الزخم القوي
+                required_body_ratio = 0.6      # 60% فقط مع الزخم
+                required_breakout_force = 1.2  # 1.2x فقط مع الزخم
+            else:
+                required_safety_distance = 4    # 4 نقاط في الوضع العادي
+                required_body_ratio = 0.7       # 70% في الوضع العادي
+                required_breakout_force = 1.3   # 1.3x في الوضع العادي
             
-            # فحص القمة التاريخية
+            # فحص القمة التاريخية - مرونة أكبر
             if is_at_historical_peak or distance_to_peak < 5:
-                # إذا كان هناك زخم، نطبق شروط مخففة
-                if momentum_boost and current_direction == "UP":
-                    if not (breakout_force >= required_breakout_force and candle_body_ratio >= required_body_ratio and distance_to_peak >= required_safety_distance):
-                        passed = False
-                        reasons.append(f"زخم غير كافٍ للاختراق: قوة {breakout_force:.1f}x ≥{required_breakout_force}، جسم {candle_body_ratio*100:.0f}% ≥{required_body_ratio*100:.0f}%، مسافة {distance_to_peak:.1f} ≥{required_safety_distance}")
-                        reversal_signal = "WEAK_MOMENTUM_HOLD 🟡"
-                        return passed, reasons, reversal_signal
-                else:
-                    # بدون زخم، نطبق الشروط الصارمة
-                    if not (breakout_force >= 1.5 and candle_body_ratio >= 0.9 and distance_to_peak >= 5):
-                        passed = False
-                        reasons.append("فخ سيولة: قمة تاريخية بدون ثالوث مؤسسي")
-                        reversal_signal = "LIQUIDITY_TRAP_REVERSAL 🔴"
-                        return passed, reasons, reversal_signal
+                # شروط دخول الشراء (ليست تعجيزية)
+                buy_conditions_met = (
+                    breakout_force >= required_breakout_force and 
+                    candle_body_ratio >= required_body_ratio and 
+                    distance_to_peak >= required_safety_distance
+                )
+                
+                # شروط الانعكاس (فخ السيولة الحقيقي)
+                trap_conditions_met = (
+                    candle_wick_ratio > 0.5 or  # ذيل طويل جداً
+                    engulfing_ratio > 0.7 or     # ابتلاع كبير
+                    (candle_body_ratio < 0.3 and distance_to_peak < 2)  # جسم ضعيف جداً عند القمة
+                )
+                
+                if buy_conditions_met:
+                    # مسموح بالشراء
+                    pass
+                elif trap_conditions_met:
+                    # فخ سيولة حقيقي
+                    passed = False
+                    reasons.append("فخ سيولة: علامات رفض سعري قوية عند القمة")
+                    reversal_signal = "LIQUIDITY_TRAP_REVERSAL 🔴"
+                    return passed, reasons, reversal_signal
+                elif not momentum_boost and distance_to_peak < 2 and candle_body_ratio < 0.5:
+                    # قمة قريبة جداً بدون زخم
+                    passed = False
+                    reasons.append("قمة قريبة بدون زخم كافٍ - انتظار")
+                    reversal_signal = "PEAK_HOLD 🟡"
+                    return passed, reasons, reversal_signal
             
-            # فحص القاع التاريخي
+            # فحص القاع التاريخي - نفس المنطق
             if is_at_historical_bottom or distance_to_bottom < 5:
-                if momentum_boost and current_direction == "DOWN":
-                    if not (breakout_force >= required_breakout_force and candle_body_ratio >= required_body_ratio and distance_to_bottom >= required_safety_distance):
-                        passed = False
-                        reasons.append(f"زخم غير كافٍ للاختراق الهابط")
-                        reversal_signal = "WEAK_MOMENTUM_HOLD 🟡"
-                        return passed, reasons, reversal_signal
-                else:
-                    if not (breakout_force >= 1.5 and candle_body_ratio >= 0.9 and distance_to_bottom >= 5):
-                        passed = False
-                        reasons.append("فخ سيولة: قاع تاريخي بدون ثالوث مؤسسي")
-                        reversal_signal = "LIQUIDITY_TRAP_REVERSAL 🟢"
-                        return passed, reasons, reversal_signal
+                buy_conditions_met = (
+                    breakout_force >= required_breakout_force and 
+                    candle_body_ratio >= required_body_ratio and 
+                    distance_to_bottom >= required_safety_distance
+                )
+                
+                trap_conditions_met = (
+                    candle_wick_ratio > 0.5 or
+                    engulfing_ratio > 0.7 or
+                    (candle_body_ratio < 0.3 and distance_to_bottom < 2)
+                )
+                
+                if buy_conditions_met:
+                    pass
+                elif trap_conditions_met:
+                    passed = False
+                    reasons.append("فخ سيولة: علامات رفض سعري قوية عند القاع")
+                    reversal_signal = "LIQUIDITY_TRAP_REVERSAL 🟢"
+                    return passed, reasons, reversal_signal
+                elif not momentum_boost and distance_to_bottom < 2 and candle_body_ratio < 0.5:
+                    passed = False
+                    reasons.append("قاع قريب بدون زخم كافٍ - انتظار")
+                    reversal_signal = "BOTTOM_HOLD 🟡"
+                    return passed, reasons, reversal_signal
             
-            if engulfing_ratio > 0.5:
+            # قانون الابتلاع - تخفيف الشروط (من 50% إلى 70%)
+            if engulfing_ratio > 0.7:
                 passed = False
                 reasons.append(f"قانون الابتلاع: شمعة عكسية ابتلعت {engulfing_ratio*100:.0f}% من الشمعة السابقة")
                 reversal_signal = "IMMEDIATE_REVERSAL 🔄"
                 return passed, reasons, reversal_signal
             
-            if avg_volume_ratio > 3.0:
+            # إجهاد سعري - فقط للشموع الضخمة جداً
+            if avg_volume_ratio > 4.0:  # من 3.0 إلى 4.0
                 passed = False
                 reasons.append(f"إجهاد سعري: الشمعة الحالية أكبر بـ {avg_volume_ratio:.1f}x من المتوسط")
                 reversal_signal = "EXHAUSTION_HOLD 🟡"
                 return passed, reasons, reversal_signal
             
-            if candle_wick_ratio > 0.6:
+            # رفض سعري - فقط للذيول الطويلة جداً
+            if candle_wick_ratio > 0.7:  # من 0.6 إلى 0.7
                 passed = False
                 reasons.append(f"رفض سعري: ذيل طويل بنسبة {candle_wick_ratio*100:.0f}%")
                 reversal_signal = "REJECTION_HOLD 🟡"
                 return passed, reasons, reversal_signal
             
+            # نافذة التنفيذ - مرونة حسب الزخم
             seconds_passed = 60 - seconds_remaining
             if candle.startswith('S'):
-                min_window = 3 if momentum_boost else 5
-                max_window = 30 if momentum_boost else 25
+                # فريمات الثواني
+                if momentum_boost:
+                    min_window, max_window = 3, 30
+                else:
+                    min_window, max_window = 4, 26
+                    
                 if not (min_window <= seconds_passed <= max_window):
-                    passed = False
-                    reasons.append(f"خارج نافذة التنفيذ: الثواني المنقضية = {seconds_passed} (يجب أن تكون بين {min_window}-{max_window})")
-                    reversal_signal = "TIMING_HOLD 🟡"
-                    return passed, reasons, reversal_signal
+                    # تحذير فقط، ليس منعاً كاملاً مع الزخم
+                    if not momentum_boost:
+                        passed = False
+                        reasons.append(f"خارج نافذة التنفيذ: الثواني المنقضية = {seconds_passed} (يفضل بين {min_window}-{max_window})")
+                        reversal_signal = "TIMING_HOLD 🟡"
+                        return passed, reasons, reversal_signal
             else:
-                if not (10 <= seconds_passed <= 40):
-                    passed = False
-                    reasons.append(f"خارج نافذة التنفيذ الذهبية: الثواني المنقضية = {seconds_passed} (يجب أن تكون بين 10-40)")
-                    reversal_signal = "TIMING_HOLD 🟡"
-                    return passed, reasons, reversal_signal
+                # فريمات الدقائق
+                if momentum_boost:
+                    min_window, max_window = 8, 45
+                else:
+                    min_window, max_window = 10, 40
+                    
+                if not (min_window <= seconds_passed <= max_window):
+                    if not momentum_boost:
+                        passed = False
+                        reasons.append(f"خارج نافذة التنفيذ: الثواني المنقضية = {seconds_passed} (يفضل بين {min_window}-{max_window})")
+                        reversal_signal = "TIMING_HOLD 🟡"
+                        return passed, reasons, reversal_signal
             
-            if is_trap_minute and seconds_remaining < 15 and not momentum_boost:
+            # دقائق الغدر - فقط في الحالات الواضحة
+            if is_trap_minute and seconds_remaining < 10 and not momentum_boost and engulfing_ratio < 0.3:
                 passed = False
                 reasons.append("دقيقة غدر: وقت حرج بدون زخم كافي")
                 reversal_signal = "TRAP_MINUTE_HOLD 🟡"
@@ -2788,7 +2904,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             return passed, reasons, reversal_signal
         # ============================================================
 
-        # ========== التعديل 3: دالة get_success_driven_decision_v7_5 المعدلة ==========
+        # ========== دالة get_success_driven_decision_v7_5 المعدلة ==========
         def get_success_driven_decision_v7_5(is_at_historical_peak, is_at_historical_bottom, 
                                              breakout_points, breakout_force, 
                                              candle_body_ratio, candle_wick_ratio, 
@@ -2796,107 +2912,104 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                                              engulfing_ratio, distance_to_peak, distance_to_bottom,
                                              current_direction, has_fvg, momentum_boost):
             
+            # حالات الزخم القوي - أولوية عالية
+            if momentum_boost:
+                # زخم صاعد قوي
+                if current_direction == "UP" and breakout_force >= 1.2 and candle_body_ratio >= 0.6:
+                    return {
+                        "decision": "STRONG_MOMENTUM 🟢",
+                        "action": "BUY 🟢",
+                        "confidence": 90,
+                        "reason": f"زخم صاعد قوي: حجم {breakout_force:.1f}x، جسم {candle_body_ratio*100:.0f}%",
+                        "success_rate": "90%",
+                        "entry_type": "MOMENTUM_ENTRY"
+                    }
+                
+                # زخم هابط قوي
+                if current_direction == "DOWN" and breakout_force >= 1.2 and candle_body_ratio >= 0.6:
+                    return {
+                        "decision": "STRONG_MOMENTUM 🔴",
+                        "action": "SELL 🔴",
+                        "confidence": 90,
+                        "reason": f"زخم هابط قوي: حجم {breakout_force:.1f}x، جسم {candle_body_ratio*100:.0f}%",
+                        "success_rate": "90%",
+                        "entry_type": "MOMENTUM_ENTRY"
+                    }
+            
             # حالة القمة التاريخية
             if is_at_historical_peak or distance_to_peak < 8:
-                # 1. أولاً: فحص احتمالية استمرار الزخم (خاصة مع momentum_boost)
-                if momentum_boost and current_direction == "UP":
-                    # شروط مخففة لاستمرار الزخم
-                    if breakout_force >= 1.3 and candle_body_ratio >= 0.7 and distance_to_peak <= 5:
-                        return {
-                            "decision": "MOMENTUM_CONTINUATION 🟢",
-                            "action": "BUY 🟢",
-                            "confidence": 88,
-                            "reason": f"استمرار زخم صاعد قوي: حجم {breakout_force:.1f}x، جسم {candle_body_ratio*100:.0f}%، اختراق قمة بمسافة {distance_to_peak:.1f} نقطة",
-                            "success_rate": "88%",
-                            "entry_type": "MOMENTUM_ENTRY"
-                        }
-                
-                # 2. ثانياً: فحص الانعكاس (فخ السيولة)
-                if candle_wick_ratio > 0.4 or engulfing_ratio > 0.5 or candle_body_ratio < 0.5:
-                    # تأكد من وجود مسافة صغيرة للقمة (يعني هو فعلاً يحاول اختراقها)
-                    if distance_to_peak < 5:
-                        return {
-                            "decision": "LIQUIDITY_TRAP_REVERSAL 🔄",
-                            "action": "SELL_REVERSAL 🔴",
-                            "confidence": 92,
-                            "reason": f"فخ سيولة: قمة تاريخية مع {'ذيل طويل' if candle_wick_ratio > 0.4 else 'ابتلاع عكسي' if engulfing_ratio > 0.5 else 'جسم ضعيف'}",
-                            "success_rate": "92%",
-                            "entry_type": "REVERSAL_AT_PEAK_MINUS_2"
-                        }
-                
-                # 3. ثالثاً: فحص الكسر القوي (الثالوث المؤسسي)
-                if (breakout_points >= 4 and candle_body_ratio >= 0.9 and 
-                    volume_ratio >= 1.5 and has_fvg and distance_to_peak >= 5):
+                # 1. فحص الكسر القوي (شروط مخففة)
+                if (breakout_force >= 1.3 and candle_body_ratio >= 0.7 and distance_to_peak >= 3):
+                    confidence = 92 if has_fvg else 85
                     return {
-                        "decision": "STRUCTURAL_BREAKOUT 💥",
-                        "action": "BREAKOUT_BUY 🟢",
-                        "confidence": 98,
-                        "reason": "كسر هيكلي حقيقي: ثالوث مؤسسي مكتمل (≥4 نقاط + حجم ≥1.5x + جسم >90% + FVG)",
-                        "success_rate": "98%",
-                        "entry_type": "RETEST_ENTRY"
+                        "decision": "BREAKOUT_BUY 🟢",
+                        "action": "BUY 🟢",
+                        "confidence": confidence,
+                        "reason": f"اختراق قوي للقمة: حجم {breakout_force:.1f}x، جسم {candle_body_ratio*100:.0f}%، مسافة {distance_to_peak:.1f} نقطة" + (" مع FVG" if has_fvg else ""),
+                        "success_rate": f"{confidence}%",
+                        "entry_type": "BREAKOUT_ENTRY"
+                    }
+                
+                # 2. فحص الانعكاس (فخ السيولة الواضح)
+                if (candle_wick_ratio > 0.5 and distance_to_peak < 3) or engulfing_ratio > 0.7:
+                    return {
+                        "decision": "LIQUIDITY_TRAP_REVERSAL 🔴",
+                        "action": "SELL_REVERSAL 🔴",
+                        "confidence": 90,
+                        "reason": f"فخ سيولة: قمة مع علامات رفض واضحة",
+                        "success_rate": "90%",
+                        "entry_type": "REVERSAL_ENTRY"
                     }
             
             # حالة القاع التاريخي
             if is_at_historical_bottom or distance_to_bottom < 8:
-                if momentum_boost and current_direction == "DOWN":
-                    if breakout_force >= 1.3 and candle_body_ratio >= 0.7 and distance_to_bottom <= 5:
-                        return {
-                            "decision": "MOMENTUM_CONTINUATION 🔴",
-                            "action": "SELL 🔴",
-                            "confidence": 88,
-                            "reason": f"استمرار زخم هابط قوي: حجم {breakout_force:.1f}x، جسم {candle_body_ratio*100:.0f}%",
-                            "success_rate": "88%",
-                            "entry_type": "MOMENTUM_ENTRY"
-                        }
-                
-                if candle_wick_ratio > 0.4 or engulfing_ratio > 0.5 or candle_body_ratio < 0.5:
-                    if distance_to_bottom < 5:
-                        return {
-                            "decision": "LIQUIDITY_TRAP_REVERSAL 🔄",
-                            "action": "BUY_REVERSAL 🟢",
-                            "confidence": 92,
-                            "reason": f"فخ سيولة: قاع تاريخي مع علامات انعكاس",
-                            "success_rate": "92%",
-                            "entry_type": "REVERSAL_AT_BOTTOM_PLUS_2"
-                        }
-                
-                if (breakout_points >= 4 and candle_body_ratio >= 0.9 and 
-                    volume_ratio >= 1.5 and has_fvg and distance_to_bottom >= 5):
+                if (breakout_force >= 1.3 and candle_body_ratio >= 0.7 and distance_to_bottom >= 3):
+                    confidence = 92 if has_fvg else 85
                     return {
-                        "decision": "STRUCTURAL_BREAKOUT 💥",
-                        "action": "BREAKOUT_SELL 🔴",
-                        "confidence": 98,
-                        "reason": "كسر هيكلي حقيقي: ثالوث مؤسسي مكتمل للهبوط",
-                        "success_rate": "98%",
-                        "entry_type": "RETEST_ENTRY"
+                        "decision": "BREAKOUT_SELL 🔴",
+                        "action": "SELL 🔴",
+                        "confidence": confidence,
+                        "reason": f"اختراق قوي للقاع: حجم {breakout_force:.1f}x، جسم {candle_body_ratio*100:.0f}%، مسافة {distance_to_bottom:.1f} نقطة",
+                        "success_rate": f"{confidence}%",
+                        "entry_type": "BREAKOUT_ENTRY"
+                    }
+                
+                if (candle_wick_ratio > 0.5 and distance_to_bottom < 3) or engulfing_ratio > 0.7:
+                    return {
+                        "decision": "LIQUIDITY_TRAP_REVERSAL 🟢",
+                        "action": "BUY_REVERSAL 🟢",
+                        "confidence": 90,
+                        "reason": f"فخ سيولة: قاع مع علامات رفض واضحة",
+                        "success_rate": "90%",
+                        "entry_type": "REVERSAL_ENTRY"
                     }
             
-            # حالات الزخم العادي (ليس عند القمم/القيعان)
-            if current_direction == "UP" and volume_ratio >= 1.3 and candle_body_ratio > 0.8:
+            # حالات الزخم العادي
+            if current_direction == "UP" and volume_ratio >= 1.2 and candle_body_ratio > 0.6:
                 return {
                     "decision": "MOMENTUM_ENTRY 🟢",
                     "action": "BUY 🟢",
-                    "confidence": 90,
-                    "reason": f"زخم شراء قوي: حجم {volume_ratio:.1f}x + جسم {candle_body_ratio*100:.0f}%",
-                    "success_rate": "90%",
-                    "entry_type": "RETEST_ENTRY"
+                    "confidence": 85,
+                    "reason": f"زخم شراء: حجم {volume_ratio:.1f}x + جسم {candle_body_ratio*100:.0f}%",
+                    "success_rate": "85%",
+                    "entry_type": "MOMENTUM_ENTRY"
                 }
             
-            if current_direction == "DOWN" and volume_ratio >= 1.3 and candle_body_ratio > 0.8:
+            if current_direction == "DOWN" and volume_ratio >= 1.2 and candle_body_ratio > 0.6:
                 return {
                     "decision": "MOMENTUM_ENTRY 🔴",
                     "action": "SELL 🔴",
-                    "confidence": 90,
-                    "reason": f"زخم بيع قوي: حجم {volume_ratio:.1f}x + جسم {candle_body_ratio*100:.0f}%",
-                    "success_rate": "90%",
-                    "entry_type": "RETEST_ENTRY"
+                    "confidence": 85,
+                    "reason": f"زخم بيع: حجم {volume_ratio:.1f}x + جسم {candle_body_ratio*100:.0f}%",
+                    "success_rate": "85%",
+                    "entry_type": "MOMENTUM_ENTRY"
                 }
             
             return {
                 "decision": "HOLD 🟡",
                 "action": "HOLD",
-                "confidence": 70,
-                "reason": "لم تتحقق شروط الكسر أو الانعكاس - انتظار تأكيد أقوى",
+                "confidence": 60,
+                "reason": "لم تتحقق شروط واضحة - انتظار تأكيد أقوى",
                 "success_rate": "70%",
                 "entry_type": "NO_ENTRY"
             }
@@ -2904,23 +3017,23 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         def market_type_filter(candle_wick_ratio, is_at_historical_level, volume_ratio, candle_body_ratio):
             if candle.startswith('S'):
-                if is_at_historical_level and candle_wick_ratio > 0.3:
+                if is_at_historical_level and candle_wick_ratio > 0.4:  # تخفيف من 0.3 إلى 0.4
                     return {
                         "is_trap": True,
-                        "reason": "OTC Trap: فتل طويل عند مستوى تاريخي",
-                        "action": "REVERSAL"
+                        "reason": "احتمال فخ سيولة: فتل طويل عند مستوى تاريخي",
+                        "action": "CAUTION"
                     }
                 
-                if volume_ratio > 2.5 and candle_body_ratio > 0.9 and is_at_historical_level:
+                if volume_ratio > 3.0 and candle_body_ratio > 0.9 and is_at_historical_level:  # من 2.5 إلى 3.0
                     return {
                         "is_trap": True,
-                        "reason": "OTC Distribution: حجم ضخم عند قمة = تفريغ",
-                        "action": "REVERSAL"
+                        "reason": "احتمال تفريغ: حجم كبير جداً عند قمة",
+                        "action": "CAUTION"
                     }
             
             return {
                 "is_trap": False,
-                "reason": "Normal Market",
+                "reason": "طبيعي",
                 "action": "NORMAL"
             }
 
@@ -2944,44 +3057,77 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 }
             }
 
-        def calculate_retest_entry_enhanced(current_price, broken_level, direction, is_breakout=True, market_type="OTC"):
+        # ========== دالة calculate_retest_entry_enhanced المعدلة ==========
+        def calculate_retest_entry_enhanced(current_price, broken_level, direction, is_breakout=True, market_type="OTC", 
+                                           fvg_nearby=False, liquidity_level=None):
+            """حساب نقطة الدخول بناءً على السيولة والفجوات"""
+            
+            # إذا كان هناك FVG قريب، نستخدمه
+            if fvg_nearby and liquidity_level:
+                if direction == "BUY":
+                    return {
+                        "entry_price": liquidity_level - 0.5,  # دخول تحت الفجوة بقليل
+                        "stop_loss": liquidity_level - 3,
+                        "reason": "دخول عند منطقة FVG - انتظار ارتداد",
+                        "drawdown": "منخفض"
+                    }
+                elif direction == "SELL":
+                    return {
+                        "entry_price": liquidity_level + 0.5,
+                        "stop_loss": liquidity_level + 3,
+                        "reason": "دخول عند منطقة FVG",
+                        "drawdown": "منخفض"
+                    }
+            
+            # دخول عادي مع إعادة اختبار
             if direction == "BUY" and is_breakout:
                 if market_type == "OTC":
                     return {
-                        "entry_price": broken_level + 0.5,
-                        "stop_loss": broken_level - 3,
-                        "reason": "إعادة اختبار في OTC - دخول مبكر قليلاً",
-                        "drawdown": "منخفض جداً"
+                        "entry_price": broken_level + 0.3,  # 0.3 بدل 0.5
+                        "stop_loss": broken_level - 2.5,    # 2.5 بدل 3
+                        "reason": "إعادة اختبار في OTC",
+                        "drawdown": "منخفض"
                     }
                 else:
                     return {
                         "entry_price": broken_level,
                         "stop_loss": broken_level - 2,
-                        "reason": "إعادة اختبار المقاومة المكسورة كدعم",
-                        "drawdown": "صفر تقريباً"
+                        "reason": "إعادة اختبار دقيق",
+                        "drawdown": "صفر"
                     }
             elif direction == "SELL" and is_breakout:
                 if market_type == "OTC":
                     return {
-                        "entry_price": broken_level - 0.5,
-                        "stop_loss": broken_level + 3,
-                        "reason": "إعادة اختبار في OTC - دخول مبكر قليلاً",
-                        "drawdown": "منخفض جداً"
+                        "entry_price": broken_level - 0.3,
+                        "stop_loss": broken_level + 2.5,
+                        "reason": "إعادة اختبار في OTC",
+                        "drawdown": "منخفض"
                     }
                 else:
                     return {
                         "entry_price": broken_level,
                         "stop_loss": broken_level + 2,
-                        "reason": "إعادة اختبار الدعم المكسور كمقاومة",
-                        "drawdown": "صفر تقريباً"
+                        "reason": "إعادة اختبار دقيق",
+                        "drawdown": "صفر"
                     }
             else:
-                return {
-                    "entry_price": current_price,
-                    "stop_loss": current_price - 3 if direction == "BUY" else current_price + 3,
-                    "reason": "دخول مباشر مع الزخم",
-                    "drawdown": "طبيعي"
-                }
+                # دخول مباشر مع مراعاة المسافة
+                buffer = 0.5 if momentum_boost else 1.0
+                if direction == "BUY":
+                    return {
+                        "entry_price": current_price,
+                        "stop_loss": current_price - (3 if momentum_boost else 2.5),
+                        "reason": "دخول مباشر مع الزخم",
+                        "drawdown": "طبيعي"
+                    }
+                else:
+                    return {
+                        "entry_price": current_price,
+                        "stop_loss": current_price + (3 if momentum_boost else 2.5),
+                        "reason": "دخول مباشر مع الزخم",
+                        "drawdown": "طبيعي"
+                    }
+        # ================================================================
 
         breakout_force = 0.0
         avg_volume = 0.0
@@ -4210,7 +4356,7 @@ else:
         save_analysis_context(user_id, analysis_result)
         
         # إضافة خاتمة التحليل
-        in_golden_window = is_in_golden_execution_window(current_second, candle)
+        in_golden_window = is_in_golden_execution_window(current_second, candle, momentum_boost)
         golden_window_status = "داخل النافذة الذهبية ✅" if in_golden_window else "خارج النافذة الذهبية ❌"
         seconds_passed = 60 - seconds_remaining
         
@@ -4223,6 +4369,7 @@ else:
 • 🕧 جلسة السوق: {current_session['name']}
 • ⏱️ الثواني المنقضية: {seconds_passed} ثانية
 • ⏱️ نافذة التنفيذ: {golden_window_status}
+• ⚡ حالة الزخم: {"مفعل" if momentum_boost else "عادي"}
 ━━━━━━━━━━━━━━━
 🟢 الساعة : {current_time.strftime('%H:%M:%S')} UTC
 🤖 ** Obeida Trading - التحليل المتكامل V8.0 **
