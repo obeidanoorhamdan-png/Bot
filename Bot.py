@@ -337,7 +337,7 @@ class SubscriptionSystem:
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 is_blocked BOOLEAN DEFAULT 0,
                 blocked_reason TEXT,
-                free_analyses INTEGER DEFAULT 3,
+                free_analyses INTEGER DEFAULT 1,
                 total_analyses INTEGER DEFAULT 0,
                 metadata TEXT DEFAULT '{}',
                 timezone TEXT DEFAULT 'GMT+02:00'
@@ -445,7 +445,7 @@ class SubscriptionSystem:
             
             cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             if not cursor.fetchone():
-                cursor.execute("INSERT INTO users (user_id, free_analyses) VALUES (?, 3)", (user_id,))
+                cursor.execute("INSERT INTO users (user_id, free_analyses) VALUES (?, 1)", (user_id,))
             
             duration = SubscriptionSystem.SUBSCRIPTION_TYPES[subscription_type]['duration']
             start_date = datetime.now()
@@ -1563,17 +1563,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🆔 **معرفك:** `{user_id}`\n"
         f"👤 **اليوزر:** @{username}\n\n"
         f"📊 **حالة الاشتراك:** {'✅ ' + sub_name if status else '❌ غير مشترك'}\n"
-        f"🔢 **التحليلات المجانية المتبقية:** {user_info['free_analyses'] if user_info else 3}\n"
+        f"🔢 **التحليلات المجانية المتبقية:** {user_info['free_analyses'] if user_info else 1}\n"
         f"📈 **إجمالي التحليلات:** {user_info['total_analyses'] if user_info else 0}\n\n"
-        "━━━━━━━━━━━━━━━━\n\n"
-        "4️⃣ **قراءة النتائج - أنواع القرارات الفنية** 🔍\n\n"
-        "   **🟢 شراء:** السعر صاعد - ادخل مع الاتجاه\n"
-        "   **🔴 بيع:** السعر هابط - ادخل مع الاتجاه\n"
-        "   **💥 كسر هيكلي:** تغير الاتجاه (صاعد ← هابط أو العكس)\n"
-        "   **🔄 سحب سيولة:** عكس مؤقت ثم استمرار الاتجاه الأصلي\n"
-        "   **🔄 انعكاس فوري:** تغير سريع ثم استقرار\n\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "🤖 **Powered by Obeida Trading**"
     )
     
     keyboard = [
@@ -1619,7 +1610,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🌍 **منطقتك الزمنية:** {user_tz}\n"
             f"🕒 **وقتك المحلي:** {local_time_str}\n"
             f"━━━━━━━━━━━━━━━━\n\n"
-            f"📍 **جلسة UTC الحالية:** {utc_session['name']}\n"
+            f"📍 **جلسة الحالية:** {utc_session['name']}\n"
             f"📍 **جلسة منطقتك:** {current_session['name']}\n"
             f"📊 **التقلب:** {current_session['volatility']}\n"
             f"🎯 **نسبة النجاح المتوقعة:** {current_session['success_rate']}\n"
@@ -1643,7 +1634,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_time_str = local_time.strftime('%Y-%m-%d %H:%M:%S')
         
         if not user_info:
-            user_info = {'free_analyses': 3, 'total_analyses': 0, 'created_at': None, 'last_active': None, 'timezone': 'GMT+02:00'}
+            user_info = {'free_analyses': 1, 'total_analyses': 0, 'created_at': None, 'last_active': None, 'timezone': 'GMT+02:00'}
         
         info_msg = (
             f"👤 **معلومات المستخدم**\n\n"
@@ -2539,7 +2530,7 @@ async def handle_select_duration(update: Update, context: ContextTypes.DEFAULT_T
         else:
             end_info = "غير محدد المدة (مدى الحياة)"
         
-        SubscriptionSystem.reset_free_analyses(target_user_id, 3)
+        SubscriptionSystem.reset_free_analyses(target_user_id, 1)
         
         await update.message.reply_text(
             f"✅ **تم إضافة الاشتراك بنجاح!**\n\n"
@@ -3645,7 +3636,7 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS +
 
 🎯 الإشارة التنفيذية:
 • السعر الحالي: [السعر الدقيق من الشارت]
-• حالة الشمعة: [مفتوحة / مغلقة] [حمراء 🔴 / خضراء 🟢] - الوقت المتبقي: [الوقت الدقيق من ساعة المنصة] 
+• حالة الشمعة: [مفتوحة / مغلقة] - الوقت المتبقي: [الوقت الدقيق من ساعة المنصة] 
 • القرار الفني: [شراء 🟢 / بيع 🔴 / كسر هيكلي صاعد 💥🟢 / كسر هيكلي هابط 💥🔴 / سحب سيولة صاعد 🔄🟢 / سحب سيولة هابط 🔄🔴 / انعكاس فوري صاعد 🔄🟢 / انعكاس فوري هابط 🔄🔴 / فخ سيولة شراء 🚨🟢 / فخ سيولة بيع 🚨🔴 / انتظار 🟡]
 • قوة الإشارة: [عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️]
 • نقطة الدخول : [السعر بعد معامل الانزلاق إن وجد - أو نقطة إعادة الاختبار]
@@ -3660,7 +3651,7 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS +
 
 ⚠️ إدارة المخاطر:
 • مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/🔄/❄️/🚫]
-• نسبة نجاح الصفقة المتوقعة (V7.5 FINAL): [XX]% - [التقييم: ممتاز/جيد/متوسط/ضعيف]
+• نسبة نجاح الصفقة المتوقعة : [XX]% - [التقييم: ممتاز/جيد/متوسط/ضعيف]
 • نقطة الإلغاء: [السعر الذي يفسد التحليل]
 • 🚨 تنبيه فخ السيولة: [نشط / غير نشط] - [إذا نشط: تفاصيل التنبيه]
 
@@ -3670,7 +3661,7 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS +
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         GENERATION_CONFIG = {
-            "max_tokens": 1000,
+            "max_tokens": 950,
             "temperature": 0.0,
             "top_p": 1.0,
             "random_seed": 42
@@ -3706,7 +3697,7 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS +
         # تحسين النتائج إذا كانت تحتوي على قمم تاريخية
         if "historical_peak" in analysis_result.lower() or "قمة تاريخية" in analysis_result:
             enhanced_warning = "\n\n⚠️ **تنبيه Obeida Trading (V7.5 FINAL):**\n⚠️⚠️⚠️ **تنبيه عالي الخطورة** ⚠️⚠️⚠️\nالسعر عند قمة/قاع تاريخي بدون 'الثالوث المؤسسي' (≥ 5 نقاط + حجم ≥ 1.5x + FVG + ماروبوزو > 90%).\n✅ **القرار الإلزامي:** انعكاس فوري (نسبة نجاح 95%) بدلاً من الشراء.\n🚫 يُمنع الدخول مع الاتجاه في هذه المنطقة."
-            analysis_result += enhanced_warning
+           # analysis_result += enhanced_warning
         
         analysis_result = clean_repeated_text(analysis_result)
         save_analysis_context(user_id, analysis_result)
@@ -3717,17 +3708,15 @@ SMC + ICT + WYCKOFF + VSA + FIBONACCI + SMT + KILL ZONES + PO3 + ROUND NUMBERS +
         seconds_passed = 60 - seconds_remaining
         
         footer = f"""
-━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━
 🔧 **الإعدادات المستخدمة:**
 • 🕧 فريم التحليل: {candle}
 • 🕧 فريم التحقق: {verification_timeframe}
 • 🕧 استراتيجية: {trading_strategy}
 • 🕧 جلسة السوق (UTC): {current_session['name']}
-• 🌍 جلسة منطقتك: {user_local_session['name']}
-• 🕧 نمط السوق: {market_mode}
 • ⏱️ الثواني المنقضية: {seconds_passed} ثانية
 • ⏱️ نافذة التنفيذ: {golden_window_status}
-━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━
 🟢 الساعة : {current_time.strftime('%H:%M:%S')} UTC
 🤖 ** Obeida Trading - الإصدار النهائي 🔥**
 """
@@ -5794,7 +5783,7 @@ def ping():
     return "PONG"
 
 def main():
-    print("🤖 Starting Obeida Trading with UTC Time System and Advanced Admin Panel...")
+    print("🤖 Starting Obeida Trading Advanced Admin Panel...")
     
     init_db_with_subscription()
     
@@ -5888,9 +5877,6 @@ def main():
     loop.create_task(periodic_cleanup())
     loop.create_task(backup_scheduler())
     
-    print("✅ Telegram Bot with UTC Time System and Secure Admin Panel ready...")
-    print(f"🌍 Admin Panel URL: http://localhost:8080/admin")
-    print(f"📊 Data Version: {DATA_VERSION}")
     print(f"🔄 Auto Session Switching: Active")
     
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
