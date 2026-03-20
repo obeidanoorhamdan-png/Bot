@@ -465,106 +465,51 @@ class ObeidaNewsRadar:
             conn.close()
     
     async def process_news(self):
-        """معالجة الأخبار الجديدة وإرسالها إلى المجموعة فقط"""
-        if not self.broadcast_enabled:
-            logger.warning("⚠️ broadcast_enabled = False")
-            return
-        
-        enabled = self.get_setting('enabled', 'true')
-        if enabled != 'true':
-            logger.warning("⚠️ الرادار معطل في الإعدادات")
-            return
-        
+        """معالجة الأخبار الجديدة وإرسالها إلى المجموعة"""
         try:
-            logger.info("🔄 جاري فحص الأخبار...")
-            feed = feedparser.parse(self.rss_url)
+            # جلب الأخبار
+            feed = feedparser.parse('https://sa.investing.com/rss/news.rss')
             
             if not feed.entries:
-                logger.warning("⚠️ لا توجد أخبار في التغذية")
+                logger.error("❌ لا توجد أخبار - تأكد من الرابط")
                 return
             
-            latest_entry = feed.entries[0]
-            logger.info(f"📰 آخر خبر: {latest_entry.title[:50]}...")
-            logger.info(f"🆔 GUID: {latest_entry.guid}")
+            # أخذ أول خبر
+            news = feed.entries[0]
+            news_id = news.get('id', news.get('guid', ''))
             
-            # التحقق من أن الخبر جديد
-            if latest_entry.guid in self.processed_news:
-                logger.info("⏭️ الخبر مكرر، تم تخطيه")
-                return
-            
-            # التحقق من أن الخبر حديث
-            max_age_hours = int(self.get_setting('max_age_hours', '24'))
-            if not self.is_news_recent(latest_entry.published, max_age_hours):
-                logger.info("⏰ الخبر قديم، تم تخطيه")
-                return
-            
-            title = latest_entry.title
-            link = latest_entry.link
-            published = latest_entry.published
-            
-            # استخراج العملة المتأثرة
-            currency_tag = self.get_currency_tag(title)
-            
-            # تنسيق الرسالة
-            message = self.format_news_message(title, link, published, currency_tag)
-            
-            logger.info(f"📨 جاري إرسال الخبر إلى: {self.chat_group_id}")
-            
-            # إرسال إلى المجموعة فقط
-            if self.chat_group_id:
-                success = self.send_telegram_message(self.chat_group_id, message)
-                if success:
-                    self.save_sent_news(latest_entry.guid, title, link, published, currency_tag, self.chat_group_id)
-                    logger.info(f"✅ تم نشر خبر جديد في المجموعة: {title[:50]}...")
-                else:
-                    logger.error(f"❌ فشل إرسال الخبر إلى المجموعة")
-            else:
-                logger.warning("⚠️ لم يتم تحديد معرف المجموعة")
+            # إذا كان الخبر جديد
+            if news_id not in self.processed_news:
+                # تنسيق الرسالة
+                msg = f"🚀 <b>خبر عاجل</b> 🚀\n\n"
+                msg += f"{news.title}\n\n"
+                msg += f"🔗 {news.link}\n\n"
+                msg += f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+                
+                # إرسال للمجموعة
+                self.send_telegram_message(self.chat_group_id, msg)
+                
+                # حفظ الخبر
+                self.processed_news.add(news_id)
+                logger.info(f"✅ تم نشر: {news.title[:50]}")
             
         except Exception as e:
-            logger.error(f"⚠️ خطأ في معالجة الأخبار: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"❌ خطأ: {e}")
     
     async def start_radar(self):
-        """بدء تشغيل الرادار"""
-        logger.info("="*50)
-        logger.info("📡 رادار Obeida Trading يعمل الآن...")
-        logger.info(f"📢 سيتم النشر في المجموعة: {self.chat_group_id}")
-        logger.info(f"🔑 توكن البوت: {self.bot_token[:10]}...")
-        logger.info("="*50)
+        """تشغيل الرادار"""
+        logger.info("📡 رادار يعمل...")
         
-        # اختبار فوري للإرسال
-        test_msg = "🧪 **اختبار رادار Obeida Trading**\n\n✅ النظام يعمل بنجاح\n📡 جاري مراقبة الأخبار..."
-        logger.info("📨 إرسال رسالة اختبار...")
-        result = self.send_telegram_message(self.chat_group_id, test_msg)
-        
-        if result:
-            logger.info("✅ تم إرسال رسالة الاختبار بنجاح")
-        else:
-            logger.error("❌ فشل إرسال رسالة الاختبار")
-        
-        # اختبار جلب RSS
-        logger.info("📡 اختبار جلب RSS...")
-        try:
-            feed = feedparser.parse(self.rss_url)
-            if feed.entries:
-                logger.info(f"✅ تم جلب RSS بنجاح، آخر خبر: {feed.entries[0].title[:50]}...")
-            else:
-                logger.error("❌ فشل جلب RSS - لا توجد أخبار")
-        except Exception as e:
-            logger.error(f"❌ خطأ في RSS: {e}")
-        
-        check_interval = 60  # دقيقة واحدة
+        # رسالة تأكيد
+        self.send_telegram_message(self.chat_group_id, "✅ رادار الأخبار يعمل")
         
         while True:
             try:
                 await self.process_news()
             except Exception as e:
-                logger.error(f"⚠️ خطأ في دورة الرادار: {e}")
+                logger.error(f"خطأ: {e}")
             
-            logger.info(f"⏳ الانتظار {check_interval} ثانية للفحص التالي...")
-            await asyncio.sleep(check_interval)
+            await asyncio.sleep(60)  # كل دقيقة
     
     def get_stats(self) -> Dict:
         """الحصول على إحصائيات الرادار"""
