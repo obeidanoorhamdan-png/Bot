@@ -7600,7 +7600,21 @@ def main():
     loop.create_task(news_radar_scheduler())
     
     print("✅ Telegram Secure Admin Panel ready...")
+
+    # تشغيل رادار الأخبار
+    async def start_news_radar():
+        try:
+            await news_radar.start_radar()
+        except Exception as e:
+            logger.error(f"⚠️ خطأ في رادار الأخبار: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
+    # بدء الرادار في الخلفية
+    loop = asyncio.get_event_loop()
+    loop.create_task(start_news_radar())
+    logger.info("✅ تم تشغيل رادار الأخبار")
+        
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
