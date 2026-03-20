@@ -2801,7 +2801,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             **GENERATION_CONFIG
         }
         
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=120)
         
         if response.status_code != 200:
             print(f"خطأ في التحليل: {response.status_code} - {response.text}")
