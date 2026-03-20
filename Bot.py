@@ -312,7 +312,7 @@ class ObeidaNewsRadar:
         if cursor.fetchone()[0] == 0:
             default_settings = [
                 ('enabled', 'true'),
-                ('check_interval', '60'),
+                ('check_interval', '10'),
                 ('max_age_hours', '24'),
                 ('broadcast_enabled', 'true')
             ]
@@ -374,8 +374,7 @@ class ObeidaNewsRadar:
             published_time = "حديث"
         
         message = (
-            f"🚀 <b> Obeida Trading - أخبار عاجلة</b> 🚀\n\n"
-            f"📰 <b>🛑 الخبر 🛑:</b>\n"
+            f"📰 <b>🚨 خبر  جديد:</b>\n\n"
             f"{title}\n\n"
             f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
             f"⏰ <b>الوقت:</b> {published_time}\n\n"
@@ -465,40 +464,73 @@ class ObeidaNewsRadar:
             conn.close()
     
     async def process_news(self):
-        """معالجة الأخبار الجديدة وإرسالها إلى المجموعة"""
+        """معالجة الأخبار الجديدة من عدة مصادر مع منع التكرار"""
         try:
-            # جلب الأخبار
-            feed = feedparser.parse('https://sa.investing.com/rss/news.rss')
+            # قائمة بروابط RSS متعددة
+            rss_urls = [
+                'https://www.investing.com/rss/news.rss',
+                'https://www.investing.com/rss/news_1.rss',
+                'https://www.investing.com/rss/news_2.rss',
+                'https://www.investing.com/rss/news_3.rss',
+                'https://www.investing.com/rss/news_4.rss',
+                'https://www.investing.com/rss/news_5.rss',
+                'https://www.investing.com/rss/economic_calendar.rss',
+                'https://www.investing.com/rss/forex_news.rss',
+                'https://www.investing.com/rss/commodities_news.rss',
+            ]
             
-            if not feed.entries:
-                logger.error("❌ لا توجد أخبار - تأكد من الرابط")
-                return
+            new_count = 0
+            all_news = {}  # لتخزين الأخبار ومنع التكرار
             
-            # أخذ أول خبر
-            news = feed.entries[0]
-            news_id = news.get('id', news.get('guid', ''))
+            # جلب جميع الأخبار من جميع الروابط
+            for rss_url in rss_urls:
+                try:
+                    feed = feedparser.parse(rss_url)
+                    
+                    if not feed.entries:
+                        continue
+                    
+                    for news in feed.entries[:5]:
+                        # استخدام العنوان كمعرف فريد لمنع التكرار
+                        news_title = news.title.strip()
+                        news_link = news.link
+                        
+                        # إذا لم يتم نشر هذا الخبر من قبل
+                        if news_title not in self.processed_news and news_title not in all_news:
+                            all_news[news_title] = news
+                            
+                except Exception as e:
+                    logger.error(f"خطأ في الرابط {rss_url}: {e}")
+                    continue
             
-            # إذا كان الخبر جديد
-            if news_id not in self.processed_news:
-                # استخراج العملة المتأثرة من العنوان
-                currency_tag = self.get_currency_tag(news.title)
+            # نشر الأخبار الجديدة
+            for title, news in all_news.items():
+                # استخراج العملة المتأثرة
+                currency_tag = self.get_currency_tag(title)
                 
-                # تنسيق الرسالة مع العملات والحقوق
-                msg = f"🚀 <b> Obeida Trading - أخبار عاجلة</b> 🚀\n\n"
-                msg += f"📰 <b>🛑 الخبر 🛑:</b>\n"
-                msg += f"{news.title}\n\n"
+                # تنسيق الرسالة
+                msg += f"📰 <b>🚨 خبر جديد:</b>\n"
+                msg += f"{title}\n\n"
                 msg += f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
                 msg += f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                 msg += f"━━━━━━━━━━━━━\n"
-                msg += f"⚡ <b>القناة :</b> @ObeidaTrading\n"
-                msg += f"💬 <b>مناقشة :</b> @ObeidaTradingchat\n"
+                msg += f"⚡ <b>للتحليل الفوري:</b> @ObeidaTrading\n"
+                msg += f"💬 <b>مناقشة الأخبار:</b> @ObeidaTradingchat"
                 
                 # إرسال للمجموعة
                 self.send_telegram_message(self.chat_group_id, msg)
                 
                 # حفظ الخبر
-                self.processed_news.add(news_id)
-                logger.info(f"✅ تم نشر: {news.title[:50]}")
+                self.processed_news.add(title)
+                logger.info(f"✅ تم نشر: {title[:50]}")
+                new_count += 1
+                
+                await asyncio.sleep(1)
+            
+            if new_count > 0:
+                logger.info(f"📊 تم نشر {new_count} أخبار جديدة")
+            else:
+                logger.info("🔍 لا توجد أخبار جديدة")
             
         except Exception as e:
             logger.error(f"❌ خطأ: {e}")
@@ -513,7 +545,7 @@ class ObeidaNewsRadar:
             except Exception as e:
                 logger.error(f"خطأ: {e}")
             
-            await asyncio.sleep(60)  # كل دقيقة
+            await asyncio.sleep(20)  # كل 20 ثانية
     
     def get_stats(self) -> Dict:
         """الحصول على إحصائيات الرادار"""
@@ -538,7 +570,7 @@ class ObeidaNewsRadar:
         
         stats['broadcast_enabled'] = self.broadcast_enabled
         stats['enabled'] = self.get_setting('enabled', 'true')
-        stats['check_interval'] = self.get_setting('check_interval', '60')
+        stats['check_interval'] = self.get_setting('check_interval', '20')
         
         return stats
 
