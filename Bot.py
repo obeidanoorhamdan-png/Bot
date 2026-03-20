@@ -480,11 +480,20 @@ class ObeidaNewsRadar:
             
             # إذا كان الخبر جديد
             if news_id not in self.processed_news:
-                # تنسيق الرسالة
-                msg = f"🚀 <b>خبر عاجل</b> 🚀\n\n"
+                # استخراج العملة المتأثرة من العنوان
+                currency_tag = self.get_currency_tag(news.title)
+                
+                # تنسيق الرسالة مع العملات والحقوق
+                msg = f"🚀 <b> Obeida Trading - أخبار عاجلة</b> 🚀\n\n"
+                msg += f"📰 <b>🛑 الخبر 🛑:</b>\n"
                 msg += f"{news.title}\n\n"
-                msg += f"🔗 {news.link}\n\n"
-                msg += f"⏰ {datetime.now().strftime('%H:%M:%S')}"
+                msg += f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
+                msg += f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                msg += f"━━━━━━━━━━━━━━━━\n"
+                msg += f"⚡ <b>للتحليل الفوري:</b> @ObeidaTrading\n"
+                msg += f"💬 <b>مناقشة الأخبار:</b> @ObeidaTradingchat\n"
+                msg += f"━━━━━━━━━━━━━━━━\n"
+                msg += f"© {datetime.now().year} Obeida Trading - جميع الحقوق محفوظة"
                 
                 # إرسال للمجموعة
                 self.send_telegram_message(self.chat_group_id, msg)
@@ -499,9 +508,6 @@ class ObeidaNewsRadar:
     async def start_radar(self):
         """تشغيل الرادار"""
         logger.info("📡 رادار يعمل...")
-        
-        # رسالة تأكيد
-        self.send_telegram_message(self.chat_group_id, "✅ رادار الأخبار يعمل")
         
         while True:
             try:
