@@ -364,25 +364,25 @@ class ObeidaNewsRadar:
         return "#سوق_عام 🌐"
     
     def format_news_message(self, title: str, link: str, published: str, currency_tag: str) -> str:
-    published_time = ""
-    try:
-        from dateutil import parser
-        pub_date = parser.parse(published)
-        published_time = pub_date.strftime("%Y-%m-%d %H:%M")
-    except:
-        published_time = "حديث"
+        published_time = ""
+        try:
+            from dateutil import parser
+            pub_date = parser.parse(published)
+            published_time = pub_date.strftime("%Y-%m-%d %H:%M")
+        except:
+            published_time = "حديث"
     
-    message = (
-        f"🚀 <b> Obeida Trading - أخبار عاجلة</b> 🚀\n\n"
-        f"📰 <b>🛑 الخبر 🛑:</b>\n"
-        f"{title}\n\n"
-        f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
-        f"⏰ <b>الوقت:</b> {published_time}\n\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"⚡ <b>للتحليل الفوري:</b> @ObeidaTrading\n"
-        f"💬 <b>مناقشة الأخبار:</b> @ObeidaTradingchat"
-    )
-    return message
+        message = (
+            f"🚀 <b> Obeida Trading - أخبار عاجلة</b> 🚀\n\n"
+            f"📰 <b>🛑 الخبر 🛑:</b>\n"
+            f"{title}\n\n"
+            f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
+            f"⏰ <b>الوقت:</b> {published_time}\n\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"⚡ <b>للتحليل الفوري:</b> @ObeidaTrading\n"
+            f"💬 <b>مناقشة الأخبار:</b> @ObeidaTradingchat"
+        )
+        return message
     
     def send_telegram_message(self, chat_id: str, text: str):
         """إرسال رسالة إلى تليجرام"""
