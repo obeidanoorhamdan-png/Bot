@@ -448,10 +448,19 @@ class ObeidaNewsRadar:
             conn.close()
     
     async def process_news(self):
-        """معالجة الأخبار الجديدة وإرسالها إلى المجموعة"""
+        """معالجة الأخبار الجديدة من جميع المصادر مع منع التكرار"""
         try:
-            # الرابط السعودي
-            rss_url = 'https://sa.investing.com/rss/news.rss'
+            # جميع روابط الأخبار السعودية التي تعمل
+            rss_urls = [
+                'https://sa.investing.com/rss/news.rss',           # الأخبار الرئيسية
+                'https://sa.investing.com/rss/economic_calendar.rss',  # التقويم الاقتصادي
+                'https://sa.investing.com/rss/forex_news.rss',     # أخبار الفوركس
+                'https://sa.investing.com/rss/commodities_news.rss',   # أخبار السلع
+                'https://sa.investing.com/rss/indices_news.rss',   # أخبار المؤشرات
+                'https://sa.investing.com/rss/cryptocurrency_news.rss', # أخبار العملات الرقمية
+                'https://sa.investing.com/rss/analysis.rss',       # التحليلات
+                'https://sa.investing.com/rss/etf_news.rss',       # أخبار صناديق الاستثمار
+            ]
             
             # إعدادات لتجنب الحظر
             headers = {
@@ -461,50 +470,63 @@ class ObeidaNewsRadar:
                 'Cache-Control': 'no-cache'
             }
             
-            # جلب الأخبار
-            response = requests.get(rss_url, headers=headers, timeout=15)
-            
-            if response.status_code != 200:
-                logger.error(f"❌ فشل جلب الأخبار: {response.status_code}")
-                return
-            
-            # تحليل المحتوى
-            feed = feedparser.parse(response.content)
-            
-            if not feed.entries:
-                logger.error("❌ لا توجد أخبار")
-                return
-            
+            # لتخزين الأخبار الجديدة ومنع التكرار
+            all_news = {}
             new_count = 0
             
-            # فحص آخر 15 خبر
-            for news in feed.entries[:15]:
-                news_id = news.get('id', news.get('guid', news.title.strip()))
+            # جلب الأخبار من جميع الروابط
+            for rss_url in rss_urls:
+                try:
+                    response = requests.get(rss_url, headers=headers, timeout=15)
+                    
+                    if response.status_code != 200:
+                        logger.warning(f"⚠️ الرابط لا يعمل: {rss_url}")
+                        continue
+                    
+                    feed = feedparser.parse(response.content)
+                    
+                    if not feed.entries:
+                        continue
+                    
+                    # فحص آخر 10 أخبار من كل رابط
+                    for news in feed.entries[:10]:
+                        # استخدام العنوان كمعرف فريد لمنع التكرار
+                        news_title = news.title.strip()
+                        news_id = news.get('id', news.get('guid', news_title))
+                        
+                        # منع التكرار: إذا لم يتم نشره من قبل
+                        if news_id not in self.processed_news and news_title not in all_news:
+                            all_news[news_id] = news
+                            
+                except Exception as e:
+                    logger.warning(f"⚠️ خطأ في الرابط {rss_url}: {e}")
+                    continue
+            
+            # نشر جميع الأخبار الجديدة (بدون تكرار)
+            for news_id, news in all_news.items():
+                # استخراج العملة المتأثرة
+                currency_tag = self.get_currency_tag(news.title)
                 
-                if news_id not in self.processed_news:
-                    # استخراج العملة المتأثرة
-                    currency_tag = self.get_currency_tag(news.title)
-                    
-                    # بناء الرسالة
-                    message_text = (
-                        f"📰 <b>🚨 خبر اقتصادي جديد::</b>\n"
-                        f"{news.title}\n\n"
-                        f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
-                        f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                        f"━━━━━━━━━━━━\n"
-                        f"⚡ <b>القناة :</b> @ObeidaTrading\n"
-                        f"💬 <b>مناقشة :</b> @ObeidaTradingchat\n"
-                    )
-                    
-                    # إرسال للمجموعة
-                    self.send_telegram_message(self.chat_group_id, message_text)
-                    
-                    # حفظ الخبر
-                    self.processed_news.add(news_id)
-                    logger.info(f"✅ تم نشر: {news.title[:50]}")
-                    new_count += 1
-                    
-                    await asyncio.sleep(1.5)
+                # بناء الرسالة
+                message_text = (
+                    f"🚨 <b>خبر اقتصادي جديد:</b>\n\n"
+                    f"{news.title}\n\n"
+                    f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n\n"
+                    f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    f"━━━━━━━━━━━━━\n"
+                    f"⚡ <b>القناة :</b> @ObeidaTrading\n"
+                    f"💬 <b>المناقشة :</b> @ObeidaTradingchat\n"
+                )
+                
+                # إرسال للمجموعة
+                self.send_telegram_message(self.chat_group_id, message_text)
+                
+                # حفظ الخبر
+                self.processed_news.add(news_id)
+                logger.info(f"✅ تم نشر: {news.title[:50]}")
+                new_count += 1
+                
+                await asyncio.sleep(1.5)  # تأخير بين الأخبار
             
             if new_count > 0:
                 logger.info(f"📊 تم نشر {new_count} أخبار جديدة")
