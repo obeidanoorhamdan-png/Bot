@@ -371,7 +371,7 @@ class ObeidaNewsRadar:
             published_time = pub_date.strftime("%Y-%m-%d %H:%M")
         except:
             published_time = "حديث"
-    
+        
         message = (
             f"🚀 <b> Obeida Trading - أخبار عاجلة</b> 🚀\n\n"
             f"📰 <b>🛑 الخبر 🛑:</b>\n"
@@ -501,7 +501,6 @@ class ObeidaNewsRadar:
             # تنسيق الرسالة
             message = self.format_news_message(title, link, published, currency_tag)
             
-                        # إرسال إلى المجموعة فقط
             if self.chat_group_id:
                self.send_telegram_message(self.chat_group_id, message)
                self.save_sent_news(latest_entry.guid, title, link, published, currency_tag, self.chat_group_id)
@@ -515,6 +514,7 @@ class ObeidaNewsRadar:
     async def start_radar(self):
         """بدء تشغيل الرادار"""
         logger.info("📡 رادار Obeida Trading يعمل الآن...")
+        logger.info(f"📢 سيتم النشر في المجموعة: {self.chat_group_id}")
         
         check_interval = int(self.get_setting('check_interval', '300'))
         
