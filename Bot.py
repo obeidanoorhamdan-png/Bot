@@ -450,7 +450,7 @@ class ObeidaNewsRadar:
     async def process_news(self):
         """معالجة الأخبار الجديدة وإرسالها إلى المجموعة"""
         try:
-            # الرابط السعودي الوحيد الذي يعمل
+            # الرابط السعودي
             rss_url = 'https://sa.investing.com/rss/news.rss'
             
             # إعدادات لتجنب الحظر
@@ -461,7 +461,7 @@ class ObeidaNewsRadar:
                 'Cache-Control': 'no-cache'
             }
             
-            # جلب الأخبار مع headers
+            # جلب الأخبار
             response = requests.get(rss_url, headers=headers, timeout=15)
             
             if response.status_code != 200:
@@ -482,32 +482,29 @@ class ObeidaNewsRadar:
                 news_id = news.get('id', news.get('guid', news.title.strip()))
                 
                 if news_id not in self.processed_news:
-                    try:
-                        # استخراج العملة المتأثرة
-                        currency_tag = self.get_currency_tag(news.title)
-                        
-                        # تنسيق الرسالة
-                        msg += f"📰 <b>🚨 خبر اقتصادي جديد:</b>\n"
-                        msg += f"{news.title}\n\n"
-                        msg += f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
-                        msg += f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                        msg += f"━━━━━━━━━━━━━━━━\n"
-                        msg += f"⚡ <b> القناة :</b> @ObeidaTrading\n"
-                        msg += f"💬 <b>مناقشة :</b> @ObeidaTradingchat\n"
-                        
-                        # إرسال للمجموعة
-                        self.send_telegram_message(self.chat_group_id, msg)
-                        
-                        # حفظ الخبر
-                        self.processed_news.add(news_id)
-                        logger.info(f"✅ تم نشر: {news.title[:50]}")
-                        new_count += 1
-                        
-                        await asyncio.sleep(1.5)
-                        
-                    except Exception as inner_e:
-                        logger.error(f"❌ خطأ في معالجة الخبر: {inner_e}")
-                        continue
+                    # استخراج العملة المتأثرة
+                    currency_tag = self.get_currency_tag(news.title)
+                    
+                    # بناء الرسالة
+                    message_text = (
+                        f"📰 <b>🚨 خبر اقتصادي جديد::</b>\n"
+                        f"{news.title}\n\n"
+                        f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
+                        f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                        f"━━━━━━━━━━━━\n"
+                        f"⚡ <b>القناة :</b> @ObeidaTrading\n"
+                        f"💬 <b>مناقشة :</b> @ObeidaTradingchat\n"
+                    )
+                    
+                    # إرسال للمجموعة
+                    self.send_telegram_message(self.chat_group_id, message_text)
+                    
+                    # حفظ الخبر
+                    self.processed_news.add(news_id)
+                    logger.info(f"✅ تم نشر: {news.title[:50]}")
+                    new_count += 1
+                    
+                    await asyncio.sleep(1.5)
             
             if new_count > 0:
                 logger.info(f"📊 تم نشر {new_count} أخبار جديدة")
