@@ -447,91 +447,68 @@ class ObeidaNewsRadar:
         finally:
             conn.close()
     
-    def set_setting(self, key: str, value: str):
-        """تحديث إعداد معين"""
-        conn = sqlite3.connect(self.db_name)
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                INSERT OR REPLACE INTO radar_settings (key, value, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-            ''', (key, value))
-            conn.commit()
-            logger.info(f"✅ تم تحديث الإعداد {key} = {value}")
-        except Exception as e:
-            logger.error(f"⚠️ خطأ في تحديث الإعداد: {e}")
-        finally:
-            conn.close()
-    
     async def process_news(self):
-        """معالجة الأخبار الجديدة من عدة مصادر مع منع التكرار"""
+        """معالجة الأخبار الجديدة وإرسالها إلى المجموعة"""
         try:
-            # قائمة بروابط RSS متعددة
-            rss_urls = [
-                'https://www.investing.com/rss/news.rss',
-                'https://www.investing.com/rss/news_1.rss',
-                'https://www.investing.com/rss/news_2.rss',
-                'https://www.investing.com/rss/news_3.rss',
-                'https://www.investing.com/rss/news_4.rss',
-                'https://www.investing.com/rss/news_5.rss',
-                'https://www.investing.com/rss/economic_calendar.rss',
-                'https://www.investing.com/rss/forex_news.rss',
-                'https://www.investing.com/rss/commodities_news.rss',
-            ]
+            # الرابط السعودي الوحيد الذي يعمل
+            rss_url = 'https://sa.investing.com/rss/news.rss'
+            
+            # إعدادات لتجنب الحظر
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+                'Accept-Language': 'ar-SA,ar;q=0.9',
+                'Cache-Control': 'no-cache'
+            }
+            
+            # جلب الأخبار مع headers
+            response = requests.get(rss_url, headers=headers, timeout=15)
+            
+            if response.status_code != 200:
+                logger.error(f"❌ فشل جلب الأخبار: {response.status_code}")
+                return
+            
+            # تحليل المحتوى
+            feed = feedparser.parse(response.content)
+            
+            if not feed.entries:
+                logger.error("❌ لا توجد أخبار")
+                return
             
             new_count = 0
-            all_news = {}  # لتخزين الأخبار ومنع التكرار
             
-            # جلب جميع الأخبار من جميع الروابط
-            for rss_url in rss_urls:
-                try:
-                    feed = feedparser.parse(rss_url)
+            # فحص آخر 15 خبر
+            for news in feed.entries[:15]:
+                news_id = news.get('id', news.get('guid', news.title.strip()))
+                
+                if news_id not in self.processed_news:
+                    # استخراج العملة المتأثرة
+                    currency_tag = self.get_currency_tag(news.title)
                     
-                    if not feed.entries:
-                        continue
+                    # تنسيق الرسالة
+                    msg += f"📰 <b>🚨 خبر جديد:</b>\n"
+                    msg += f"{news.title}\n\n"
+                    msg += f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n\n"
+                    msg += f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    msg += f"━━━━━━━━━━━━━━━━\n"
+                    msg += f"⚡ <b>القناة :</b> @ObeidaTrading\n"
+                    msg += f"💬 <b>الأخبار :</b> @ObeidaTradingchat"
                     
-                    for news in feed.entries[:5]:
-                        # استخدام العنوان كمعرف فريد لمنع التكرار
-                        news_title = news.title.strip()
-                        news_link = news.link
-                        
-                        # إذا لم يتم نشر هذا الخبر من قبل
-                        if news_title not in self.processed_news and news_title not in all_news:
-                            all_news[news_title] = news
-                            
-                except Exception as e:
-                    logger.error(f"خطأ في الرابط {rss_url}: {e}")
-                    continue
-            
-            # نشر الأخبار الجديدة
-            for title, news in all_news.items():
-                # استخراج العملة المتأثرة
-                currency_tag = self.get_currency_tag(title)
-                
-                # تنسيق الرسالة
-                msg += f"📰 <b>🚨 خبر جديد:</b>\n"
-                msg += f"{title}\n\n"
-                msg += f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
-                msg += f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                msg += f"━━━━━━━━━━━━━\n"
-                msg += f"⚡ <b>للتحليل الفوري:</b> @ObeidaTrading\n"
-                msg += f"💬 <b>مناقشة الأخبار:</b> @ObeidaTradingchat"
-                
-                # إرسال للمجموعة
-                self.send_telegram_message(self.chat_group_id, msg)
-                
-                # حفظ الخبر
-                self.processed_news.add(title)
-                logger.info(f"✅ تم نشر: {title[:50]}")
-                new_count += 1
-                
-                await asyncio.sleep(1)
+                    # إرسال للمجموعة
+                    self.send_telegram_message(self.chat_group_id, msg)
+                    
+                    # حفظ الخبر
+                    self.processed_news.add(news_id)
+                    logger.info(f"✅ تم نشر: {news.title[:50]}")
+                    new_count += 1
+                    
+                    await asyncio.sleep(1.5)  # تأخير أطول قليلاً
             
             if new_count > 0:
                 logger.info(f"📊 تم نشر {new_count} أخبار جديدة")
-            else:
-                logger.info("🔍 لا توجد أخبار جديدة")
             
+        except requests.exceptions.Timeout:
+            logger.error("❌ انتهى الوقت - الموقع بطيء")
         except Exception as e:
             logger.error(f"❌ خطأ: {e}")
     
