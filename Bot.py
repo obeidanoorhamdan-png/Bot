@@ -482,35 +482,42 @@ class ObeidaNewsRadar:
                 news_id = news.get('id', news.get('guid', news.title.strip()))
                 
                 if news_id not in self.processed_news:
-                    # استخراج العملة المتأثرة
-                    currency_tag = self.get_currency_tag(news.title)
-                    
-                    # تنسيق الرسالة
-                    msg += f"📰 <b>🚨 خبر جديد:</b>\n"
-                    msg += f"{news.title}\n\n"
-                    msg += f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n\n"
-                    msg += f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                    msg += f"━━━━━━━━━━━━━━━━\n"
-                    msg += f"⚡ <b>القناة :</b> @ObeidaTrading\n"
-                    msg += f"💬 <b>الأخبار :</b> @ObeidaTradingchat"
-                    
-                    # إرسال للمجموعة
-                    self.send_telegram_message(self.chat_group_id, msg)
-                    
-                    # حفظ الخبر
-                    self.processed_news.add(news_id)
-                    logger.info(f"✅ تم نشر: {news.title[:50]}")
-                    new_count += 1
-                    
-                    await asyncio.sleep(1.5)  # تأخير أطول قليلاً
+                    try:
+                        # استخراج العملة المتأثرة
+                        currency_tag = self.get_currency_tag(news.title)
+                        
+                        # تنسيق الرسالة
+                        msg += f"📰 <b>🚨 خبر اقتصادي جديد:</b>\n"
+                        msg += f"{news.title}\n\n"
+                        msg += f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
+                        msg += f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                        msg += f"━━━━━━━━━━━━━━━━\n"
+                        msg += f"⚡ <b> القناة :</b> @ObeidaTrading\n"
+                        msg += f"💬 <b>مناقشة :</b> @ObeidaTradingchat\n"
+                        
+                        # إرسال للمجموعة
+                        self.send_telegram_message(self.chat_group_id, msg)
+                        
+                        # حفظ الخبر
+                        self.processed_news.add(news_id)
+                        logger.info(f"✅ تم نشر: {news.title[:50]}")
+                        new_count += 1
+                        
+                        await asyncio.sleep(1.5)
+                        
+                    except Exception as inner_e:
+                        logger.error(f"❌ خطأ في معالجة الخبر: {inner_e}")
+                        continue
             
             if new_count > 0:
                 logger.info(f"📊 تم نشر {new_count} أخبار جديدة")
+            else:
+                logger.info("🔍 لا توجد أخبار جديدة")
             
         except requests.exceptions.Timeout:
             logger.error("❌ انتهى الوقت - الموقع بطيء")
         except Exception as e:
-            logger.error(f"❌ خطأ: {e}")
+            logger.error(f"❌ خطأ رئيسي: {e}")
     
     async def start_radar(self):
         """تشغيل الرادار"""
