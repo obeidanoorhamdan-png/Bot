@@ -111,8 +111,7 @@ class ObeidaNewsRadar:
     
     def __init__(self, bot_token: str):
         self.bot_token = bot_token
-        self.channel_id = '@ObeidaTrading'
-        self.chat_group_id = '@ObeidaTradingchat'
+        self.chat_group_id = '-1003449363659'  # مجموعة @ObeidaTradingchat
         self.rss_url = 'https://sa.investing.com/rss/news.rss'
         self.db_name = NEWS_RADAR_DB
         self.last_guid = ""
@@ -365,27 +364,25 @@ class ObeidaNewsRadar:
         return "#سوق_عام 🌐"
     
     def format_news_message(self, title: str, link: str, published: str, currency_tag: str) -> str:
-        """تنسيق رسالة الخبر للإرسال"""
-        published_time = ""
-        try:
-            # محاولة تحويل الوقت
-            from dateutil import parser
-            pub_date = parser.parse(published)
-            published_time = pub_date.strftime("%Y-%m-%d %H:%M")
-        except:
-            published_time = "حديث"
-        
-        message = (
-            f"🚀 <b> Obeida Trading - أخبار عاجلة</b> 🚀\n\n"
-            f"📰 <b>🛑 الخبر 🛑:</b>\n"
-            f"{title}\n\n"
-            f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
-            f"⏰ <b>الوقت:</b> {published_time}\n\n"
-            f"━━━━━━━━━━━━━━━━\n"
-            f"⚡ <b>للتحليل الفوري:</b> @ObeidaTrading\n"
-            f"💬 <b>مناقشة الأخبار:</b> @ObeidaTradingchat"
-        )
-        return message
+    published_time = ""
+    try:
+        from dateutil import parser
+        pub_date = parser.parse(published)
+        published_time = pub_date.strftime("%Y-%m-%d %H:%M")
+    except:
+        published_time = "حديث"
+    
+    message = (
+        f"🚀 <b> Obeida Trading - أخبار عاجلة</b> 🚀\n\n"
+        f"📰 <b>🛑 الخبر 🛑:</b>\n"
+        f"{title}\n\n"
+        f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
+        f"⏰ <b>الوقت:</b> {published_time}\n\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"⚡ <b>للتحليل الفوري:</b> @ObeidaTrading\n"
+        f"💬 <b>مناقشة الأخبار:</b> @ObeidaTradingchat"
+    )
+    return message
     
     def send_telegram_message(self, chat_id: str, text: str):
         """إرسال رسالة إلى تليجرام"""
@@ -504,17 +501,13 @@ class ObeidaNewsRadar:
             # تنسيق الرسالة
             message = self.format_news_message(title, link, published, currency_tag)
             
-            # إرسال إلى القناة
-            if self.channel_id:
-                self.send_telegram_message(self.channel_id, message)
-                self.save_sent_news(latest_entry.guid, title, link, published, currency_tag, self.channel_id)
-            
-            # إرسال إلى المجموعة
+                        # إرسال إلى المجموعة فقط
             if self.chat_group_id:
-                self.send_telegram_message(self.chat_group_id, message)
-                self.save_sent_news(latest_entry.guid, title, link, published, currency_tag, self.chat_group_id)
-            
-            logger.info(f"✅ تم نشر خبر جديد في القناة والمجموعة: {title[:50]}...")
+               self.send_telegram_message(self.chat_group_id, message)
+               self.save_sent_news(latest_entry.guid, title, link, published, currency_tag, self.chat_group_id)
+               logger.info(f"✅ تم نشر خبر جديد في المجموعة: {title[:50]}...")
+            else:
+               logger.warning("⚠️ لم يتم تحديد معرف المجموعة")
             
         except Exception as e:
             logger.error(f"⚠️ خطأ في معالجة الأخبار: {e}")
@@ -7572,3 +7565,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
