@@ -489,11 +489,9 @@ class ObeidaNewsRadar:
                 msg += f"{news.title}\n\n"
                 msg += f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n"
                 msg += f"⏰ <b>الوقت:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                msg += f"━━━━━━━━━━━━━━━━\n"
-                msg += f"⚡ <b>للتحليل الفوري:</b> @ObeidaTrading\n"
-                msg += f"💬 <b>مناقشة الأخبار:</b> @ObeidaTradingchat\n"
-                msg += f"━━━━━━━━━━━━━━━━\n"
-                msg += f"© {datetime.now().year} Obeida Trading - جميع الحقوق محفوظة"
+                msg += f"━━━━━━━━━━━━━\n"
+                msg += f"⚡ <b>القناة :</b> @ObeidaTrading\n"
+                msg += f"💬 <b>مناقشة :</b> @ObeidaTradingchat\n"
                 
                 # إرسال للمجموعة
                 self.send_telegram_message(self.chat_group_id, msg)
