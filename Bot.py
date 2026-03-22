@@ -2596,7 +2596,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         current_minute = current_time.minute
         current_second = current_time.second
         
-        # ========== حساب الوقت المتبقي بشكل صحيح (V8.2 - إصلاح الوقت السالب) ==========
+        # ========== حساب الوقت المنقضي والمتبقي بدقة (V8.2 - إصلاح ثغرة الوقت السالب نهائياً) ==========
         seconds_remaining = 0
         candle_seconds_total = 0
         seconds_passed = 0
@@ -2605,18 +2605,17 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             # فريمات الثواني
             candle_seconds = int(candle[1:]) if candle[1:].isdigit() else 5
             candle_seconds_total = candle_seconds
-            seconds_passed = current_second % candle_seconds
+            seconds_passed = abs(current_second % candle_seconds)
             seconds_remaining = candle_seconds_total - seconds_passed
             if seconds_remaining <= 0:
                 seconds_remaining = candle_seconds_total
             
         elif candle.startswith('M'):
-            # فريمات الدقائق
+            # فريمات الدقائق - استخدام abs() لمنع الأرقام السالبة نهائياً
             candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
             candle_seconds_total = candle_minutes * 60
-            # حساب الدقائق المنقضية في الشمعة الحالية
-            minutes_elapsed = current_minute % candle_minutes
-            seconds_passed = minutes_elapsed * 60 + current_second
+            # إصلاح ثغرة الوقت السالب (-53 ثانية) نهائياً
+            seconds_passed = abs((current_minute % candle_minutes) * 60 + current_second)
             seconds_remaining = candle_seconds_total - seconds_passed
             if seconds_remaining <= 0:
                 seconds_remaining = candle_seconds_total
@@ -2626,13 +2625,12 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             candle_hours = int(candle[1:]) if candle[1:].isdigit() else 1
             candle_seconds_total = candle_hours * 3600
             hours_elapsed = current_hour % candle_hours
-            seconds_passed = hours_elapsed * 3600 + current_minute * 60 + current_second
+            seconds_passed = abs(hours_elapsed * 3600 + current_minute * 60 + current_second)
             seconds_remaining = candle_seconds_total - seconds_passed
             if seconds_remaining <= 0:
                 seconds_remaining = candle_seconds_total
         
-        # ضمان أن القيمة دائماً موجبة ومنطقية (V8.2)
-        seconds_passed = abs(seconds_passed)
+        # ضمان أن القيمة دائماً موجبة ومنطقية
         if seconds_passed > candle_seconds_total:
             seconds_passed = candle_seconds_total - 1
         if seconds_remaining < 0:
@@ -2640,7 +2638,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         is_fast_frame = candle.startswith('S')
         
-        # ========== نافذة التنفيذ المرنة (V8.2 - توسيع النافذة) ==========
+        # ========== نافذة التنفيذ المرنة (V8.2) ==========
         def is_in_golden_execution_window(seconds_passed, candle_type, candle_seconds_total):
             """نافذة تنفيذ مرنة (V8.2) لجميع الاحتمالات"""
             if candle_type.startswith('S'):
@@ -2652,7 +2650,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         in_golden_window = is_in_golden_execution_window(seconds_passed, candle, candle_seconds_total)
         
-        # ========== فلتر الوقت المحسن (V8.2) ==========
+        # ========== فلتر الوقت المحسن ==========
         if seconds_remaining < 2:
             await wait_msg.edit_text(
                 "⏰ **تحذير أمان رقمي!**\n\n"
@@ -2669,7 +2667,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             )
             return "⏰ وقت غير كافٍ للتحليل"
         
-        # ========== التحقق من نافذة التنفيذ المرنة (V8.2) ==========
+        # ========== التحقق من نافذة التنفيذ المرنة ==========
         if not in_golden_window and seconds_remaining > 2:
             # تحديد النافذة المسموحة
             if candle.startswith('S'):
@@ -2723,56 +2721,103 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         is_trap_minute = current_minute in [14, 29, 44, 59]
         
-        # ========== دالة المسح الاستبعادي المحدثة (V8.2) ==========
+        # ========== دالة المسح الاستبعادي المحدثة (V8.2 - مع التفريق بين MSB و Liquidity Sweep) ==========
         def exclusionary_scan(distance_to_peak, distance_to_bottom, is_at_historical_peak, is_at_historical_bottom, 
                               candle_body_ratio, candle_wick_ratio, volume_ratio, avg_volume_ratio, 
                               engulfing_ratio, is_trap_minute, seconds_remaining, momentum_boost, 
-                              current_direction, breakout_force):
+                              current_direction, breakout_force, is_candle_closed=False, has_fvg_above=False, has_fvg_below=False):
             
             reasons = []
             passed = True
             reversal_signal = None
             
-            # تعديل المعايير لتناسب حركة السوق الحقيقية (V8.2)
-            required_peak_distance = 3  # تقليل المسافة المطلوبة
-            required_body_ratio = 0.65  # خفض النسبة من 90% إلى 65% لقبول الشموع القوية بذيول
+            # تعديل المعايير لتناسب حركة السوق الحقيقية
+            required_peak_distance = 3
+            required_body_ratio = 0.65
             
-            # بروتوكول السيولة الصارم عند القمم (V8.2 - طلب المستخدم)
+            # ========== بروتوكول التفريق بين MSB و Liquidity Sweep (V8.2) ==========
+            # 1. كسر الهيكل الحقيقي (MSB) يتطلب إغلاق شمعة كاملة تحت/فوق المستوى
+            # 2. فخ السيولة (Liquidity Sweep) هو اختراق سريع دون إغلاق
+            
             if is_at_historical_peak or distance_to_peak < required_peak_distance:
-                # إذا لم يوجد سحب سيولة (Liquidity Sweep) حقيقي، نعتبر الاختراق فخاً
-                liquidity_sweep_confirmed = breakout_force >= 1.3 and candle_body_ratio >= 0.7
+                # التحقق: هل هذا كسر حقيقي أم مجرد سحب سيولة؟
+                if not is_candle_closed:
+                    # الشمعة لم تغلق بعد - قد يكون مجرد سحب سيولة
+                    if breakout_force >= 1.5 and candle_body_ratio >= 0.7:
+                        # اختراق قوي - انتظر إغلاق الشمعة للتأكيد
+                        reasons.append(f"⚠️ اختراق قوي - انتظر إغلاق الشمعة للتأكيد (MSB محتمل)")
+                        passed = False
+                        reversal_signal = "WAIT_FOR_CLOSE 🟡"
+                        return passed, reasons, reversal_signal
+                    else:
+                        # احتمال فخ سيولة
+                        reasons.append(f"🚨 فخ سيولة محتمل عند القمة - اختراق بدون إغلاق")
+                        passed = False
+                        reversal_signal = "LIQUIDITY_TRAP_SUSPECT 🔴"
+                        return passed, reasons, reversal_signal
                 
-                if not liquidity_sweep_confirmed:
+                # الشمعة مغلقة - تحقق من كسر حقيقي
+                if breakout_force >= 1.3 and candle_body_ratio >= 0.65:
+                    # كسر هيكل حقيقي (MSB)
+                    reasons.append(f"✅ كسر هيكل حقيقي (MSB) مؤكد")
+                else:
                     passed = False
-                    reasons.append(f"🚨 احتمالية فخ سيولة عند القمة - انتظار تأكيد سحب سيولة")
-                    reversal_signal = "LIQUIDITY_WAIT 🟡"
+                    reasons.append(f"⚠️ كسر ضعيف بعد الإغلاق - انتظر تأكيد إضافي")
+                    reversal_signal = "WEAK_BREAKOUT 🟡"
                     return passed, reasons, reversal_signal
             
             if is_at_historical_bottom or distance_to_bottom < required_peak_distance:
-                liquidity_sweep_confirmed = breakout_force >= 1.3 and candle_body_ratio >= 0.7
+                if not is_candle_closed:
+                    if breakout_force >= 1.5 and candle_body_ratio >= 0.7:
+                        reasons.append(f"⚠️ اختراق قوي للأسفل - انتظر إغلاق الشمعة للتأكيد")
+                        passed = False
+                        reversal_signal = "WAIT_FOR_CLOSE 🟡"
+                        return passed, reasons, reversal_signal
+                    else:
+                        reasons.append(f"🚨 فخ سيولة محتمل عند القاع - اختراق بدون إغلاق")
+                        passed = False
+                        reversal_signal = "LIQUIDITY_TRAP_SUSPECT 🟢"
+                        return passed, reasons, reversal_signal
                 
-                if not liquidity_sweep_confirmed:
+                if breakout_force >= 1.3 and candle_body_ratio >= 0.65:
+                    reasons.append(f"✅ كسر هيكل حقيقي (MSB) مؤكد للأسفل")
+                else:
                     passed = False
-                    reasons.append(f"🚨 احتمالية فخ سيولة عند القاع - انتظار تأكيد سحب سيولة")
-                    reversal_signal = "LIQUIDITY_WAIT 🟡"
+                    reasons.append(f"⚠️ كسر ضعيف بعد الإغلاق")
+                    reversal_signal = "WEAK_BREAKOUT 🟡"
                     return passed, reasons, reversal_signal
             
-            # منع الانعكاس الوهمي (قانون الابتلاع المحدث V8.2)
-            if engulfing_ratio > 0.85:  # رفع النسبة لضمان الانعكاس الكامل
+            # ========== فلتر الفجوة السعرية (FVG Gap Filter) ==========
+            # إذا كان هناك FVG فوق السعر في اتجاه صاعد، ارفض إشارة البيع
+            if current_direction == "DOWN" and has_fvg_above:
+                passed = False
+                reasons.append(f"🚨 FVG فوق السعر تعمل كمغناطيس - رفض إشارة البيع")
+                reversal_signal = "FVG_MAGNET_HOLD 🟡"
+                return passed, reasons, reversal_signal
+            
+            # إذا كان هناك FVG تحت السعر في اتجاه هابط، ارفض إشارة الشراء
+            if current_direction == "UP" and has_fvg_below:
+                passed = False
+                reasons.append(f"🚨 FVG تحت السعر تعمل كمغناطيس - رفض إشارة الشراء")
+                reversal_signal = "FVG_MAGNET_HOLD 🟡"
+                return passed, reasons, reversal_signal
+            
+            # منع الانعكاس الوهمي (قانون الابتلاع المحدث)
+            if engulfing_ratio > 0.85:
                 passed = False
                 reasons.append(f"⚠️ كسر هيكلي حقيقي (ابتلاع كامل {engulfing_ratio*100:.0f}%)")
                 reversal_signal = "IMMEDIATE_REVERSAL 🔄"
                 return passed, reasons, reversal_signal
             
-            # معايير الإجهاد السعري - تخفيف الشروط
-            if avg_volume_ratio > 4.0:  # رفع من 3 إلى 4
+            # معايير الإجهاد السعري
+            if avg_volume_ratio > 4.0:
                 passed = False
                 reasons.append(f"⚠️ إجهاد سعري شديد: حجم {avg_volume_ratio:.1f}x")
                 reversal_signal = "EXHAUSTION_HOLD 🟡"
                 return passed, reasons, reversal_signal
             
-            # رفع نسبة قبول الذيل (V8.2)
-            if candle_wick_ratio > 0.65:  # رفع من 0.6 إلى 0.65
+            # رفع نسبة قبول الذيل
+            if candle_wick_ratio > 0.65:
                 passed = False
                 reasons.append(f"⚠️ رفض سعري قوي: ذيل {candle_wick_ratio*100:.0f}%")
                 reversal_signal = "REJECTION_HOLD 🟡"
@@ -2789,11 +2834,13 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                                              candle_body_ratio, candle_wick_ratio, 
                                              volume_ratio, avg_volume_ratio,
                                              engulfing_ratio, distance_to_peak, distance_to_bottom,
-                                             current_direction, has_fvg, momentum_boost, in_golden_window):
+                                             current_direction, has_fvg, momentum_boost, in_golden_window,
+                                             has_fvg_above=False, has_fvg_below=False):
             
             confidence_score = 0
             conditions_met = []
             
+            # ========== نقاط الثقة المعدلة مع مراعاة FVG ==========
             if is_at_historical_peak or is_at_historical_bottom:
                 if distance_to_peak >= 5 or distance_to_bottom >= 5:
                     confidence_score += 35
@@ -2816,7 +2863,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             elif breakout_force >= 1.0:
                 confidence_score += 10
             
-            # تخفيف شروط الجسم (V8.2)
             if candle_body_ratio >= 0.85:
                 confidence_score += 20
                 conditions_met.append(f"جسم ممتاز {candle_body_ratio*100:.0f}%")
@@ -2830,9 +2876,18 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 confidence_score += 15
                 conditions_met.append("داخل النافذة المرنة")
             
+            # نقاط إضافية لوجود FVG
             if has_fvg:
                 confidence_score += 15
                 conditions_met.append("وجود FVG - فجوة سعرية")
+                
+                # تأكيد إضافي لاتجاه FVG
+                if has_fvg_above and current_direction == "UP":
+                    confidence_score += 10
+                    conditions_met.append("FVG فوق السعر تدعم الصعود")
+                elif has_fvg_below and current_direction == "DOWN":
+                    confidence_score += 10
+                    conditions_met.append("FVG تحت السعر تدعم الهبوط")
             
             if confidence_score >= 85:
                 confidence_level = "💥 عالية جداً"
@@ -2850,32 +2905,58 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 confidence_level = "❄️ منخفضة"
                 success_rate = "60-70%"
             
+            # ========== قرارات الزخم مع مراعاة FVG ==========
             if momentum_boost and in_golden_window:
                 if current_direction == "UP" and breakout_force >= 1.2 and candle_body_ratio >= 0.6:
-                    return {
-                        "decision": "STRONG_MOMENTUM 🟢",
-                        "action": "BUY 🟢",
-                        "confidence": confidence_score,
-                        "confidence_level": confidence_level,
-                        "reason": f"زخم صاعد قوي مع تأكيد حجم",
-                        "success_rate": success_rate,
-                        "entry_type": "MOMENTUM_ENTRY",
-                        "conditions_met": conditions_met
-                    }
+                    # التحقق من عدم وجود FVG تعارض
+                    if not has_fvg_above:
+                        return {
+                            "decision": "STRONG_MOMENTUM 🟢",
+                            "action": "BUY 🟢",
+                            "confidence": confidence_score,
+                            "confidence_level": confidence_level,
+                            "reason": f"زخم صاعد قوي مع تأكيد حجم",
+                            "success_rate": success_rate,
+                            "entry_type": "MOMENTUM_ENTRY",
+                            "conditions_met": conditions_met
+                        }
+                    else:
+                        return {
+                            "decision": "MOMENTUM_WITH_FVG_ABOVE 🟡",
+                            "action": "HOLD",
+                            "confidence": confidence_score,
+                            "confidence_level": "⚠️ انتظار",
+                            "reason": f"زخم صاعد لكن يوجد FVG فوق - انتظر كسرها",
+                            "success_rate": "70%",
+                            "entry_type": "WAIT_FOR_FVG_BREAK",
+                            "conditions_met": conditions_met
+                        }
                 
                 if current_direction == "DOWN" and breakout_force >= 1.2 and candle_body_ratio >= 0.6:
-                    return {
-                        "decision": "STRONG_MOMENTUM 🔴",
-                        "action": "SELL 🔴",
-                        "confidence": confidence_score,
-                        "confidence_level": confidence_level,
-                        "reason": f"زخم هابط قوي مع تأكيد حجم",
-                        "success_rate": success_rate,
-                        "entry_type": "MOMENTUM_ENTRY",
-                        "conditions_met": conditions_met
-                    }
+                    if not has_fvg_below:
+                        return {
+                            "decision": "STRONG_MOMENTUM 🔴",
+                            "action": "SELL 🔴",
+                            "confidence": confidence_score,
+                            "confidence_level": confidence_level,
+                            "reason": f"زخم هابط قوي مع تأكيد حجم",
+                            "success_rate": success_rate,
+                            "entry_type": "MOMENTUM_ENTRY",
+                            "conditions_met": conditions_met
+                        }
+                    else:
+                        return {
+                            "decision": "MOMENTUM_WITH_FVG_BELOW 🟡",
+                            "action": "HOLD",
+                            "confidence": confidence_score,
+                            "confidence_level": "⚠️ انتظار",
+                            "reason": f"زخم هابط لكن يوجد FVG تحت - انتظر كسرها",
+                            "success_rate": "70%",
+                            "entry_type": "WAIT_FOR_FVG_BREAK",
+                            "conditions_met": conditions_met
+                        }
             
-            # بروتوكول الكسر الهيكلي المحدث (V8.2)
+            # ========== بروتوكول الكسر الهيكلي المحدث (MSB) ==========
             if is_at_historical_peak or distance_to_peak < 5:
                 if breakout_points >= 5 and breakout_force >= 1.4 and candle_body_ratio >= 0.7 and has_fvg:
                     return {
@@ -2883,10 +2964,10 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                         "action": "BUY 🟢",
                         "confidence": confidence_score,
                         "confidence_level": "💥 عالية جداً",
-                        "reason": f"ثالوث مؤسسي مكتمل + FVG مؤكد",
+                        "reason": f"ثالوث مؤسسي مكتمل + FVG مؤكد (MSB)",
                         "success_rate": "98%",
                         "entry_type": "BREAKOUT_ENTRY",
-                        "conditions_met": conditions_met + ["ثالوث مؤسسي مكتمل", "FVG confirmed"]
+                        "conditions_met": conditions_met + ["ثالوث مؤسسي مكتمل", "FVG confirmed", "MSB confirmed"]
                     }
                 
                 if candle_wick_ratio > 0.55 or candle_body_ratio < 0.55 or engulfing_ratio > 0.7:
@@ -2895,7 +2976,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                         "action": "SELL_REVERSAL 🔴",
                         "confidence": confidence_score,
                         "confidence_level": "🔄 انعكاس",
-                        "reason": f"فخ سيولة محتمل عند القمة",
+                        "reason": f"فخ سيولة محتمل عند القمة - انتظار تأكيد الإغلاق",
                         "success_rate": "92%",
                         "entry_type": "REVERSAL_ENTRY",
                         "conditions_met": conditions_met
@@ -2908,10 +2989,10 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                         "action": "SELL 🔴",
                         "confidence": confidence_score,
                         "confidence_level": "💥 عالية جداً",
-                        "reason": f"ثالوث مؤسسي مكتمل + FVG مؤكد",
+                        "reason": f"ثالوث مؤسسي مكتمل + FVG مؤكد (MSB)",
                         "success_rate": "98%",
                         "entry_type": "BREAKOUT_ENTRY",
-                        "conditions_met": conditions_met + ["ثالوث مؤسسي مكتمل", "FVG confirmed"]
+                        "conditions_met": conditions_met + ["ثالوث مؤسسي مكتمل", "FVG confirmed", "MSB confirmed"]
                     }
                 
                 if candle_wick_ratio > 0.55 or candle_body_ratio < 0.55 or engulfing_ratio > 0.7:
@@ -2920,7 +3001,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                         "action": "BUY_REVERSAL 🟢",
                         "confidence": confidence_score,
                         "confidence_level": "🔄 انعكاس",
-                        "reason": f"فخ سيولة محتمل في القاع",
+                        "reason": f"فخ سيولة محتمل في القاع - انتظار تأكيد الإغلاق",
                         "success_rate": "92%",
                         "entry_type": "REVERSAL_ENTRY",
                         "conditions_met": conditions_met
@@ -2961,15 +3042,21 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 "conditions_met": conditions_met
             }
         
-        # ========== دالة حساب نقطة الدخول المحدثة (V8.2 - Sniper Entry) ==========
+        # ========== دالة حساب نقطة الدخول المحسنة (V8.2 - Offset متناسب مع نوع الحساب) ==========
         def calculate_safe_entry(current_price, direction, breakout_points=0, is_peak=False):
-            # استخدام هامش متغير بناءً على السعر (أكثر دقة)
+            # استخدام هامش متغير متناسب مع نوع الحساب
             if "BTC" in symbol or "ETH" in symbol:
+                # العملات الرقمية الرئيسية - هامش مناسب
                 price_step = 0.5
-            elif "OTC" in symbol:
+            elif "OTC" in symbol or symbol.startswith("OTC"):
+                # أسواق OTC - هامش صغير جداً (إصلاح مشكلة 0.5 الكبيرة)
                 price_step = 0.000001
+            elif "XAU" in symbol or "GOLD" in symbol:
+                # الذهب - هامش متوسط
+                price_step = 0.01
             else:
-                price_step = 0.00001
+                # الفوركس والعملات الأخرى
+                price_step = 0.0001
             
             if direction == "BUY":
                 entry_price = current_price + price_step
@@ -2978,9 +3065,17 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             else:
                 entry_price = current_price
             
-            return round(entry_price, 6) if isinstance(entry_price, float) else entry_price
+            # التقريب حسب نوع السعر
+            if isinstance(entry_price, float):
+                if price_step < 0.001:
+                    return round(entry_price, 6)
+                elif price_step < 0.01:
+                    return round(entry_price, 5)
+                else:
+                    return round(entry_price, 2)
+            return entry_price
         
-        # ========== الـ Prompt الرئيسي المحدث (V8.2 - مع تعليمات استخراج السيولة و FVG) ==========
+        # ========== الـ Prompt الرئيسي المحدث (V8.2 - مع تأكيد إغلاق الشمعة و FVG) ==========
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متخصص في SMC + ICT + Wyckoff + VSA.
 مهمتك تحليل الشارت المرفق واستخراج البيانات الرقمية بدقة متناهية.
@@ -2994,6 +3089,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
 2. **تحليل الشمعة الحالية:**
    - اللون: أخضر/أحمر
+   - **حالة الشمعة: مفتوحة / مغلقة** (مهم جداً للتمييز بين MSB و Liquidity Sweep)
    - الجسم: نسبة طول الجسم إلى إجمالي الشمعة (0-100%)
    - الذيل العلوي: نسبة الذيل العلوي (0-100%)
    - الذيل السفلي: نسبة الذيل السفلي (0-100%)
@@ -3005,13 +3101,17 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
    - المسافة إلى أقرب قاع: (نقاط)
    - اتجاه السعر الحالي: صاعد/هابط/جانبي
    - **وجود Order Block (كتلة أوامر):** نعم/لا - إذا نعم، حدد موقعها
-   - **وجود FVG (فجوة سعرية):** نعم/لا - إذا نعم، حدد إحداثياتها (من - إلى)
-   - **وجود Liquidity Sweep (سحب سيولة):** نعم/لا - إذا نعم، حدد من أي مستوى
+   - **وجود FVG (فجوة سعرية):** نعم/لا - إذا نعم، حدد:
+     * إحداثياتها (من سعر إلى سعر)
+     * موقعها: فوق السعر الحالي / تحت السعر الحالي
+   - **وجود Liquidity Sweep (سحب سيولة):** نعم/لا - إذا نعم، حدد:
+     * هل كان هناك اختراق سريع دون إغلاق؟
+     * هل تم إغلاق الشمعة بعد الاختراق؟
 
 4. **الأنماط السعرية:**
    - هل يوجد ابتلاع عكسي؟ (نعم/لا) - حدد النسبة المئوية للابتلاع
    - هل يوجد فجوة سعرية (FVG)؟ (نعم/لا) - حدد إحداثياتها بدقة
-   - هل يوجد Market Structure Break (MSB)؟ (نعم/لا)
+   - هل يوجد Market Structure Break (MSB)؟ (نعم/لا) - يتطلب إغلاق شمعة كاملة
    - قوة الاختراق (Breakout Force): (ضعيف/متوسط/قوي) - قم بتحديدها رقماً (مثال: 1.3x)
 
 5. **السيولة والمناطق المؤسسية:**
@@ -3023,49 +3123,48 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 - الوقت المتبقي: {seconds_remaining} ثانية
 - الوقت المنقضي: {seconds_passed} ثانية
 
-⚠️ **إذا لم تستطع تحديد أي قيمة بدقة، اكتب "غير واضح" ولا تتخمن.**
+⚠️ **تنبيهات هامة:**
+- التمييز بين MSB و Liquidity Sweep يعتمد على إغلاق الشمعة
+- إذا كان السعر اخترق مستوى ثم عاد دون إغلاق = Liquidity Sweep (فخ سيولة)
+- إذا كان السعر اخترق مستوى وأغلق فوقه/تحته = MSB (كسر هيكل حقيقي)
+- FVG تعمل كمغناطيس للسعر وقد تمنع الاستمرار في الاتجاه
 
-🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصر:
+🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً):
 
 📊 **التحليل الفني المتقدم:**
-• بروتوكول الفشل الذاتي: [الصورة صالحة / الصورة غير صالحة - يرجى إرسال صورة أوضح]
-• الوقت على المنصة (المرجع): [الوقت المستخرج من الصورة]
-• حالة الهيكل: [صاعد/هابط/متذبذب] + (توافق 4/4 إطارات: نعم / لا)
-• خريطة السيولة: [أقرب فخ سيولة Inducement] + [مناطق السيولة المستهدفة]
-• **FVG (الفجوة السعرية):** [من سعر إلى سعر] - [مؤكدة/غير مؤكدة]
-• **Order Block (كتلة الأوامر):** [المنطقة] - [قوة: عالية/متوسطة/ضعيفة]
+• بروتوكول الفشل الذاتي: [الصورة صالحة / الصورة غير صالحة]
+• حالة الشمعة: [مفتوحة / مغلقة] - مهم جداً
+• الوقت على المنصة: [الوقت المستخرج من الصورة]
+• حالة الهيكل: [صاعد/هابط/متذبذب]
+• **MSB vs Liquidity Sweep:** [MSB مؤكد / Liquidity Sweep محتمل / لا يوجد]
+• خريطة السيولة: [أقرب فخ سيولة] + [مناطق السيولة المستهدفة]
+• **FVG (الفجوة السعرية):** [من سعر إلى سعر] - [فوق/تحت السعر] - [مؤكدة]
 
 🎯 **الإشارة التنفيذية:**
-• السعر الحالي: [السعر الدقيق من الشارت]
-• حالة الشمعة: [مفتوحة / مغلقة] - الوقت المتبقي: [الوقت الدقيق]
-
-• القرار الفني: [شراء 🟢 / بيع 🔴 / كسر هيكلي صاعد 💥🟢 / كسر هيكلي هابط 💥🔴 / سحب سيولة صاعد 🔄🟢 / سحب سيولة هابط 🔄🔴 / انعكاس فوري صاعد 🔄🟢 / انعكاس فوري هابط 🔄🔴 / فخ سيولة شراء 🚨🟢 / فخ سيولة بيع 🚨🔴 / انتظار 🟡]
-
-• قوة الإشارة: [عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️]
-• **نقطة الدخول (Sniper Entry):** [السعر الدقيق بناءً على Order Block أو 50% من شمعة الاندفاع]
-• **نوع الدخول 🚨:** [دخول مباشر / إعادة اختبار / انعكاس فوري]
+• السعر الحالي: [السعر الدقيق]
+• القرار الفني: [شراء 🟢 / بيع 🔴 / MSB صاعد 💥🟢 / MSB هابط 💥🔴 / Liquidity Sweep صاعد 🔄🟢 / Liquidity Sweep هابط 🔄🔴 / انتظار 🟡]
+• قوة الإشارة: [عالية جدا 💥 / عالية 🔥 / متوسطة ⚡]
+• **نقطة الدخول:** [السعر الدقيق - متناسب مع نوع الحساب]
+• **نوع الدخول:** [دخول مباشر / إعادة اختبار / بعد تأكيد الإغلاق]
 • **الأهداف الربحية:**
-  🎯 TP1: [السعر] - [سحب أول سيولة داخلية] - [احتمالية الوصول: عالية/متوسطة/منخفضة]
-  🎯 TP2: [السعر] - [الهدف الرئيسي - منطقة عرض/طلب قوية] - [احتمالية الوصول: عالية/متوسطة/منخفضة]
-  🎯 TP3: [السعر] - [سيولة خارجية أو سد فجوة سعرية] - [احتمالية الوصول: عالية/متوسطة/منخفضة]
-• **وقف الخسارة:** [السعر] - [أسفل/أعلى Order Block بمسافة أمان]
-• **المدة المتوقعة:** [عدد الدقائق/الساعات]
-• **وقت الذروة المتوقع:** [خلال الـ X شموع القادمة / بعد X دقيقة]
+  🎯 TP1: [السعر] - [الهدف الأول]
+  🎯 TP2: [السعر] - [الهدف الرئيسي]
+  🎯 TP3: [السعر] - [الهدف النهائي]
+• **وقف الخسارة:** [السعر] - [أسفل/أعلى Order Block]
+• **المدة المتوقعة:** [الدقائق/الساعات]
 
 ⚠️ **إدارة المخاطر:**
-• مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/🔄/❄️/🚫]
-• نسبة نجاح الصفقة المتوقعة : [XX]% - [التقييم: ممتاز/جيد/متوسط/ضعيف]
-• نقطة الإلغاء: [السعر الذي يفسد التحليل]
+• مستوى الثقة: [0-100]%
+• نسبة النجاح المتوقعة: [XX]%
+• نقطة الإلغاء: [السعر]
 
-**ملاحظة مهمة:** قم بتحديد FVG و Order Block و Liquidity Sweep بدقة من الصورة المرفقة. إذا رأيت فجوة سعرية بين شمعتين، قم بتسجيلها كمستوى FVG مهم.
-
-الآن قم بتحليل الشارت المرفق **بتركيز كامل على استخراج البيانات من الصورة** بتطبيق جميع التعديلات والتحديثات وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
+**ملاحظة:** إذا رأيت فجوة سعرية (FVG)، حدد موقعها بدقة (فوق/تحت السعر) لأنها تعمل كمغناطيس وقد تعكس الاتجاه.
 """
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         GENERATION_CONFIG = {
-            "max_tokens": 1200,  # زيادة قليلة للمحتوى الإضافي
+            "max_tokens": 1300,
             "temperature": 0.0,
             "top_p": 1.0,
             "random_seed": 42
@@ -3113,10 +3212,14 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • الوقت المتبقي: {seconds_remaining} ثانية
 • نافذة التنفيذ: {golden_window_status}
 {time_warning}
-• قواعد V8.2: نافذة مرنة (2-58 ثانية) | نسبة جسم شمعة 65% | فحص سيولة صارم
+• **قواعد V8.2 الجديدة:**
+  ✓ نافذة مرنة (2-58 ثانية)
+  ✓ تفريق MSB / Liquidity Sweep (حسب إغلاق الشمعة)
+  ✓ فلتر FVG (الفجوات السعرية كمغناطيس)
+  ✓ Offset متناسب مع نوع الحساب
 ━━━━━━━━━━━━━━━
 🟢 {current_time.strftime('%H:%M:%S')} UTC
-🤖 **Obeida Trading V8.2**
+🤖 **Obeida Trading V8.2 - Sniper Edition**
 """
         
         full_result = analysis_result + footer
