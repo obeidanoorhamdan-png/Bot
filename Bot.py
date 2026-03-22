@@ -2600,6 +2600,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         seconds_remaining = 0
         candle_seconds_total = 0
         seconds_passed = 0
+        time_warning_type = None  # لتخزين نوع التحذير
         
         if candle.startswith('S'):
             # فريمات الثواني
@@ -2619,10 +2620,10 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             total_minutes_since_midnight = current_hour * 60 + current_minute
             
             # حساب عدد الشموع التي مرت منذ بداية اليوم
-            candles_passed = total_minutes_since_midnight // candle_minutes
+            candles_passed_count = total_minutes_since_midnight // candle_minutes
             
             # حساب بداية الشمعة الحالية بالدقائق
-            candle_start_minutes = candles_passed * candle_minutes
+            candle_start_minutes = candles_passed_count * candle_minutes
             
             # حساب الوقت المنقضي في الشمعة الحالية بالثواني
             minutes_into_candle = total_minutes_since_midnight - candle_start_minutes
@@ -2642,8 +2643,8 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             candle_seconds_total = candle_hours * 3600
             
             total_hours_since_midnight = current_hour
-            candles_passed = total_hours_since_midnight // candle_hours
-            candle_start_hours = candles_passed * candle_hours
+            candles_passed_count = total_hours_since_midnight // candle_hours
+            candle_start_hours = candles_passed_count * candle_hours
             
             hours_into_candle = total_hours_since_midnight - candle_start_hours
             seconds_passed = hours_into_candle * 3600 + current_minute * 60 + current_second
@@ -2665,14 +2666,9 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         is_fast_frame = candle.startswith('S')
         
-        # ========== إعدادات نافذة التنفيذ (يمكن تعطيلها للاختبار) ==========
-        ENABLE_TIME_FILTER = True  # غيّر إلى False لتعطيل الفلتر مؤقتاً
-        
-        # ========== نافذة التنفيذ المرنة (V8.3) ==========
+        # ========== تعريف نافذة التنفيذ ==========
         def is_in_golden_execution_window(seconds_passed, candle_type, candle_seconds_total):
-            """نافذة تنفيذ مرنة (V8.3) لجميع الاحتمالات"""
-            if not ENABLE_TIME_FILTER:
-                return True  # الفلتر معطل - اقبل كل الصور
+            """نافذة تنفيذ مرنة (V8.3)"""
             if candle_type.startswith('S'):
                 # فريم الثواني: مسموح من بداية الشمعة حتى قبل إغلاقها بـ 2 ثانية
                 return 1 <= seconds_passed <= (candle_seconds_total - 2)
@@ -2682,43 +2678,28 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         in_golden_window = is_in_golden_execution_window(seconds_passed, candle, candle_seconds_total)
         
-        # ========== فلتر الوقت المحسن ==========
-        if seconds_remaining < 2 and ENABLE_TIME_FILTER:
-            await wait_msg.edit_text(
-                "⏰ **تحذير أمان رقمي!**\n\n"
-                f"الوقت المتبقي: {seconds_remaining} ثانية فقط\n"
-                f"الوقت المنقضي: {seconds_passed} ثانية\n"
-                f"الفريم: {candle}\n\n"
-                "❌ **لا يمكن تحليل الصورة الآن بسبب:**\n"
-                "• الوقت المتبقي أقل من 2 ثانية (نافذة انزلاق سعري خطير)\n"
-                "• الشمعة على وشك الإغلاق - التحليل في هذه اللحظة غير دقيق\n\n"
-                "✅ **الإجراء الصحيح:**\n"
-                "• انتظر افتتاح الشمعة الجديدة\n"
-                "• أرسل الصورة بعد 5-10 ثانية من بداية الشمعة الجديدة\n\n"
-                "🛡️ هذا الإجراء لحماية رأس المال من الانزلاق السعري."
-            )
-            return "⏰ وقت غير كافٍ للتحليل"
+        # ========== تحديد نوع التحذير بناءً على الوقت ==========
+        time_warning_message = ""
         
-        # ========== التحقق من نافذة التنفيذ المرنة ==========
-        if not in_golden_window and seconds_remaining > 2 and ENABLE_TIME_FILTER:
-            # تحديد النافذة المسموحة
+        if seconds_remaining < 2:
+            time_warning_type = "CRITICAL"
+            time_warning_message = f"🔴 **تحذير أمان شديد!** الوقت المتبقي {seconds_remaining} ثانية فقط - الشمعة على وشك الإغلاق. التحليل غير دقيق وقد يسبب انزلاق سعري."
+        elif seconds_remaining < 5:
+            time_warning_type = "HIGH"
+            time_warning_message = f"🟠 **تحذير:** الوقت المتبقي {seconds_remaining} ثانية فقط. الشمعة ستغلق قريباً، نتائج التحليل قد تكون غير دقيقة."
+        elif not in_golden_window:
             if candle.startswith('S'):
-                allowed_range = f"1 - {candle_seconds_total - 2} ثانية"
+                allowed_range = f"1 - {candle_seconds_total - 2}"
             else:
-                allowed_range = "2 - 58 ثانية"
-            
-            await wait_msg.edit_text(
-                f"⏰ **نافذة التنفيذ المرنة**\n\n"
-                f"الوقت المنقضي: {seconds_passed} ثانية\n"
-                f"الوقت المتبقي: {seconds_remaining} ثانية\n"
-                f"الفريم: {candle}\n\n"
-                f"✅ النافذة المسموحة:\n"
-                f"• لفريمات الثواني (S): {allowed_range}\n"
-                f"• لفريمات الدقائق (M): {allowed_range}\n\n"
-                f"🕐 الوقت الحالي: {seconds_passed} ثانية من بداية الشمعة\n\n"
-                f"انتظر حتى الدخول في النافذة ثم أرسل الصورة."
-            )
-            return "⏰ خارج نافذة التنفيذ المرنة"
+                allowed_range = "2 - 58"
+            time_warning_type = "WINDOW"
+            time_warning_message = f"⚠️ **تنبيه:** أنت خارج نافذة التنفيذ الذهبية! الوقت الحالي {seconds_passed} ثانية. النافذة المسموحة: {allowed_range} ثانية. التحليل سيجري ولكن بدقة أقل."
+        elif seconds_remaining < 15:
+            time_warning_type = "LOW"
+            time_warning_message = f"⚡ **ملاحظة:** الوقت المتبقي {seconds_remaining} ثانية - متسع من الوقت للتحليل."
+        else:
+            time_warning_type = "GOOD"
+            time_warning_message = f"✅ **توقيت ممتاز:** داخل نافذة التنفيذ الذهبية. الوقت المنقضي {seconds_passed} ثانية."
 
         # ========== حساب حالة التوقيت ==========
         if seconds_remaining < 10 and is_fast_frame:
@@ -2858,6 +2839,11 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             confidence_score = 0
             conditions_met = []
             
+            # خصم نقاط إذا كان خارج النافذة الذهبية
+            if not in_golden_window:
+                confidence_score -= 15
+                conditions_met.append("⚠️ خارج النافذة الذهبية - دقة أقل")
+            
             if is_at_historical_peak or is_at_historical_bottom:
                 if distance_to_peak >= 5 or distance_to_bottom >= 5:
                     confidence_score += 35
@@ -2891,7 +2877,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             
             if in_golden_window:
                 confidence_score += 15
-                conditions_met.append("داخل النافذة المرنة")
+                conditions_met.append("داخل النافذة المرنة ✅")
             
             if has_fvg:
                 confidence_score += 15
@@ -2904,6 +2890,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                     confidence_score += 10
                     conditions_met.append("FVG تحت السعر تدعم الهبوط")
             
+            # تعديل نسبة النجاح بناءً على وجود تحذير الوقت
             if confidence_score >= 85:
                 confidence_level = "💥 عالية جداً"
                 success_rate = "95-98%"
@@ -2919,6 +2906,16 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             else:
                 confidence_level = "❄️ منخفضة"
                 success_rate = "60-70%"
+            
+            # خفض نسبة النجاح إذا كان خارج النافذة
+            if not in_golden_window and confidence_score > 50:
+                success_rate = success_rate.replace("%", "")
+                try:
+                    old_rate = int(success_rate)
+                    new_rate = max(50, old_rate - 15)
+                    success_rate = f"{new_rate}%"
+                except:
+                    success_rate = "65-75%"
             
             if momentum_boost and in_golden_window:
                 if current_direction == "UP" and breakout_force >= 1.2 and candle_body_ratio >= 0.6:
@@ -3056,7 +3053,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         # ========== دالة حساب نقطة الدخول المحسنة ==========
         def calculate_safe_entry(current_price, direction, breakout_points=0, is_peak=False):
-            # استخدام هامش متغير متناسب مع نوع الحساب
             if "BTC" in symbol or "ETH" in symbol:
                 price_step = 0.5
             elif "OTC" in symbol or symbol.startswith("OTC"):
@@ -3082,7 +3078,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                     return round(entry_price, 2)
             return entry_price
         
-        # ========== الـ Prompt الرئيسي المحدث ==========
+        # ========== الـ Prompt الرئيسي المحدث مع إضافة تحذير الوقت ==========
         MAIN_PROMPT = f"""
 أنت محلل فني خبير متخصص في SMC + ICT + Wyckoff + VSA.
 مهمتك تحليل الشارت المرفق واستخراج البيانات الرقمية بدقة متناهية.
@@ -3107,71 +3103,65 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
    - المسافة إلى أقرب قمة: (نقاط)
    - المسافة إلى أقرب قاع: (نقاط)
    - اتجاه السعر الحالي: صاعد/هابط/جانبي
-   - **وجود Order Block (كتلة أوامر):** نعم/لا - إذا نعم، حدد موقعها
-   - **وجود FVG (فجوة سعرية):** نعم/لا - إذا نعم، حدد:
-     * إحداثياتها (من سعر إلى سعر)
-     * موقعها: فوق السعر الحالي / تحت السعر الحالي
-   - **وجود Liquidity Sweep (سحب سيولة):** نعم/لا - إذا نعم، حدد:
-     * هل كان هناك اختراق سريع دون إغلاق؟
-     * هل تم إغلاق الشمعة بعد الاختراق؟
+   - **وجود Order Block (كتلة أوامر):** نعم/لا
+   - **وجود FVG (فجوة سعرية):** نعم/لا - حدد موقعها (فوق/تحت السعر)
+   - **وجود Liquidity Sweep (سحب سيولة):** نعم/لا
 
 4. **الأنماط السعرية:**
-   - هل يوجد ابتلاع عكسي؟ (نعم/لا) - حدد النسبة المئوية للابتلاع
-   - هل يوجد فجوة سعرية (FVG)؟ (نعم/لا) - حدد إحداثياتها بدقة
-   - هل يوجد Market Structure Break (MSB)؟ (نعم/لا) - يتطلب إغلاق شمعة كاملة
-   - قوة الاختراق (Breakout Force): (ضعيف/متوسط/قوي) - قم بتحديدها رقماً (مثال: 1.3x)
-
-5. **السيولة والمناطق المؤسسية:**
-   - مناطق السيولة المستهدفة (Liquidity Zones): حددها (قمم/قيعان سابقة)
-   - مناطق العرض والطلب (Supply/Demand): حدد أقوى منطقة
+   - هل يوجد ابتلاع عكسي؟ (نعم/لا)
+   - هل يوجد Market Structure Break (MSB)؟ (نعم/لا)
+   - قوة الاختراق (Breakout Force): (رقم مثل 1.3x)
 
 📊 **بيانات التحليل الأساسية:**
 - إطار الشموع: {candle}
 - الوقت المتبقي: {seconds_remaining} ثانية
 - الوقت المنقضي: {seconds_passed} ثانية
+- **حالة النافذة:** {"✅ داخل النافذة الذهبية" if in_golden_window else "❌ خارج النافذة الذهبية"}
 
-⚠️ **تنبيهات هامة:**
-- التمييز بين MSB و Liquidity Sweep يعتمد على إغلاق الشمعة
-- إذا كان السعر اخترق مستوى ثم عاد دون إغلاق = Liquidity Sweep (فخ سيولة)
-- إذا كان السعر اخترق مستوى وأغلق فوقه/تحته = MSB (كسر هيكل حقيقي)
-- FVG تعمل كمغناطيس للسعر وقد تمنع الاستمرار في الاتجاه
+⚠️ **تحذير الوقت:**
+{time_warning_message}
 
-🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً):
+
+🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصر:
 
 📊 **التحليل الفني المتقدم:**
-• بروتوكول الفشل الذاتي: [الصورة صالحة / الصورة غير صالحة]
-• حالة الشمعة: [مفتوحة / مغلقة] - مهم جداً
-• الوقت على المنصة: [الوقت المستخرج من الصورة]
-• حالة الهيكل: [صاعد/هابط/متذبذب]
-• **MSB vs Liquidity Sweep:** [MSB مؤكد / Liquidity Sweep محتمل / لا يوجد]
-• خريطة السيولة: [أقرب فخ سيولة] + [مناطق السيولة المستهدفة]
-• **FVG (الفجوة السعرية):** [من سعر إلى سعر] - [فوق/تحت السعر] - [مؤكدة]
+• بروتوكول الفشل الذاتي: [الصورة صالحة / الصورة غير صالحة - يرجى إرسال صورة أوضح]
+• الوقت على المنصة (المرجع): [الوقت المستخرج من الصورة]
+• حالة النافذة الذهبية: {"✅ داخل النافذة - دقة عالية" if in_golden_window else "❌ خارج النافذة - دقة أقل 15%"}
+• **FVG (الفجوة السعرية):** [من سعر إلى سعر] - [مؤكدة/غير مؤكدة]
+• **Order Block (كتلة الأوامر):** [المنطقة] - [قوة: عالية/متوسطة/ضعيفة]
 
 🎯 **الإشارة التنفيذية:**
-• السعر الحالي: [السعر الدقيق]
-• القرار الفني: [شراء 🟢 / بيع 🔴 / MSB صاعد 💥🟢 / MSB هابط 💥🔴 / Liquidity Sweep صاعد 🔄🟢 / Liquidity Sweep هابط 🔄🔴 / انتظار 🟡]
-• قوة الإشارة: [عالية جدا 💥 / عالية 🔥 / متوسطة ⚡]
-• **نقطة الدخول:** [السعر الدقيق - متناسب مع نوع الحساب]
-• **نوع الدخول:** [دخول مباشر / إعادة اختبار / بعد تأكيد الإغلاق]
+• السعر الحالي: [السعر الدقيق من الشارت]
+• حالة الشمعة: [مفتوحة / مغلقة] - الوقت المتبقي: [الوقت الدقيق]
+
+• القرار الفني: [شراء 🟢 / بيع 🔴 / كسر هيكلي صاعد 💥🟢 / كسر هيكلي هابط 💥🔴 / سحب سيولة صاعد 🔄🟢 / سحب سيولة هابط 🔄🔴 / انعكاس فوري صاعد 🔄🟢 / انعكاس فوري هابط 🔄🔴 / فخ سيولة شراء 🚨🟢 / فخ سيولة بيع 🚨🔴 / انتظار 🟡]
+
+• قوة الإشارة: [عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️]
+• **نقطة الدخول (Sniper Entry):** [السعر الدقيق بناءً على Order Block أو 50% من شمعة الاندفاع]
+• **نوع الدخول 🚨:** [دخول مباشر / إعادة اختبار / انعكاس فوري]
 • **الأهداف الربحية:**
-  🎯 TP1: [السعر] - [الهدف الأول]
-  🎯 TP2: [السعر] - [الهدف الرئيسي]
-  🎯 TP3: [السعر] - [الهدف النهائي]
-• **وقف الخسارة:** [السعر] - [أسفل/أعلى Order Block]
-• **المدة المتوقعة:** [الدقائق/الساعات]
+  🎯 TP1: [السعر] - [سحب أول سيولة داخلية] - [احتمالية الوصول: عالية/متوسطة/منخفضة]
+  🎯 TP2: [السعر] - [الهدف الرئيسي - منطقة عرض/طلب قوية] - [احتمالية الوصول: عالية/متوسطة/منخفضة]
+  🎯 TP3: [السعر] - [سيولة خارجية أو سد فجوة سعرية] - [احتمالية الوصول: عالية/متوسطة/منخفضة]
+• **وقف الخسارة:** [السعر] - [أسفل/أعلى Order Block بمسافة أمان]
+• **المدة المتوقعة:** [عدد الدقائق/الساعات]
+• **وقت الذروة المتوقع:** [خلال الـ X شموع القادمة / بعد X دقيقة]
 
 ⚠️ **إدارة المخاطر:**
-• مستوى الثقة: [0-100]%
-• نسبة النجاح المتوقعة: [XX]%
-• نقطة الإلغاء: [السعر]
+• مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/🔄/❄️/🚫]
+• نسبة نجاح الصفقة المتوقعة : [XX]% - [التقييم: ممتاز/جيد/متوسط/ضعيف]
+• نقطة الإلغاء: [السعر الذي يفسد التحليل]
 
-**ملاحظة:** إذا رأيت فجوة سعرية (FVG)، حدد موقعها بدقة (فوق/تحت السعر) لأنها تعمل كمغناطيس وقد تعكس الاتجاه.
+**ملاحظة مهمة:** قم بتحديد FVG و Order Block و Liquidity Sweep بدقة من الصورة المرفقة. إذا رأيت فجوة سعرية بين شمعتين، قم بتسجيلها كمستوى FVG مهم.
+
+الآن قم بتحليل الشارت المرفق **بتركيز كامل على استخراج البيانات من الصورة** بتطبيق جميع التعديلات والتحديثات وأعطني الإجابة بالتنسيق المطلوب أعلاه فقط.
 """
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         GENERATION_CONFIG = {
-            "max_tokens": 1300,
+            "max_tokens": 950,
             "temperature": 0.0,
             "top_p": 1.0,
             "random_seed": 42
@@ -3191,6 +3181,14 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             **GENERATION_CONFIG
         }
         
+        # إرسال رسالة تحذير للمستخدم قبل التحليل إذا كان الوقت حرجاً
+        if time_warning_type in ["CRITICAL", "HIGH", "WINDOW"]:
+            await wait_msg.edit_text(
+                f"{time_warning_message}\n\n"
+                f"⏳ جاري التحليل مع أخذ هذا التحذير بعين الاعتبار...",
+                parse_mode="Markdown"
+            )
+        
         response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
         
         if response.status_code != 200:
@@ -3202,32 +3200,33 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         analysis_result = clean_repeated_text(analysis_result)
         save_analysis_context(user_id, analysis_result)
         
-        # ===== إضافة خاتمة التحليل =====
-        golden_window_status = "داخل النافذة المرنة ✅" if in_golden_window else "خارج النافذة المرنة ❌"
+        # ===== إضافة خاتمة التحليل مع حالة النافذة =====
+        golden_window_status = "✅ داخل النافذة الذهبية (دقة عالية)" if in_golden_window else "❌ خارج النافذة الذهبية (دقة أقل -15%)"
         
-        time_warning = ""
-        if seconds_remaining < 3:
-            time_warning = "⚠️ تحذير شديد: وقت متبقي أقل من 3 ثوانٍ - لا تدخل!"
-        elif seconds_remaining < 8:
-            time_warning = "⚠️ تنبيه: متبقي أقل من 8 ثوانٍ - كن حذراً"
-        
-        filter_status = "🟢 مفعل" if ENABLE_TIME_FILTER else "⚪ معطل"
+        if time_warning_type == "CRITICAL":
+            time_icon = "🔴"
+            time_advice = "⚠️ تحذير شديد: لا تدخل الصفقة في آخر ثواني الشمعة!"
+        elif time_warning_type == "HIGH":
+            time_icon = "🟠"
+            time_advice = "⚠️ تحذير: الشمعة على وشك الإغلاق - كن حذراً"
+        elif time_warning_type == "WINDOW":
+            time_icon = "⚠️"
+            time_advice = f"⚠️ خارج النافذة الذهبية - الوقت الحالي {seconds_passed} ثانية (المسموح: 2-58 ثانية)"
+        elif time_warning_type == "LOW":
+            time_icon = "⚡"
+            time_advice = f"⚡ وقت جيد - متبقي {seconds_remaining} ثانية"
+        else:
+            time_icon = "✅"
+            time_advice = f"✅ توقيت ممتاز - داخل النافذة الذهبية"
         
         footer = f"""
 ━━━━━━━━━━━━━━━
-🔧 **الإعدادات (V8.3):**
-• فريم: {candle}
+{time_icon} **حالة التوقيت:** {time_advice}
+📊 **بيانات الوقت:**
+• الفريم: {candle}
 • الوقت المنقضي: {seconds_passed} ثانية
 • الوقت المتبقي: {seconds_remaining} ثانية
-• نافذة التنفيذ: {golden_window_status}
-• فلتر الوقت: {filter_status}
-{time_warning}
-• **قواعد V8.3 الجديدة:**
-  ✓ حساب الوقت بدقة حسب بداية اليوم
-  ✓ نافذة مرنة (2-58 ثانية)
-  ✓ تفريق MSB / Liquidity Sweep
-  ✓ فلتر FVG كمغناطيس للسعر
-  ✓ Offset متناسب مع نوع الحساب
+• حالة النافذة: {golden_window_status}
 ━━━━━━━━━━━━━━━
 🟢 {current_time.strftime('%H:%M:%S')} UTC
 🤖 **Obeida Trading V8.3 - Sniper Edition**
