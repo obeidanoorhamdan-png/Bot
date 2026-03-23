@@ -2584,7 +2584,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         wait_msg = await update.message.reply_text("🤔 انتظار قليلآ جاري تحليل الصورة 🤌...")
         
         # تحسين ضغط الصورة - الحفاظ على جودة الأرقام
-        compressed_path = compress_image(image_path, quality=90, maintain_aspect=True)
+        compressed_path = compress_image(image_path, quality=95)
         base64_img = encode_image(compressed_path)
         
         if not base64_img:
