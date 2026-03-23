@@ -39,7 +39,7 @@ TOKEN = os.environ.get('TOKEN', "8583903565:AAFveu3KYGkPsC8L6WyermoaZ1tI_EtFHHs"
 
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "vdzRyRlSfAUr6gX7zOZXVSaQhqRTkGpH")
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
-MISTRAL_MODEL = "pixtral-large-latest"
+MISTRAL_MODEL = "pixtral-12b-2409"
 
 DB_NAME = "abood-gpt.db"
 BACKUP_DIR = "backups"
@@ -2731,289 +2731,175 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             else:
                 return "0%", "🔴 انتظر - لا تدخل"
         
-        # ========== دالة القرار النهائي المحدثة (v1.0 مع مناطق القنص) ==========
-        def get_success_driven_decision_v8_5(is_at_historical_peak, is_at_historical_bottom, 
-                                             breakout_points, breakout_force, 
-                                             candle_body_ratio, candle_wick_ratio, 
-                                             volume_ratio, avg_volume_ratio,
-                                             engulfing_ratio, distance_to_peak, distance_to_bottom,
-                                             current_direction, has_fvg, momentum_boost, in_golden_window,
-                                             has_fvg_above=False, has_fvg_below=False,
-                                             current_price=100, fib_levels=None, adx_score=70):
+        # ========== دالة القرار الموحدة V8.5 Universal - Anti-Trap ==========
+        def get_success_driven_decision_v8_5(current_price, fib_levels, current_direction, 
+                                              momentum_boost, in_golden_window, breakout_force, 
+                                              candle_body_ratio, has_fvg):
             
-            confidence_score = 0
+            # 1. حساب المناطق الجوهرية (ثابت لجميع العملات)
+            # نعتمد فقط على فيبوناتشي المستخرج من الصورة الحالية
+            is_in_discount = current_price < fib_levels.get("0.500", 0)
+            is_in_premium = current_price > fib_levels.get("0.500", 0)
+            
+            # 2. قفل الأمان المؤسساتي (المسؤول عن منع أخطاء الهبوط القوي)
+            # إذا كان السعر في "القاع" (Discount) والاتجاه "هابط"، يمنع البيع منعاً باتاً
+            if current_direction == "DOWN" and is_in_discount:
+                return {
+                    "decision": "LIQUIDITY_TRAP 🚨🔴",
+                    "action": "HOLD",
+                    "reason": "السعر في منطقة سيولة شرائية (Discount). البيع هنا يعتبر انتحاراً تقنياً رغم الزخم.",
+                    "success_rate": "85%",
+                    "entry_type": "TRAP_AVOIDANCE",
+                    "confidence": 0,
+                    "confidence_level": "🚫 ممنوع",
+                    "position_size": "0%",
+                    "position_advice": "🔴 انتظر - فخ سيولة"
+                }
+
+            # إذا كان السعر في "القمة" (Premium) والاتجاه "صاعد"، يمنع الشراء منعاً باتاً
+            if current_direction == "UP" and is_in_premium:
+                return {
+                    "decision": "LIQUIDITY_TRAP 🚨🟢",
+                    "action": "HOLD",
+                    "reason": "السعر في منطقة سيولة بيعية (Premium). الشراء هنا فخ للمتداولين الأفراد.",
+                    "success_rate": "85%",
+                    "entry_type": "TRAP_AVOIDANCE",
+                    "confidence": 0,
+                    "confidence_level": "🚫 ممنوع",
+                    "position_size": "0%",
+                    "position_advice": "🔴 انتظر - فخ سيولة"
+                }
+
+            # 3. منطق الدخول الذكي (Execution)
+            # لا يدخل إلا إذا كان السعر في المنطقة الصحيحة (بيع من Premium / شراء من Discount)
+            confidence = 0
             conditions_met = []
             
-            # ========== v1.0: منطق الفلترة السعرية (Premium/Discount Zones) ==========
-            if fib_levels and "0.500" in fib_levels:
-                is_in_premium = current_price > fib_levels["0.500"]
-                is_in_discount = current_price < fib_levels["0.500"]
-                
-                # منطقة القنص الذهبية بين 0.618 و 0.786
-                golden_zone_low = min(fib_levels["0.618"], fib_levels["0.786"])
-                golden_zone_high = max(fib_levels["0.618"], fib_levels["0.786"])
-                is_in_golden_zone = golden_zone_low <= current_price <= golden_zone_high
-                
-                # ========== فلتر البيع في منطقة Discount ==========
-                if current_direction == "DOWN" and is_in_discount:
-                    return {
-                        "decision": "WAIT_FOR_RETRACEMENT 🟡",
-                        "action": "HOLD",
-                        "confidence": confidence_score,
-                        "confidence_level": "⏳ انتظار",
-                        "reason": f"السعر في منطقة Discount (أقل من {fib_levels['0.500']:.4f}). انتظر العودة للمستوى الذهبي {fib_levels['0.618']:.4f} للبيع.",
-                        "success_rate": "70%",
-                        "entry_type": "WAIT_FOR_RETRACEMENT",
-                        "conditions_met": ["منطقة Discount", "انتظر تصحيح"],
-                        "position_size": "0%",
-                        "position_advice": "⏳ انتظر العودة للمنطقة الذهبية"
-                    }
-                
-                # ========== فلتر الشراء في منطقة Premium ==========
-                if current_direction == "UP" and is_in_premium:
-                    return {
-                        "decision": "WAIT_FOR_RETRACEMENT 🟡",
-                        "action": "HOLD",
-                        "confidence": confidence_score,
-                        "confidence_level": "⏳ انتظار",
-                        "reason": f"السعر في منطقة Premium (أعلى من {fib_levels['0.500']:.4f}). انتظر العودة للمستوى الذهبي {fib_levels['0.618']:.4f} للشراء.",
-                        "success_rate": "70%",
-                        "entry_type": "WAIT_FOR_RETRACEMENT",
-                        "conditions_met": ["منطقة Premium", "انتظر تصحيح"],
-                        "position_size": "0%",
-                        "position_advice": "⏳ انتظر العودة للمنطقة الذهبية"
-                    }
-                
-                # ========== إضافة نقاط إضافية إذا كان السعر في المنطقة الذهبية ==========
-                if is_in_golden_zone:
-                    confidence_score += 25
-                    conditions_met.append(f"✅ السعر في المنطقة الذهبية ({fib_levels['0.618']:.4f} - {fib_levels['0.786']:.4f})")
+            if in_golden_window: 
+                confidence += 20
+                conditions_met.append("✅ داخل النافذة الذهبية")
+            if has_fvg: 
+                confidence += 15
+                conditions_met.append("✅ وجود FVG")
+            if breakout_force > 1.3: 
+                confidence += 25
+                conditions_met.append(f"✅ زخم قوي {breakout_force:.1f}x")
+            if momentum_boost:
+                confidence += 15
+                conditions_met.append("✅ زخم إضافي")
             
-            # ========== إضافة نقاط ADX ==========
-            if adx_score >= 70:
-                confidence_score += 25
-                conditions_met.append(f"✅ اتجاه قوي (ADX: {adx_score})")
-            elif adx_score >= 40:
-                confidence_score += 15
-                conditions_met.append(f"⚡ اتجاه متوسط (ADX: {adx_score})")
-            else:
-                confidence_score -= 10
-                conditions_met.append(f"⚠️ اتجاه ضعيف (ADX: {adx_score})")
-            
-            # ========== إضافة نقاط لسيولة الجلسة ==========
-            if liquidity_level == "HIGH":
-                confidence_score += 15
-                conditions_met.append("✅ جلسة سيولة عالية")
-            else:
-                confidence_score -= 10
-                conditions_met.append("⚠️ جلسة سيولة منخفضة")
-            
-            # خصم نقاط إذا كان خارج النافذة
-            if not in_golden_window:
-                confidence_score -= 15
-                conditions_met.append("⚠️ خارج النافذة الذهبية")
-            
-            # نقاط المسافة من القمم/القيعان
-            if is_at_historical_peak or is_at_historical_bottom:
-                if distance_to_peak >= 5 or distance_to_bottom >= 5:
-                    confidence_score += 35
-                    conditions_met.append("مسافة أمان 5+ نقاط")
-                elif distance_to_peak >= 3 or distance_to_bottom >= 3:
-                    confidence_score += 25
-                    conditions_met.append("مسافة أمان 3+ نقاط")
-                else:
-                    confidence_score += 10
-            else:
-                confidence_score += 35
-                conditions_met.append("ليس عند قمة/قاع")
-            
-            # نقاط قوة الاختراق
-            if breakout_force >= 1.5:
-                confidence_score += 25
-                conditions_met.append(f"حجم قوي {breakout_force:.1f}x")
-            elif breakout_force >= 1.2:
-                confidence_score += 18
-                conditions_met.append(f"حجم جيد {breakout_force:.1f}x")
-            
-            # نقاط جسم الشمعة
-            if candle_body_ratio >= 0.85:
-                confidence_score += 20
-                conditions_met.append(f"جسم ممتاز {candle_body_ratio*100:.0f}%")
-            elif candle_body_ratio >= 0.65:
-                confidence_score += 15
-                conditions_met.append(f"جسم جيد {candle_body_ratio*100:.0f}%")
-            
-            # نقاط النافذة الذهبية
-            if in_golden_window:
-                confidence_score += 15
-                conditions_met.append("داخل النافذة المرنة ✅")
-            
-            # نقاط FVG
-            if has_fvg:
-                confidence_score += 15
-                conditions_met.append("وجود FVG")
-            
-            # تحديد مستوى الثقة
-            if confidence_score >= 85:
-                confidence_level = "💥 عالية جداً"
-                success_rate = "95-98%"
-            elif confidence_score >= 70:
-                confidence_level = "🔥 عالية"
-                success_rate = "85-92%"
-            elif confidence_score >= 55:
-                confidence_level = "⚡ متوسطة"
-                success_rate = "75-85%"
-            elif confidence_score >= 40:
-                confidence_level = "🔄 انعكاس محتمل"
-                success_rate = "70-80%"
-            else:
-                confidence_level = "❄️ منخفضة"
-                success_rate = "60-70%"
-            
-            # خفض النسبة خارج النافذة
-            if not in_golden_window and confidence_score > 50:
-                success_rate = success_rate.replace("%", "")
-                try:
-                    old_rate = int(success_rate)
-                    new_rate = max(50, old_rate - 15)
-                    success_rate = f"{new_rate}%"
-                except:
-                    success_rate = "65-75%"
-            
-            # حساب حجم اللوت
-            position_size, position_advice = calculate_position_size(confidence_score)
-            
-            # قرارات الزخم
-            if momentum_boost and in_golden_window:
-                if current_direction == "UP" and breakout_force >= 1.2 and candle_body_ratio >= 0.6:
-                    if not has_fvg_above:
-                        return {
-                            "decision": "STRONG_MOMENTUM 🟢",
-                            "action": "BUY 🟢",
-                            "confidence": confidence_score,
-                            "confidence_level": confidence_level,
-                            "reason": f"زخم صاعد قوي مع تأكيد حجم",
-                            "success_rate": success_rate,
-                            "entry_type": "MOMENTUM_ENTRY",
-                            "conditions_met": conditions_met,
-                            "position_size": position_size,
-                            "position_advice": position_advice,
-                            "fib_levels": fib_levels
-                        }
-            
-            # قرارات الكسر الهيكلي
-            if is_at_historical_peak or distance_to_peak < 5:
-                if breakout_points >= 5 and breakout_force >= 1.4 and candle_body_ratio >= 0.7 and has_fvg:
-                    return {
-                        "decision": "STRUCTURAL_BREAKOUT 💥🟢",
-                        "action": "BUY 🟢",
-                        "confidence": confidence_score,
-                        "confidence_level": "💥 عالية جداً",
-                        "reason": f"ثالوث مؤسسي مكتمل + FVG مؤكد",
-                        "success_rate": "98%",
-                        "entry_type": "BREAKOUT_ENTRY",
-                        "conditions_met": conditions_met,
-                        "position_size": "3-5%",
-                        "position_advice": "🔥 إشارة قوية جداً",
-                        "fib_levels": fib_levels
-                    }
-            
+            # قرار البيع الصحيح (من منطقة غالية)
+            if current_direction == "DOWN" and is_in_premium and breakout_force > 1.2:
+                position_size, position_advice = calculate_position_size(confidence + 30)
+                return {
+                    "decision": "INSTITUTIONAL_SELL 🔴",
+                    "action": "SELL 🔴",
+                    "confidence": confidence + 30,
+                    "confidence_level": "🔥 عالية",
+                    "reason": "دخول بيع مؤسساتي من منطقة Premium مع زخم مؤكد.",
+                    "success_rate": "92%",
+                    "entry_type": "PREMIUM_ENTRY",
+                    "conditions_met": conditions_met,
+                    "position_size": position_size,
+                    "position_advice": position_advice
+                }
+
+            # قرار الشراء الصحيح (من منطقة رخيصة)
+            if current_direction == "UP" and is_in_discount and breakout_force > 1.2:
+                position_size, position_advice = calculate_position_size(confidence + 30)
+                return {
+                    "decision": "INSTITUTIONAL_BUY 🟢",
+                    "action": "BUY 🟢",
+                    "confidence": confidence + 30,
+                    "confidence_level": "🔥 عالية",
+                    "reason": "دخول شراء مؤسساتي من منطقة Discount مع زخم مؤكد.",
+                    "success_rate": "92%",
+                    "entry_type": "DISCOUNT_ENTRY",
+                    "conditions_met": conditions_met,
+                    "position_size": position_size,
+                    "position_advice": position_advice
+                }
+
+            position_size, position_advice = calculate_position_size(confidence)
             return {
-                "decision": "HOLD 🟡",
-                "action": "HOLD",
-                "confidence": confidence_score,
-                "confidence_level": confidence_level,
-                "reason": "لا توجد إشارة واضحة",
-                "success_rate": success_rate,
+                "decision": "HOLD 🟡", 
+                "action": "HOLD", 
+                "reason": "السعر في منطقة توازن (Equilibrium) - انتظر وضوح السيولة.",
+                "confidence": confidence,
+                "confidence_level": "⚡ متوسطة" if confidence > 50 else "🟡 منخفضة",
+                "success_rate": "75%",
                 "entry_type": "NO_ENTRY",
                 "conditions_met": conditions_met,
                 "position_size": position_size,
-                "position_advice": position_advice,
-                "fib_levels": fib_levels
+                "position_advice": position_advice
             }
         
-        # ========== الـ Prompt الرئيسي المحدث (v1.0 مع مناطق القنص) ==========
+        # ========== الـ MAIN_PROMPT الموحد (النسخة النهائية لجميع الأسواق) ==========
         MAIN_PROMPT = f"""
-أنت محلل فني خبير متخصص في SMC + ICT + Wyckoff + VSA.
-مهمتك تحليل الشارت المرفق واستخراج البيانات الرقمية بدقة متناهية.
+أنت الآن المحرك التحليلي لنظام Obeida Trading. مهمتك هي استخراج "المعطيات الخام" من الصورة بدقة رياضية لتغذية خوارزمية القرار.
 
-🔴 **تعليمات صارمة v1.0 Pro Institutional:**
+🔴 **تعليمات المعالجة (Primary Processing):**
 
-1. **استخراج الأسعار بدقة:**
-   - السعر الحالي: اقرأ السعر من آخر شمعة
-   - أعلى قمة في آخر 30 شمعة (للموجة الأخيرة)
-   - أدنى قاع في آخر 30 شمعة (للموجة الأخيرة)
+1. **استخراج النطاق السعري (Price Range):**
+   - حدد أعلى قمة (Highest High) وأدنى قاع (Lowest Low) الظاهرين في الموجة الحالية بالشارت.
+   - اقرأ السعر الحالي (Current Price) من المؤشر النشط.
+   - قم بتنسيق الأسعار بنفس الدقة التي تظهر في الصورة (مثلاً: 1.23456 أو 2345.67)
 
-2. **تحليل الشمعة الحالية:**
-   - اللون: أخضر/أحمر
-   - **حالة الشمعة: مفتوحة / مغلقة**
-   - الجسم: نسبة طول الجسم (0-100%)
-   - الذيل العلوي: نسبة الذيل العلوي (0-100%)
+2. **تحليل الزخم والكسر (Momentum & Breakout):**
+   - احسب قوة الاندفاع (Breakout Force): نسبة حجم آخر شمعتين مقارنة بالشموع الـ 10 السابقة (رقم عشري مثل 1.5 يعني 150%).
+   - حدد اتجاه الموجة الحالي (Current Direction): [UP / DOWN].
+   - نسبة جسم الشمعة (Candle Body Ratio): من 0.1 إلى 1.0 (1.0 يعني 100% من طول الشمعة جسم)
+   - هل هناك زخم إضافي (Momentum Boost): [True / False] - يحدث عندما تكون الشمعة الحالية أكبر بـ 1.5x من سابقتها
 
-3. **التحليل الهيكلي المتقدم:**
-   - هل السعر عند قمة/قاع تاريخي؟
-   - **نوع الاختراق:** [كسر بالجسم / كسر بالذيل]
-   - **MSB vs Liquidity Sweep:** [MSB مؤكد / Liquidity Sweep محتمل]
-   - **وجود Order Block:** نعم/لا - حدد موقعه
+3. **كشف الفجوات والسيولة (SMC Detection):**
+   - FVG (Fair Value Gap): هل توجد فجوة سعرية لم يتم غلقها؟ [True / False]
+   - Liquidity Sweep: هل اخترق السعر القمة/القاع بذيل طويل ثم عاد؟ [True / False]
+   - Order Block: هل يوجد منطقة أوامر مؤسسية؟ [True / False] - حدد موقعها التقريبي
 
-4. **تحليل الحجم والسيولة:**
-   - حجم الشمعة الحالية مقارنة بالمتوسط
-   - هل هناك فجوة سعرية (FVG)؟ نعم/لا - حدد موقعها (فوق/تحت السعر)
+4. **تحديد التمركز السعري (Positioning) - الأهم:**
+   - صنف مكان السعر الحالي بالنسبة لمنتصف المسافة (0.500) بين القمة والقاع المستخرجين:
+     * إذا كان فوق 0.500 والاتجاه هابط -> المنطقة هي **PREMIUM** (بيع مثالي)
+     * إذا كان تحت 0.500 والاتجاه صاعد -> المنطقة هي **DISCOUNT** (شراء مثالي)
+     * عكس ذلك -> منطقة خطر **TRAP ZONE** (انتظر)
 
-5. **تحديد مناطق القنص (Sniper Entry Zones) - مهم جداً:**
-   - احسب مستويات Fibonacci للموجة الأخيرة (من أعلى قمة إلى أدنى قاع)
-   - حدد "المنطقة الذهبية" بين مستويي **0.618 و 0.786**
-   - إذا كان السعر الحالي تحت مستوى 0.500 في اتجاه هابط، صنف المنطقة كـ **"Discount"** (انتظر التصحيح للبيع)
-   - إذا كان السعر الحالي فوق مستوى 0.500 في اتجاه صاعد، صنف المنطقة كـ **"Premium"** (انتظر التصحيح للشراء)
-   - ادمج هذه المستويات مع مناطق الـ Order Block و FVG لتحديد نقطة الدخول الدقيقة
-
-📊 **بيانات التحليل:**
-- إطار الشموع: {candle}
+📊 **بيانات الإطار الزمني:**
+- الفريم: {candle}
 - الوقت المنقضي: {seconds_passed} ثانية
 - الوقت المتبقي: {seconds_remaining} ثانية
-- **حالة النافذة:** {"✅ داخل" if in_golden_window else "❌ خارج"}
+- حالة النافذة: {"✅ داخل النافذة الذهبية" if in_golden_window else "❌ خارج النافذة"}
 
-⚠️ **تحذير الوقت:** {time_warning_message}
+⚠️ **تنبيه الوقت:** {time_warning_message}
 🌍 **جلسة التداول:** {session_message}
 
-🎯 التنسيق المطلوب للإجابة (الالتزام حرفياً) وبشكل مختصر:
+🎯 **التنسيق المطلوب للإجابة (التزم بهذا التنسيق بدقة):**
 
-📊 **التحليل الفني المتقدم:**
-• بروتوكول الفشل الذاتي: [الصورة صالحة / الصورة غير صالحة - يرجى إرسال صورة أوضح]
-• الوقت على المنصة (المرجع): [الوقت المستخرج من الصورة]
-• حالة النافذة الذهبية: {"✅ داخل النافذة - دقة عالية" if in_golden_window else "❌ خارج النافذة - دقة أقل 15%"}
-• FVG (الفجوة السعرية): [من سعر إلى سعر] - [مؤكدة/غير مؤكدة]
-• Order Block (كتلة الأوامر): [المنطقة] - [قوة: عالية/متوسطة/ضعيفة]
+📐 **المعطيات الرقمية:**
+• أعلى قمة (HH): [السعر]
+• أدنى قاع (LL): [السعر]
+• السعر الحالي: [السعر]
+• مستوى 0.500 فيبوناتشي: [السعر]
 
-🎯 **الإشارة التنفيذية:**
-• السعر الحالي: [السعر الدقيق من الشارت]
-• حالة الشمعة: [مفتوحة / مغلقة] - الوقت المتبقي: [الوقت الدقيق]
+⚡ **معطيات الزخم:**
+• قوة الاندفاع: [رقم عشري]
+• اتجاه الموجة: [UP/DOWN]
+• نسبة جسم الشمعة: [0.xx]
+• زخم إضافي: [True/False]
 
-• القرار الفني: [شراء 🟢 / بيع 🔴 / كسر هيكلي صاعد 💥🟢 / كسر هيكلي هابط 💥🔴 / سحب سيولة صاعد 🔄🟢 / سحب سيولة هابط 🔄🔴 / انعكاس فوري صاعد 🔄🟢 / انعكاس فوري هابط 🔄🔴 / فخ سيولة شراء 🚨🟢 / فخ سيولة بيع 🚨🔴 / انتظار تصحيح 🟡]
+🔍 **معطيات SMC:**
+• FVG: [True/False]
+• Liquidity Sweep: [True/False]
+• Order Block: [True/False]
 
-• قوة الإشارة: [عالية جدا 💥 / عالية 🔥 / متوسطة ⚡ / ضعيفة ❄️]
-• نقطة الدخول :  [السعر] - (يجب أن تكون في المنطقة الذهبية)
-• نوع الدخول 🚨: [دخول مباشر / إعادة اختبار / انعكاس فوري]
-• **الأهداف الربحية:**
-  🎯 TP1: [السعر] - (مستوى 0.500)
-  🎯 TP2: [السعر] - (مستوى 0.236 أو القمة/القاع)
-  🎯 TP3: [السعر] - (مستوى 1.272 أو 1.618)
-• وقف الخسارة: [السعر] - (أسفل/أعلى المنطقة الذهبية)
-• المدة المتوقعة: [عدد الدقائق/الساعات]
-• وقت الذروة المتوقع: [خلال الـ X شموع القادمة / بعد X دقيقة]
+📍 **التمركز السعري:**
+• موقع السعر من 0.500: [PREMIUM/DISCOUNT/TRAP_ZONE]
 
-⚠️ **إدارة المخاطر:**
-• مستوى الثقة: [0-100]٪ = [💥/🔥/⚡/🔄/❄️/🚫]
-• نسبة نجاح الصفقة المتوقعة : [XX]% - [التقييم: ممتاز/جيد/متوسط/ضعيف]
-• حجم الاستثمار: [نسبة مئوية] - [توصية]
-
-**ملاحظة مهمة:** قم بتحديد FVG و Order Block و Liquidity Sweep بدقة من الصورة المرفقة. إذا رأيت فجوة سعرية بين شمعتين، قم بتسجيلها كمستوى FVG مهم.
+💡 **ملاحظة:** قم باستخراج هذه البيانات كما هي من الصورة دون إضافة تحليل أو تفسير. الخوارزمية ستتولى القرار النهائي.
 """
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         GENERATION_CONFIG = {
-            "max_tokens": 1000,
+            "max_tokens": 800,
             "temperature": 0.0,
             "top_p": 1.0,
             "random_seed": 42
@@ -3050,26 +2936,137 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         analysis_result = response.json()['choices'][0]['message']['content'].strip()
         analysis_result = clean_repeated_text(analysis_result)
-        save_analysis_context(user_id, analysis_result)
         
-        # ===== خاتمة التحليل v1.0 =====
-        golden_window_status = "✅ داخل النافذة الذهبية" if in_golden_window else "❌ خارج النافذة الذهبية"
+        # ========== استخراج المعطيات من التحليل ==========
+        # استخراج القيم من النص
+        import re
         
-        footer = f"""
-━━━━━━━━━━━━━━━
-🌍 **جلسة التداول:** {session_message}
+        # استخراج الأسعار
+        hh_match = re.search(r'أعلى قمة.*?:\s*([\d.]+)', analysis_result)
+        ll_match = re.search(r'أدنى قاع.*?:\s*([\d.]+)', analysis_result)
+        current_price_match = re.search(r'السعر الحالي.*?:\s*([\d.]+)', analysis_result)
+        fib_500_match = re.search(r'0\.500.*?:\s*([\d.]+)', analysis_result)
+        
+        # استخراج معطيات الزخم
+        breakout_force_match = re.search(r'قوة الاندفاع.*?:\s*([\d.]+)', analysis_result)
+        direction_match = re.search(r'اتجاه الموجة.*?:\s*([A-Z]+)', analysis_result)
+        body_ratio_match = re.search(r'نسبة جسم الشمعة.*?:\s*([\d.]+)', analysis_result)
+        momentum_match = re.search(r'زخم إضافي.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
+        
+        # استخراج معطيات SMC
+        fvg_match = re.search(r'FVG.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
+        liquidity_sweep_match = re.search(r'Liquidity Sweep.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
+        order_block_match = re.search(r'Order Block.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
+        
+        # استخراج التمركز السعري
+        positioning_match = re.search(r'موقع السعر.*?:\s*([A-Z_]+)', analysis_result, re.IGNORECASE)
+        
+        # تعيين القيم المستخرجة مع افتراضات آمنة
+        try:
+            highest_high = float(hh_match.group(1)) if hh_match else 0
+            lowest_low = float(ll_match.group(1)) if ll_match else 0
+            current_price = float(current_price_match.group(1)) if current_price_match else 0
+            fib_500 = float(fib_500_match.group(1)) if fib_500_match else 0
+            
+            breakout_force = float(breakout_force_match.group(1)) if breakout_force_match else 1.0
+            current_direction = direction_match.group(1).upper() if direction_match else "UP"
+            candle_body_ratio = float(body_ratio_match.group(1)) if body_ratio_match else 0.5
+            momentum_boost = momentum_match.group(1).upper() == "TRUE" if momentum_match else False
+            
+            has_fvg = fvg_match.group(1).upper() == "TRUE" if fvg_match else False
+            has_liquidity_sweep = liquidity_sweep_match.group(1).upper() == "TRUE" if liquidity_sweep_match else False
+            has_order_block = order_block_match.group(1).upper() == "TRUE" if order_block_match else False
+            
+            positioning = positioning_match.group(1).upper() if positioning_match else "TRAP_ZONE"
+            
+        except Exception as parse_error:
+            print(f"خطأ في استخراج المعطيات: {parse_error}")
+            # تعيين قيم افتراضية آمنة
+            highest_high = 0
+            lowest_low = 0
+            current_price = 0
+            fib_500 = 0
+            breakout_force = 1.0
+            current_direction = "UP"
+            candle_body_ratio = 0.5
+            momentum_boost = False
+            has_fvg = False
+            has_liquidity_sweep = False
+            has_order_block = False
+            positioning = "TRAP_ZONE"
+        
+        # حساب مستويات فيبوناتشي إذا توفرت القمم والقيعان
+        fib_levels = {}
+        if highest_high > 0 and lowest_low > 0:
+            fib_levels = calculate_fibonacci_levels(highest_high, lowest_low, current_direction)
+            if fib_500 == 0 and "0.500" in fib_levels:
+                fib_500 = fib_levels["0.500"]
+        
+        # إضافة مستوى 0.500 إلى fib_levels إذا لم يكن موجوداً
+        if "0.500" not in fib_levels and fib_500 > 0:
+            fib_levels["0.500"] = fib_500
+        
+        # ========== تنفيذ دالة القرار ==========
+        decision_result = get_success_driven_decision_v8_5(
+            current_price=current_price,
+            fib_levels=fib_levels,
+            current_direction=current_direction,
+            momentum_boost=momentum_boost,
+            in_golden_window=in_golden_window,
+            breakout_force=breakout_force,
+            candle_body_ratio=candle_body_ratio,
+            has_fvg=has_fvg
+        )
+        
+        # ========== بناء النتيجة النهائية ==========
+        # إنشاء نتيجة التحليل بتنسيق جميل
+        formatted_result = f"""
+📊 **التحليل الفني المتقدم:**
+
+• **النطاق السعري:** {highest_high} - {lowest_low}
+• **السعر الحالي:** {current_price}
+• **مستوى 0.500:** {fib_500}
+• **موقع السعر:** {positioning}
+
+📈 **معطيات الزخم:**
+• قوة الاندفاع: {breakout_force:.2f}x
+• اتجاه الموجة: {current_direction}
+• نسبة الجسم: {candle_body_ratio*100:.1f}%
+• زخم إضافي: {momentum_boost}
+
+🔍 **معطيات SMC:**
+• FVG: {'✅ موجود' if has_fvg else '❌ غير موجود'}
+• Liquidity Sweep: {'✅ موجود' if has_liquidity_sweep else '❌ غير موجود'}
+• Order Block: {'✅ موجود' if has_order_block else '❌ غير موجود'}
+
 ⏱️ **بيانات الوقت:**
 • الفريم: {candle}
 • الوقت المنقضي: {seconds_passed} ثانية
 • الوقت المتبقي: {seconds_remaining} ثانية
-• حالة النافذة: {golden_window_status}
+• حالة النافذة: {'✅ داخل النافذة الذهبية' if in_golden_window else '❌ خارج النافذة'}
+
 ━━━━━━━━━━━━━━━
+
+🎯 **القرار النهائي: {decision_result['decision']}**
+
+• **الإجراء:** {decision_result['action']}
+• **سبب القرار:** {decision_result['reason']}
+• **نوع الدخول:** {decision_result.get('entry_type', 'N/A')}
+• **مستوى الثقة:** {decision_result.get('confidence', 0)}% - {decision_result.get('confidence_level', 'N/A')}
+• **نسبة النجاح المتوقعة:** {decision_result.get('success_rate', 'N/A')}
+• **حجم الاستثمار:** {decision_result.get('position_size', 'N/A')}
+• **توصية الحجم:** {decision_result.get('position_advice', 'N/A')}
+
+📋 **الشروط المتحققة:**
+{chr(10).join(['• ' + cond for cond in decision_result.get('conditions_met', [])]) if decision_result.get('conditions_met') else '• لا توجد شروط إضافية'}
+
+━━━━━━━━━━━━━━━
+🌍 **جلسة التداول:** {session_message}
 🟢 {current_time.strftime('%H:%M:%S')} UTC
-🤖 **Obeida Trading v1.0 Pro **
+🤖 **Obeida Trading v1.0 Pro - Anti-Trap System**
 """
         
-        full_result = analysis_result + footer
-        full_result = clean_repeated_text(full_result)
+        full_result = clean_repeated_text(formatted_result)
         
         try:
             if len(full_result) > 4000:
@@ -3081,6 +3078,8 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 await wait_msg.edit_text(full_result, parse_mode="Markdown")
         except Exception as e:
             await wait_msg.edit_text(full_result)
+        
+        save_analysis_context(user_id, full_result)
         
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
