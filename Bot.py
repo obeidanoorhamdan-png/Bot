@@ -2880,8 +2880,8 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
    - صنف مكان السعر الحالي بالنسبة لمستوى 0.500:
      * إذا كان السعر **فوق 0.500** والاتجاه **هابط** -> المنطقة = **PREMIUM** (منطقة بيع مثالية)
      * إذا كان السعر **تحت 0.500** والاتجاه **صاعد** -> المنطقة = **DISCOUNT** (منطقة شراء مثالية)
-     * إذا كان السعر **فوق 0.500** والاتجاه **صاعد** -> المنطقة = **TRAP ZONE** (منطقة خطر للشراء)
-     * إذا كان السعر **تحت 0.500** والاتجاه **هابط** -> المنطقة = **TRAP ZONE** (منطقة خطر للبيع)
+     * إذا كان السعر **فوق 0.500** والاتجاه **صاعد** -> المنطقة = **TRAP_ZONE** (منطقة خطر للشراء)
+     * إذا كان السعر **تحت 0.500** والاتجاه **هابط** -> المنطقة = **TRAP_ZONE** (منطقة خطر للبيع)
 
 **5. التحقق من جودة الصورة (OCR Validation):**
    - إذا كان شريط الأسعار الجانبي غير مرئي أو غير واضح، أو لم تتمكن من قراءة الأسعار بدقة:
@@ -3028,19 +3028,61 @@ FIB_LEVEL_0786: [السعر - مستوى 0.786]
                     liquidity_sweep=has_liquidity_sweep
                 )
                 
-                # حساب مستويات الهدف ووقف الخسارة بناءً على فيبوناتشي
+                # ========== حساب مستويات الهدف ووقف الخسارة (النسخة المطورة - Target Optimization) ==========
+                # حساب الفرق السعري (النطاق)
+                diff = highest_high - lowest_low
+                
                 if current_direction == "UP":
                     entry_price = current_price
-                    tp1 = fib_618 if fib_618 > current_price else current_price + (highest_high - lowest_low) * 0.236
-                    tp2 = highest_high
-                    tp3 = highest_high + (highest_high - lowest_low) * 0.272  # مستوى 1.272
-                    stop_loss = lowest_low - (highest_high - lowest_low) * 0.1
-                else:
+                    # الهدف الأول: القمة السابقة (مضمون بنسبة كبيرة)
+                    tp1 = highest_high
+                    # الهدف الثاني: امتداد بسيط 1.272 (منطقة جني أرباح أولية للمؤسسات)
+                    tp2 = highest_high + (diff * 0.272)
+                    # الهدف الثالث: النسبة الذهبية 1.618 (الهدف الأقصى للانفجار السعري)
+                    tp3 = highest_high + (diff * 0.618)
+                    # وقف الخسارة: تحت مستوى 0.786 (إذا كسر هذا المستوى، التحليل تلغى)
+                    stop_loss = lowest_low + (diff * 0.214)  # تعادل مستوى 0.786 من الأعلى
+                    
+                    # مناطق الدخول المحسنة بناءً على الفيبوناتشي
+                    discount_zone = lowest_low + (diff * 0.382)  # منطقة 0.382 للشراء
+                    golden_zone_low = lowest_low + (diff * 0.618)  # المنطقة الذهبية 0.618
+                    golden_zone_high = lowest_low + (diff * 0.786)  # المنطقة الذهبية 0.786
+                    
+                else:  # في حالة الهبوط (DOWN)
                     entry_price = current_price
-                    tp1 = fib_618 if fib_618 < current_price else current_price - (highest_high - lowest_low) * 0.236
-                    tp2 = lowest_low
-                    tp3 = lowest_low - (highest_high - lowest_low) * 0.272
-                    stop_loss = highest_high + (highest_high - lowest_low) * 0.1
+                    # الهدف الأول: القاع السابق
+                    tp1 = lowest_low
+                    # الهدف الثاني: امتداد 1.272 للأسفل
+                    tp2 = lowest_low - (diff * 0.272)
+                    # الهدف الثالث: النسبة الذهبية 1.618 للأسفل
+                    tp3 = lowest_low - (diff * 0.618)
+                    # وقف الخسارة: فوق مستوى 0.786 للموجة الهابطة
+                    stop_loss = highest_high - (diff * 0.214)  # تعادل مستوى 0.786 من الأسفل
+                    
+                    # مناطق الدخول المحسنة بناءً على الفيبوناتشي
+                    premium_zone = highest_high - (diff * 0.382)  # منطقة 0.382 للبيع
+                    golden_zone_low = highest_high - (diff * 0.786)  # المنطقة الذهبية 0.786
+                    golden_zone_high = highest_high - (diff * 0.618)  # المنطقة الذهبية 0.618
+                
+                # حساب نسبة المخاطرة إلى المكافأة (Risk/Reward Ratio)
+                risk = abs(entry_price - stop_loss)
+                reward_1 = abs(tp1 - entry_price)
+                reward_2 = abs(tp2 - entry_price)
+                reward_3 = abs(tp3 - entry_price)
+                
+                rr_ratio_1 = reward_1 / risk if risk > 0 else 0
+                rr_ratio_2 = reward_2 / risk if risk > 0 else 0
+                rr_ratio_3 = reward_3 / risk if risk > 0 else 0
+                
+                # تحديد مستوى جودة الصفقة بناءً على نسبة المخاطرة
+                if rr_ratio_3 >= 3:
+                    trade_quality = "💎 ممتازة - نسبة مخاطرة 1:3+"
+                elif rr_ratio_2 >= 2:
+                    trade_quality = "✅ جيدة - نسبة مخاطرة 1:2"
+                elif rr_ratio_1 >= 1.5:
+                    trade_quality = "🟡 مقبولة - نسبة مخاطرة 1:1.5"
+                else:
+                    trade_quality = "⚠️ منخفضة - نسبة مخاطرة أقل من 1:1.5"
                 
                 # ========== بناء النتيجة النهائية بالتنسيق الاحترافي ==========
                 golden_window_status = "✅ داخل النافذة الذهبية" if in_golden_window else "❌ خارج النافذة الذهبية"
@@ -3057,27 +3099,41 @@ FIB_LEVEL_0786: [السعر - مستوى 0.786]
                 else:
                     zone_color = "🟡 توازن - انتظر"
                 
+                # تحديد نقطة الدخول المثالية بناءً على المنطقة
+                if current_direction == "UP" and position_zone == "DISCOUNT":
+                    ideal_entry = f"{golden_zone_low:.5f} - {golden_zone_high:.5f} (المنطقة الذهبية)"
+                elif current_direction == "DOWN" and position_zone == "PREMIUM":
+                    ideal_entry = f"{golden_zone_high:.5f} - {golden_zone_low:.5f} (المنطقة الذهبية)"
+                else:
+                    ideal_entry = f"{entry_price:.5f} (السعر الحالي)"
+                
                 # بناء النتيجة
                 full_result = f"""
-🛡️ **Obeida Trading V8.5 Pro**
+🛡️ **Obeida Trading V8.5 Pro | Target Optimization**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📊 **حالة السوق:**
 • الاتجاه الرئيسي: {market_color}
 • منطقة السعر: {zone_color}
 • قوة الزخم: {breakout_force:.2f}x
+• جودة الصفقة: {trade_quality}
 
 🎯 **قرار الخوارزمية:**
 {decision['decision']}
 • الثقة: {decision.get('confidence', 0)}% {decision.get('confidence_level', '')}
 • السبب: {decision['reason']}
 
-📍 **تفاصيل القنص (Sniper Entry):**
-• نقطة الدخول: {entry_price:.5f}
-• الهدف 1 (TP1): {tp1:.5f}
-• الهدف 2 (TP2): {tp2:.5f}
-• الهدف 3 (TP3): {tp3:.5f}
-• وقف الخسارة (SL): {stop_loss:.5f}
+📍 **منطقة القنص المثالية (Sniper Zone):**
+• الدخول المثالي: {ideal_entry}
+• نوع الدخول: {decision.get('entry_type', 'STANDARD')}
+
+🎯 **الأهداف الربحية (Fibonacci Expansion):**
+• TP1 (القمة/القاع): {tp1:.5f} | RR: 1:{rr_ratio_1:.1f}
+• TP2 (امتداد 1.272): {tp2:.5f} | RR: 1:{rr_ratio_2:.1f}
+• TP3 (النسبة الذهبية 1.618): {tp3:.5f} | RR: 1:{rr_ratio_3:.1f}
+
+🛑 **وقف الخسارة (Stop Loss):**
+• {stop_loss:.5f} | الخسارة القصوى: {risk:.5f} نقطة
 
 📈 **المؤشرات الفنية:**
 • نسبة جسم الشمعة: {candle_body_ratio*100:.0f}%
