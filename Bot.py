@@ -2583,8 +2583,8 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         wait_msg = await update.message.reply_text("🤔 انتظار قليلآ جاري تحليل الصورة 🤌...")
         
-        # تحسين ضغط الصورة - الحفاظ على جودة الأرقام
-        compressed_path = compress_image(image_path, quality=95)
+        # تصحيح: إزالة الباراميتر 'maintain_aspect'
+        compressed_path = compress_image(image_path, quality=90)
         base64_img = encode_image(compressed_path)
         
         if not base64_img:
@@ -2597,7 +2597,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         current_minute = current_time.minute
         current_second = current_time.second
         
-        # ========== حساب الوقت المنقضي والمتبقي بدقة (v1.0) ==========
+        # ========== حساب الوقت المنقضي والمتبقي ==========
         seconds_remaining = 0
         candle_seconds_total = 0
         seconds_passed = 0
@@ -2680,7 +2680,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             time_warning_type = "GOOD"
             time_warning_message = f"✅ **توقيت ممتاز:** داخل النافذة الذهبية"
 
-        # ========== v1.0: حساب مستويات Fibonacci (Dynamic TP/SL) ==========
+        # ========== حساب مستويات Fibonacci ==========
         def calculate_fibonacci_levels(high_price, low_price, direction):
             """حساب مستويات فيبوناتشي الدقيقة للموجة الحالية"""
             diff = abs(high_price - low_price)
@@ -2705,7 +2705,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 
             return {k: round(v, 6) for k, v in levels.items()}
         
-        # ========== v1.0: توقيت السيولة العالمي ==========
+        # ========== توقيت السيولة العالمي ==========
         def get_session_liquidity(current_hour):
             """تحديد جلسة التداول الحالية"""
             if 8 <= current_hour < 16:
@@ -2732,22 +2732,16 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             else:
                 return "0%", "🔴 انتظر - لا تدخل"
         
-        # ========== دالة القرار الموحدة V8.5 (Anti-Trap - لجميع الأسواق) ==========
+        # ========== دالة القرار الموحدة V8.5 ==========
         def get_success_driven_decision_v8_5(current_price, fib_levels, current_direction, 
                                              momentum_boost, in_golden_window, breakout_force, 
                                              candle_body_ratio, has_fvg, liquidity_sweep=False):
-            """
-            الدالة الموحدة لاتخاذ القرار - تعتمد على الهندسة السعرية وليس التوقعات
-            تمنع فخاخ السيولة تلقائياً لجميع الأسواق
-            """
             
-            # 1. حساب المناطق الجوهرية (ثابت لجميع العملات)
             fib_500 = fib_levels.get("0.500", 0)
             is_in_discount = current_price < fib_500 if fib_500 > 0 else False
             is_in_premium = current_price > fib_500 if fib_500 > 0 else False
             
-            # 2. قفل الأمان المؤسساتي (المسؤول عن منع أخطاء الهبوط القوي)
-            # إذا كان السعر في "القاع" (Discount) والاتجاه "هابط"، يمنع البيع منعاً باتاً
+            # قفل الأمان المؤسساتي
             if current_direction == "DOWN" and is_in_discount:
                 return {
                     "decision": "LIQUIDITY_TRAP 🚨🔴",
@@ -2762,7 +2756,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                     "position_advice": "🚫 ممنوع البيع - انتظر تصحيح للشراء"
                 }
 
-            # إذا كان السعر في "القمة" (Premium) والاتجاه "صاعد"، يمنع الشراء منعاً باتاً
             if current_direction == "UP" and is_in_premium:
                 return {
                     "decision": "LIQUIDITY_TRAP 🚨🟢",
@@ -2776,9 +2769,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                     "position_size": "0%",
                     "position_advice": "🚫 ممنوع الشراء - انتظر تصحيح للبيع"
                 }
-
-            # 3. منطق الدخول الذكي (Execution)
-            # حساب نقاط الثقة
+            
             confidence = 0
             conditions_met = []
             
@@ -2805,7 +2796,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 confidence += 20
                 conditions_met.append("✅ سحب سيولة مؤكد")
             
-            # قرار البيع الصحيح (من منطقة غالية - Premium)
             if current_direction == "DOWN" and is_in_premium and breakout_force > 1.2:
                 final_confidence = min(100, confidence + 30)
                 pos_size, pos_advice = calculate_position_size(final_confidence)
@@ -2822,7 +2812,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                     "position_advice": pos_advice
                 }
 
-            # قرار الشراء الصحيح (من منطقة رخيصة - Discount)
             if current_direction == "UP" and is_in_discount and breakout_force > 1.2:
                 final_confidence = min(100, confidence + 30)
                 pos_size, pos_advice = calculate_position_size(final_confidence)
@@ -2839,7 +2828,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                     "position_advice": pos_advice
                 }
             
-            # حالة انتظار - السعر في منطقة توازن
             pos_size, pos_advice = calculate_position_size(confidence)
             return {
                 "decision": "HOLD 🟡",
@@ -2854,7 +2842,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 "position_advice": pos_advice
             }
         
-        # ========== الـ MAIN_PROMPT الموحد (النسخة النهائية لجميع الأسواق) ==========
+        # ========== الـ MAIN_PROMPT ==========
         MAIN_PROMPT = f"""
 أنت الآن المحرك التحليلي لنظام Obeida Trading. مهمتك هي استخراج "المعطيات الخام" من الصورة بدقة رياضية لتغذية خوارزمية القرار.
 
@@ -2873,19 +2861,17 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 **3. كشف الفجوات والسيولة (SMC Detection):**
    - **FVG (Fair Value Gap):** هل توجد فجوة سعرية لم يتم غلقها بين شمعتين؟ [True / False]
    - **Liquidity Sweep:** هل اخترق السعر القمة/القاع بذيل طويل ثم عاد للداخل؟ [True / False]
-   - **MSB (Market Structure Break):** هل تم كسر هيكل السوق (قمة سابقة أو قاع سابق)؟
 
-**4. تحديد التمركز السعري (Positioning) - الأهم:**
+**4. تحديد التمركز السعري (Positioning):**
    - احسب مستوى **0.500** (منتصف المسافة) بين القمة والقاع المستخرجين
    - صنف مكان السعر الحالي بالنسبة لمستوى 0.500:
-     * إذا كان السعر **فوق 0.500** والاتجاه **هابط** -> المنطقة = **PREMIUM** (منطقة بيع مثالية)
-     * إذا كان السعر **تحت 0.500** والاتجاه **صاعد** -> المنطقة = **DISCOUNT** (منطقة شراء مثالية)
-     * إذا كان السعر **فوق 0.500** والاتجاه **صاعد** -> المنطقة = **TRAP_ZONE** (منطقة خطر للشراء)
-     * إذا كان السعر **تحت 0.500** والاتجاه **هابط** -> المنطقة = **TRAP_ZONE** (منطقة خطر للبيع)
+     * إذا كان السعر **فوق 0.500** والاتجاه **هابط** -> المنطقة = **PREMIUM**
+     * إذا كان السعر **تحت 0.500** والاتجاه **صاعد** -> المنطقة = **DISCOUNT**
+     * إذا كان السعر **فوق 0.500** والاتجاه **صاعد** -> المنطقة = **TRAP_ZONE**
+     * إذا كان السعر **تحت 0.500** والاتجاه **هابط** -> المنطقة = **TRAP_ZONE**
 
-**5. التحقق من جودة الصورة (OCR Validation):**
-   - إذا كان شريط الأسعار الجانبي غير مرئي أو غير واضح، أو لم تتمكن من قراءة الأسعار بدقة:
-     * أرسل: "INVALID_IMAGE_ERROR - شريط الأسعار غير واضح"
+**5. التحقق من جودة الصورة:**
+   - إذا كان شريط الأسعار الجانبي غير واضح، أرسل: "INVALID_IMAGE_ERROR"
 
 📊 **بيانات المرجع:**
 - إطار الشموع: {candle}
@@ -2895,36 +2881,27 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 ⚠️ **تحذير الوقت:** {time_warning_message}
 🌍 **جلسة التداول:** {session_message}
 
-🎯 **التنسيق المطلوب للإجابة (بدقة متناهية - أخرج الأرقام فقط):**
+🎯 **التنسيق المطلوب:**
 
 [START_DATA]
 HIGHEST_HIGH: [السعر]
 LOWEST_LOW: [السعر]
 CURRENT_PRICE: [السعر]
 CURRENT_DIRECTION: [UP/DOWN]
-BREAKOUT_FORCE: [الرقم - مثال: 1.35]
-CANDLE_BODY_RATIO: [الرقم - مثال: 0.75]
+BREAKOUT_FORCE: [الرقم]
+CANDLE_BODY_RATIO: [الرقم]
 HAS_FVG: [True/False]
 HAS_LIQUIDITY_SWEEP: [True/False]
-HAS_MSB: [True/False]
 POSITION_ZONE: [PREMIUM/DISCOUNT/TRAP_ZONE/EQUILIBRIUM]
-FIB_LEVEL_0500: [السعر - مستوى 0.500]
-FIB_LEVEL_0618: [السعر - مستوى 0.618]
-FIB_LEVEL_0786: [السعر - مستوى 0.786]
+FIB_LEVEL_0500: [السعر]
 [END_DATA]
-
-**ملاحظات مهمة:**
-1. اقرأ الأسعار بدقة من الشارت - لا تتخيل أرقاماً
-2. إذا رأيت فجوة سعرية واضحة، حدد HAS_FVG = True
-3. إذا رأيت ذيلاً طويلاً اخترق القمة/القاع ثم عاد، حدد HAS_LIQUIDITY_SWEEP = True
-4. إذا كانت الصورة غير واضحة أو شريط الأسعار مقطوع، أرسل INVALID_IMAGE_ERROR
 """
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         
         GENERATION_CONFIG = {
-            "max_tokens": 800,
-            "temperature": 0.0,  # صفر للإجابة الدقيقة والمنطقية
+            "max_tokens": 600,  # تقليل عدد التوكنات لتسريع الاستجابة
+            "temperature": 0.0,
             "top_p": 1.0,
             "random_seed": 42
         }
@@ -2936,7 +2913,7 @@ FIB_LEVEL_0786: [السعر - مستوى 0.786]
                     "role": "user", 
                     "content": [
                         {"type": "text", "text": MAIN_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "high"}}
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}", "detail": "low"}}  # تغيير high إلى low لتسريع المعالجة
                     ]
                 }
             ],
@@ -2951,7 +2928,8 @@ FIB_LEVEL_0786: [السعر - مستوى 0.786]
                 parse_mode="Markdown"
             )
         
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
+        # زيادة timeout إلى 120 ثانية
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=120)
         
         if response.status_code != 200:
             print(f"خطأ: {response.status_code}")
@@ -2961,7 +2939,6 @@ FIB_LEVEL_0786: [السعر - مستوى 0.786]
         analysis_result = response.json()['choices'][0]['message']['content'].strip()
         
         # ========== معالجة البيانات المستخرجة ==========
-        # التحقق من صحة الصورة
         if "INVALID_IMAGE_ERROR" in analysis_result:
             await wait_msg.edit_text(
                 "⚠️ **عذراً، لم أتمكن من تحديد أبعاد الشارت بدقة**\n\n"
@@ -2970,7 +2947,6 @@ FIB_LEVEL_0786: [السعر - مستوى 0.786]
             )
             return "⚠️ صورة غير واضحة"
         
-        # استخراج البيانات من تنسيق [START_DATA] ... [END_DATA]
         import re
         data_pattern = r'\[START_DATA\](.*?)\[END_DATA\]'
         match = re.search(data_pattern, analysis_result, re.DOTALL)
@@ -2984,7 +2960,6 @@ FIB_LEVEL_0786: [السعر - مستوى 0.786]
                     key, value = line.split(':', 1)
                     extracted_data[key.strip()] = value.strip()
             
-            # بناء كائن البيانات للتحليل
             try:
                 highest_high = float(extracted_data.get('HIGHEST_HIGH', 0))
                 lowest_low = float(extracted_data.get('LOWEST_LOW', 0))
@@ -2995,18 +2970,10 @@ FIB_LEVEL_0786: [السعر - مستوى 0.786]
                 has_fvg = extracted_data.get('HAS_FVG', 'False') == 'True'
                 has_liquidity_sweep = extracted_data.get('HAS_LIQUIDITY_SWEEP', 'False') == 'True'
                 fib_500 = float(extracted_data.get('FIB_LEVEL_0500', 0))
-                fib_618 = float(extracted_data.get('FIB_LEVEL_0618', 0))
-                fib_786 = float(extracted_data.get('FIB_LEVEL_0786', 0))
                 position_zone = extracted_data.get('POSITION_ZONE', 'EQUILIBRIUM')
                 
-                # بناء مستويات فيبوناتشي
-                fib_levels = {
-                    "0.500": fib_500,
-                    "0.618": fib_618,
-                    "0.786": fib_786
-                }
+                fib_levels = {"0.500": fib_500}
                 
-                # التحقق من صحة البيانات
                 if highest_high <= lowest_low:
                     await wait_msg.edit_text(
                         "⚠️ **خطأ في قراءة البيانات**\n\n"
@@ -3015,7 +2982,6 @@ FIB_LEVEL_0786: [السعر - مستوى 0.786]
                     )
                     return "⚠️ بيانات غير صالحة"
                 
-                # استدعاء دالة القرار الموحدة
                 decision = get_success_driven_decision_v8_5(
                     current_price=current_price,
                     fib_levels=fib_levels,
@@ -3028,162 +2994,71 @@ FIB_LEVEL_0786: [السعر - مستوى 0.786]
                     liquidity_sweep=has_liquidity_sweep
                 )
                 
-                # ========== حساب مستويات الهدف ووقف الخسارة (النسخة المطورة - Target Optimization) ==========
-                # حساب الفرق السعري (النطاق)
+                # حساب الأهداف باستخدام النسبة الذهبية
                 diff = highest_high - lowest_low
                 
                 if current_direction == "UP":
                     entry_price = current_price
-                    # الهدف الأول: القمة السابقة (مضمون بنسبة كبيرة)
                     tp1 = highest_high
-                    # الهدف الثاني: امتداد بسيط 1.272 (منطقة جني أرباح أولية للمؤسسات)
                     tp2 = highest_high + (diff * 0.272)
-                    # الهدف الثالث: النسبة الذهبية 1.618 (الهدف الأقصى للانفجار السعري)
                     tp3 = highest_high + (diff * 0.618)
-                    # وقف الخسارة: تحت مستوى 0.786 (إذا كسر هذا المستوى، التحليل تلغى)
-                    stop_loss = lowest_low + (diff * 0.214)  # تعادل مستوى 0.786 من الأعلى
-                    
-                    # مناطق الدخول المحسنة بناءً على الفيبوناتشي
-                    discount_zone = lowest_low + (diff * 0.382)  # منطقة 0.382 للشراء
-                    golden_zone_low = lowest_low + (diff * 0.618)  # المنطقة الذهبية 0.618
-                    golden_zone_high = lowest_low + (diff * 0.786)  # المنطقة الذهبية 0.786
-                    
-                else:  # في حالة الهبوط (DOWN)
+                    stop_loss = lowest_low + (diff * 0.214)
+                else:
                     entry_price = current_price
-                    # الهدف الأول: القاع السابق
                     tp1 = lowest_low
-                    # الهدف الثاني: امتداد 1.272 للأسفل
                     tp2 = lowest_low - (diff * 0.272)
-                    # الهدف الثالث: النسبة الذهبية 1.618 للأسفل
                     tp3 = lowest_low - (diff * 0.618)
-                    # وقف الخسارة: فوق مستوى 0.786 للموجة الهابطة
-                    stop_loss = highest_high - (diff * 0.214)  # تعادل مستوى 0.786 من الأسفل
-                    
-                    # مناطق الدخول المحسنة بناءً على الفيبوناتشي
-                    premium_zone = highest_high - (diff * 0.382)  # منطقة 0.382 للبيع
-                    golden_zone_low = highest_high - (diff * 0.786)  # المنطقة الذهبية 0.786
-                    golden_zone_high = highest_high - (diff * 0.618)  # المنطقة الذهبية 0.618
+                    stop_loss = highest_high - (diff * 0.214)
                 
-                # حساب نسبة المخاطرة إلى المكافأة (Risk/Reward Ratio)
+                # حساب نسبة المخاطرة
                 risk = abs(entry_price - stop_loss)
-                reward_1 = abs(tp1 - entry_price)
-                reward_2 = abs(tp2 - entry_price)
-                reward_3 = abs(tp3 - entry_price)
+                rr_ratio_3 = abs(tp3 - entry_price) / risk if risk > 0 else 0
                 
-                rr_ratio_1 = reward_1 / risk if risk > 0 else 0
-                rr_ratio_2 = reward_2 / risk if risk > 0 else 0
-                rr_ratio_3 = reward_3 / risk if risk > 0 else 0
-                
-                # تحديد مستوى جودة الصفقة بناءً على نسبة المخاطرة
                 if rr_ratio_3 >= 3:
-                    trade_quality = "💎 ممتازة - نسبة مخاطرة 1:3+"
-                elif rr_ratio_2 >= 2:
-                    trade_quality = "✅ جيدة - نسبة مخاطرة 1:2"
-                elif rr_ratio_1 >= 1.5:
-                    trade_quality = "🟡 مقبولة - نسبة مخاطرة 1:1.5"
+                    trade_quality = "💎 ممتازة"
+                elif rr_ratio_3 >= 2:
+                    trade_quality = "✅ جيدة"
                 else:
-                    trade_quality = "⚠️ منخفضة - نسبة مخاطرة أقل من 1:1.5"
+                    trade_quality = "🟡 مقبولة"
                 
-                # ========== بناء النتيجة النهائية بالتنسيق الاحترافي ==========
                 golden_window_status = "✅ داخل النافذة الذهبية" if in_golden_window else "❌ خارج النافذة الذهبية"
-                
-                # تحديد لون اتجاه السوق
                 market_color = "🟢 صاعد" if current_direction == "UP" else "🔴 هابط"
-                zone_color = ""
-                if position_zone == "PREMIUM":
-                    zone_color = "🔴 Premium - بيع فقط"
-                elif position_zone == "DISCOUNT":
-                    zone_color = "🟢 Discount - شراء فقط"
-                elif position_zone == "TRAP_ZONE":
-                    zone_color = "⚠️ منطقة خطر - تجنب"
-                else:
-                    zone_color = "🟡 توازن - انتظر"
                 
-                # تحديد نقطة الدخول المثالية بناءً على المنطقة
-                if current_direction == "UP" and position_zone == "DISCOUNT":
-                    ideal_entry = f"{golden_zone_low:.5f} - {golden_zone_high:.5f} (المنطقة الذهبية)"
-                elif current_direction == "DOWN" and position_zone == "PREMIUM":
-                    ideal_entry = f"{golden_zone_high:.5f} - {golden_zone_low:.5f} (المنطقة الذهبية)"
-                else:
-                    ideal_entry = f"{entry_price:.5f} (السعر الحالي)"
-                
-                # بناء النتيجة
                 full_result = f"""
-🛡️ **Obeida Trading V8.5 Pro | Target Optimization**
+🛡️ **Obeida Trading V8.5 Pro**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 📊 **حالة السوق:**
-• الاتجاه الرئيسي: {market_color}
-• منطقة السعر: {zone_color}
+• الاتجاه: {market_color}
 • قوة الزخم: {breakout_force:.2f}x
 • جودة الصفقة: {trade_quality}
 
-🎯 **قرار الخوارزمية:**
+🎯 **القرار:**
 {decision['decision']}
-• الثقة: {decision.get('confidence', 0)}% {decision.get('confidence_level', '')}
+• الثقة: {decision.get('confidence', 0)}%
 • السبب: {decision['reason']}
 
-📍 **منطقة القنص المثالية (Sniper Zone):**
-• الدخول المثالي: {ideal_entry}
-• نوع الدخول: {decision.get('entry_type', 'STANDARD')}
+📍 **القنص:**
+• الدخول: {entry_price:.5f}
+• TP1: {tp1:.5f}
+• TP2: {tp2:.5f}
+• TP3: {tp3:.5f}
+• وقف الخسارة: {stop_loss:.5f}
 
-🎯 **الأهداف الربحية (Fibonacci Expansion):**
-• TP1 (القمة/القاع): {tp1:.5f} | RR: 1:{rr_ratio_1:.1f}
-• TP2 (امتداد 1.272): {tp2:.5f} | RR: 1:{rr_ratio_2:.1f}
-• TP3 (النسبة الذهبية 1.618): {tp3:.5f} | RR: 1:{rr_ratio_3:.1f}
-
-🛑 **وقف الخسارة (Stop Loss):**
-• {stop_loss:.5f} | الخسارة القصوى: {risk:.5f} نقطة
-
-📈 **المؤشرات الفنية:**
-• نسبة جسم الشمعة: {candle_body_ratio*100:.0f}%
-• وجود FVG: {'✅ نعم' if has_fvg else '❌ لا'}
-• سحب سيولة: {'✅ مؤكد' if has_liquidity_sweep else '❌ غير مؤكد'}
-
-⚠️ **نصيحة الخوارزمية:**
-{decision.get('position_advice', 'انتظر الإشارة الواضحة')}
+⚠️ **نصيحة:**
+{decision.get('position_advice', 'انتظر الإشارة')}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🌍 {session_message}
-⏱️ **بيانات الوقت:**
-• الفريم: {candle}
-• الوقت المنقضي: {seconds_passed} ثانية
-• الوقت المتبقي: {seconds_remaining} ثانية
-• حالة النافذة: {golden_window_status}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⏱️ الوقت: {candle} | {golden_window_status}
 🟢 {current_time.strftime('%H:%M:%S')} UTC
-🤖 **Obeida Trading v8.5 Pro - Institutional Grade**
 """
                 
             except ValueError as e:
-                print(f"خطأ في تحويل البيانات: {e}")
-                # في حالة فشل استخراج البيانات، اعرض التحليل الأصلي
-                full_result = analysis_result + f"""
-━━━━━━━━━━━━━━━
-🌍 **جلسة التداول:** {session_message}
-⏱️ **بيانات الوقت:**
-• الفريم: {candle}
-• الوقت المنقضي: {seconds_passed} ثانية
-• الوقت المتبقي: {seconds_remaining} ثانية
-• حالة النافذة: {"✅ داخل النافذة الذهبية" if in_golden_window else "❌ خارج النافذة الذهبية"}
-━━━━━━━━━━━━━━━
-🟢 {current_time.strftime('%H:%M:%S')} UTC
-🤖 **Obeida Trading v8.5 Pro**
-"""
+                print(f"خطأ في التحويل: {e}")
+                full_result = analysis_result
         else:
-            # إذا لم يتم العثور على تنسيق البيانات، اعرض التحليل الأصلي
-            full_result = analysis_result + f"""
-━━━━━━━━━━━━━━━
-🌍 **جلسة التداول:** {session_message}
-⏱️ **بيانات الوقت:**
-• الفريم: {candle}
-• الوقت المنقضي: {seconds_passed} ثانية
-• الوقت المتبقي: {seconds_remaining} ثانية
-• حالة النافذة: {"✅ داخل النافذة الذهبية" if in_golden_window else "❌ خارج النافذة الذهبية"}
-━━━━━━━━━━━━━━━
-🟢 {current_time.strftime('%H:%M:%S')} UTC
-🤖 **Obeida Trading v8.5 Pro**
-"""
+            full_result = analysis_result
         
         full_result = clean_repeated_text(full_result)
         
@@ -3215,9 +3090,9 @@ FIB_LEVEL_0786: [السعر - مستوى 0.786]
         
     except requests.exceptions.Timeout:
         try:
-            await wait_msg.edit_text("⏱️ تجاوز الوقت المحدد")
+            await wait_msg.edit_text("⏱️ **تجاوز الوقت المحدد للتحليل**\n\nيرجى المحاولة مرة أخرى أو إرسال صورة أقل جودة لتحسين السرعة.", parse_mode="Markdown")
         except:
-            await update.message.reply_text("⏱️ تجاوز الوقت المحدد")
+            await update.message.reply_text("⏱️ تجاوز الوقت المحدد للتحليل")
         return "⏱️ تجاوز الوقت المحدد"
     except Exception as e:
         print(f"❌ خطأ: {traceback.format_exc()}")
