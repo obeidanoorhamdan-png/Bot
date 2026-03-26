@@ -3039,12 +3039,17 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         # حالة الشمعة
         candle_status = "مغلقة" if seconds_remaining <= 0 else f"مفتوحة - الوقت المتبقي: {seconds_remaining} ثانية"
         
-        # تنسيق الأهداف
-        tp1_display = f"{decision['tp1']} - (مستوى 0.500)" if decision['tp1'] != 0 else "غير محدد"
-        tp2_display = f"{decision['tp2']} - (مستوى 0.236)" if decision['tp2'] != 0 else "غير محدد"
-        tp3_display = f"{decision['tp3']} - (مستوى 1.272)" if decision['tp3'] != 0 else "غير محدد"
-        sl_display = f"{decision['sl']} - (أسفل المنطقة الذهبية)" if decision['sl'] != 0 else "غير محدد"
-        entry_display = f"{decision['entry_point']} - ({decision['entry_type_display']})" if decision['entry_point'] != 0 else "غير محدد - انتظر الإشارة"
+        # تحديد مسمى الهدف بناءً على نوع الصفقة (شراء أو بيع)
+        trade_type = "شراء" if decision['entry_type'] == "long" else "بيع"
+
+        tp1_display = f"{decision['tp1']} - (هدف أول: مستوى 0.382)" if decision['tp1'] != 0 else "غير محدد"
+        tp2_display = f"{decision['tp2']} - (هدف ثاني: مستوى 0.618)" if decision['tp2'] != 0 else "غير محدد"
+        tp3_display = f"{decision['tp3']} - (هدف الانفجار: مستوى 1.272)" if decision['tp3'] != 0 else "غير محدد"
+
+# وقف الخسارة مع حماية السيولة
+        sl_display = f"{decision['sl']} - (إغلاق أمان: خلف المنطقة الذهبية)" if decision['sl'] != 0 else "غير محدد"
+
+        entry_display = f"{decision['entry_point']} - (نقطة {trade_type})" if decision['entry_point'] != 0 else "انتظر تأكيد السيولة"
         
         formatted_result = f"""
 📊 **التحليل الفني المتقدم:**
