@@ -2654,50 +2654,52 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 
         in_golden_window = is_in_golden_execution_window(seconds_passed, candle, candle_seconds_total)
         
-        # ========== حساب مستويات Fibonacci المتقدمة ==========
+        # ========== حساب مستويات Fibonacci المتقدمة (المصححة) ==========
         def calculate_fibonacci_levels(high_price, low_price, direction):
             diff = abs(high_price - low_price)
             levels = {}
             
-            if direction == "DOWN":
-                levels["0.236"] = high_price - (diff * 0.236)
-                levels["0.382"] = high_price - (diff * 0.382)
-                levels["0.500"] = high_price - (diff * 0.500)
-                levels["0.618"] = high_price - (diff * 0.618)
-                levels["0.786"] = high_price - (diff * 0.786)
-                levels["0.886"] = high_price - (diff * 0.886)
-                levels["1.000"] = low_price
-                levels["1.272"] = low_price - (diff * 0.272)
-                levels["1.618"] = low_price - (diff * 0.618)
+            # في حالة الشراء (UP): التصحيح لأسفل والأهداف لأعلى
+            if direction == "UP":
+                levels["1.000"] = low_price   # القاع (وقف الخسارة)
+                levels["0.786"] = low_price + (diff * 0.214)  # منطقة دخول عميقة
+                levels["0.618"] = low_price + (diff * 0.382)  # منطقة ارتداد قوية
+                levels["0.500"] = low_price + (diff * 0.500)  # TP1 (توازن)
+                levels["0.236"] = low_price + (diff * 0.764)  # TP2 (القمة القريبة)
+                levels["0.000"] = high_price  # القمة السابقة
+                levels["1.272"] = high_price + (diff * 0.272)  # TP3 (امتداد)
+                levels["1.618"] = high_price + (diff * 0.618)  # هدف بعيد
+            
+            # في حالة البيع (DOWN): التصحيح لأعلى والأهداف لأسفل
             else:
-                levels["0.236"] = low_price + (diff * 0.236)
-                levels["0.382"] = low_price + (diff * 0.382)
-                levels["0.500"] = low_price + (diff * 0.500)
-                levels["0.618"] = low_price + (diff * 0.618)
-                levels["0.786"] = low_price + (diff * 0.786)
-                levels["0.886"] = low_price + (diff * 0.886)
-                levels["1.000"] = high_price
-                levels["1.272"] = high_price + (diff * 0.272)
-                levels["1.618"] = high_price + (diff * 0.618)
+                levels["1.000"] = high_price  # القمة (وقف الخسارة)
+                levels["0.786"] = high_price - (diff * 0.214)  # منطقة دخول عميقة
+                levels["0.618"] = high_price - (diff * 0.382)  # منطقة ارتداد قوية
+                levels["0.500"] = high_price - (diff * 0.500)  # TP1 (توازن)
+                levels["0.236"] = high_price - (diff * 0.764)  # TP2 (القاع القريب)
+                levels["0.000"] = low_price   # القاع السابق
+                levels["1.272"] = low_price - (diff * 0.272)  # TP3 (امتداد)
+                levels["1.618"] = low_price - (diff * 0.618)  # هدف بعيد
                 
             return {k: round(v, 6) for k, v in levels.items()}
         
-        # ========== حساب الأهداف ووقف الخسارة الديناميكي ==========
-        def calculate_trade_parameters(current_price, fib_levels, direction):
-            tp1, tp2, tp3, sl, entry_point = 0, 0, 0, 0, 0
+        # ========== حساب الأهداف ووقف الخسارة الديناميكي (المصحح) ==========
+        def calculate_trade_parameters(current_price, fib_levels, direction, breakout_force):
+            # فحص السيولة الصارم: إذا كان الانفجار ضعيفاً (أقل من 1.2) نلغي TP3
+            liquidity_safety = breakout_force > 1.2
             
             if direction == "UP":
-                entry_point = fib_levels.get("0.786", current_price)
-                sl = fib_levels.get("1.000", current_price) * 0.9998 if fib_levels.get("1.000", 0) > 0 else current_price * 0.998
-                tp1 = fib_levels.get("0.500", current_price)
-                tp2 = fib_levels.get("0.236", current_price)
-                tp3 = fib_levels.get("1.272", current_price)
-            else:
-                entry_point = fib_levels.get("0.786", current_price)
-                sl = fib_levels.get("1.000", current_price) * 1.0002 if fib_levels.get("1.000", 0) > 0 else current_price * 1.002
-                tp1 = fib_levels.get("0.500", current_price)
-                tp2 = fib_levels.get("0.236", current_price)
-                tp3 = fib_levels.get("1.272", current_price)
+                entry_point = current_price  # دخول مباشر
+                sl = fib_levels.get("1.000", current_price * 0.998)  # الوقف تحت القاع
+                tp1 = fib_levels.get("0.500", current_price * 1.01)  # مستوى توازن
+                tp2 = fib_levels.get("0.000", current_price * 1.02)  # الوصول للقمة السابقة
+                tp3 = fib_levels.get("1.272", 0) if liquidity_safety else 0  # لا انفجار بدون سيولة كافية
+            else:  # DOWN
+                entry_point = current_price  # دخول مباشر
+                sl = fib_levels.get("1.000", current_price * 1.002)  # الوقف فوق القمة
+                tp1 = fib_levels.get("0.500", current_price * 0.99)  # مستوى توازن
+                tp2 = fib_levels.get("0.000", current_price * 0.98)  # الوصول للقاع السابق
+                tp3 = fib_levels.get("1.272", 0) if liquidity_safety else 0  # لا انفجار بدون سيولة كافية
 
             return {
                 "entry": round(entry_point, 6),
@@ -2752,8 +2754,8 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                                  in_golden_window, breakout_force, has_fvg, 
                                  fvg_details, has_order_block, candle_type):
             
-            # حساب معاملات الصفقة أولاً
-            trade_params = calculate_trade_parameters(current_price, fib_levels, current_direction)
+            # حساب معاملات الصفقة أولاً مع تمرير breakout_force
+            trade_params = calculate_trade_parameters(current_price, fib_levels, current_direction, breakout_force)
             trade_expiry = calculate_trade_expiry(candle_type)
             
             # تحديد مناطق السعر
@@ -2788,7 +2790,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             
             # تحديد نوع الدخول
             entry_type_display = "دخول معلق"
-            if in_golden_window and (is_in_discount and current_direction == "UP") or (is_in_premium and current_direction == "DOWN"):
+            if in_golden_window and ((is_in_discount and current_direction == "UP") or (is_in_premium and current_direction == "DOWN")):
                 entry_type_display = "دخول مباشر 🚨"
             
             # تحديد القرار الفني
@@ -3039,17 +3041,17 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         # حالة الشمعة
         candle_status = "مغلقة" if seconds_remaining <= 0 else f"مفتوحة - الوقت المتبقي: {seconds_remaining} ثانية"
         
-        # تحديد مسمى الهدف بناءً على نوع الصفقة (شراء أو بيع)
-        trade_type = "شراء" if decision['entry_type'] == "long" else "بيع"
-
-        tp1_display = f"{decision['tp1']} - (هدف أول: مستوى 0.382)" if decision['tp1'] != 0 else "غير محدد"
-        tp2_display = f"{decision['tp2']} - (هدف ثاني: مستوى 0.618)" if decision['tp2'] != 0 else "غير محدد"
-        tp3_display = f"{decision['tp3']} - (هدف الانفجار: مستوى 1.272)" if decision['tp3'] != 0 else "غير محدد"
-
-# وقف الخسارة مع حماية السيولة
-        sl_display = f"{decision['sl']} - (إغلاق أمان: خلف المنطقة الذهبية)" if decision['sl'] != 0 else "غير محدد"
-
-        entry_display = f"{decision['entry_point']} - (نقطة {trade_type})" if decision['entry_point'] != 0 else "انتظر تأكيد السيولة"
+        # تنسيق الأهداف المصحح للبيع والشراء
+        tp1_label = "🎯 TP1 (توازن 0.500)"
+        tp2_label = "🎯 TP2 (القمة/القاع 0.000)"
+        tp3_label = "🚀 TP3 (انفجار 1.272)"
+        
+        tp1_display = f"{decision['tp1']} - {tp1_label}" if decision['tp1'] != 0 else "غير محدد"
+        tp2_display = f"{decision['tp2']} - {tp2_label}" if decision['tp2'] != 0 else "غير محدد"
+        tp3_display = f"{decision['tp3']} - {tp3_label}" if decision['tp3'] != 0 else "🚫 سيولة غير كافية للانفجار"
+        
+        sl_display = f"{decision['sl']} - (حماية خلف الهيكل)" if decision['sl'] != 0 else "غير محدد"
+        entry_display = f"{decision['entry_point']} - ({decision['entry_type_display']})" if decision['entry_point'] != 0 else "غير محدد - انتظر الإشارة"
         
         formatted_result = f"""
 📊 **التحليل الفني المتقدم:**
@@ -3071,9 +3073,9 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • **نوع الدخول 🚨:** {decision['entry_type_display']}
 
 • **الأهداف الربحية:**
-  🎯 TP1: {tp1_display}
-  🎯 TP2: {tp2_display}
-  🎯 TP3: {tp3_display}
+  {tp1_display}
+  {tp2_display}
+  {tp3_display}
 
 • **وقف الخسارة:** {sl_display}
 • **المدة المتوقعة:** {decision['trade_duration']}
@@ -3108,8 +3110,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 await wait_msg.edit_text(full_result, parse_mode="Markdown")
         except Exception as e:
             await wait_msg.edit_text(full_result)
-        
-        save_analysis_context(user_id, full_result)
         
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
