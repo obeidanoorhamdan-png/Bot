@@ -32,6 +32,7 @@ MISTRAL_MODEL = "pixtral-large-latest"
 DB_NAME = "abood-gpt.db"
 BACKUP_DIR = "backups"
 SUBSCRIPTION_DB_NAME = "subscription_system.db"
+NEWS_RADAR_DB = "news_radar.db"
 DATA_VERSION = "2.1.0"
 
 ADMIN_ID = 6207431030
@@ -50,6 +51,153 @@ IMAGE_CACHE_DIR = "image_cache"
 for directory in [IMAGE_CACHE_DIR, BACKUP_DIR]:
     if not os.path.exists(directory):
         os.makedirs(directory)
+
+# ============================================
+# نظام رادار الأخبار
+# ============================================
+class ObeidaNewsRadar:
+    def __init__(self, bot_token: str):
+        self.bot_token = bot_token
+        self.chat_group_id = '-1003449363659'  # معرف المجموعة/القناة
+        self.db_name = NEWS_RADAR_DB
+        self.processed_news: Set[str] = set()
+        self.init_db()
+        self.load_processed_news()
+        print("📡 نظام رادار Obeida Trading قيد التشغيل...")
+
+    CURRENCY_MAP = {
+        "دولار": "USD 🇺🇸", "يورو": "EUR 🇪🇺", "إسترليني": "GBP 🇬🇧",
+        "ين": "JPY 🇯🇵", "فرنك": "CHF 🇨🇭", "كندي": "CAD 🇨🇦",
+        "أسترالي": "AUD 🇦🇺", "نيوزيلندي": "NZD 🇳🇿", "ذهب": "XAU 🟡",
+        "فضة": "XAG ⚪", "نفط": "OIL 🛢️", "بتكوين": "BTC ₿",
+        "إيثريوم": "ETH 💎", "مؤشر": "INDEX 📊", "فوركس": "FOREX 💱"
+    }
+
+    def init_db(self):
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sent_news (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guid TEXT UNIQUE,
+                title TEXT,
+                link TEXT,
+                published TEXT,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                currency_tag TEXT,
+                chat_id TEXT
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
+    def load_processed_news(self):
+        try:
+            conn = sqlite3.connect(self.db_name)
+            cursor = conn.cursor()
+            cursor.execute("SELECT guid FROM sent_news ORDER BY id DESC LIMIT 200")
+            rows = cursor.fetchall()
+            for row in rows:
+                self.processed_news.add(row[0])
+            conn.close()
+            print(f"📊 تم تحميل {len(self.processed_news)} خبر سابق")
+        except Exception as e:
+            print(f"⚠️ خطأ في تحميل الأخبار السابقة: {e}")
+
+    def get_currency_tag(self, title: str) -> str:
+        title_lower = title.lower()
+        tags = []
+        for currency, tag in self.CURRENCY_MAP.items():
+            if currency in title_lower:
+                tags.append(tag)
+        
+        if tags:
+            return " ".join(tags[:3])  # حد أقصى 3 علامات
+        return "#سوق_عام 🌐"
+
+    def send_telegram_message(self, chat_id: str, text: str) -> bool:
+        url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id, 
+            "text": text, 
+            "parse_mode": "HTML", 
+            "disable_web_page_preview": False
+        }
+        try:
+            response = requests.post(url, data=payload, timeout=10)
+            return response.status_code == 200
+        except Exception as e:
+            print(f"⚠️ خطأ في إرسال الخبر: {e}")
+            return False
+
+    async def process_news(self):
+        """جلب الأخبار من مصادر متعددة"""
+        try:
+            rss_urls = [
+                'https://sa.investing.com/rss/news.rss',
+                'https://sa.investing.com/rss/economic_calendar.rss',
+                'https://sa.investing.com/rss/forex_news.rss',
+                'https://sa.investing.com/rss/commodities_news.rss',
+            ]
+            headers = {'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'ar-SA,ar;q=0.9'}
+            all_news = {}
+            
+            for rss_url in rss_urls:
+                try:
+                    response = requests.get(rss_url, headers=headers, timeout=15)
+                    if response.status_code != 200:
+                        continue
+                    feed = feedparser.parse(response.content)
+                    for news in feed.entries[:10]:
+                        news_id = news.get('id', news.get('guid', news.title.strip()))
+                        if news_id not in self.processed_news and news_id not in all_news:
+                            all_news[news_id] = news
+                except Exception as e:
+                    print(f"⚠️ خطأ في جلب الأخبار من {rss_url}: {e}")
+                    continue
+            
+            for news_id, news in all_news.items():
+                currency_tag = self.get_currency_tag(news.title)
+                
+                # تنسيق الرسالة
+                message_text = (
+                    f"📰 <b>🚨 خبر اقتصادي جديد:</b>\n\n"
+                    f"<b>{news.title}</b>\n\n"
+                    f"💰 <b>العملات المتأثرة:</b> {currency_tag}\n\n"
+                    f"━━━━━━━━━━━━━\n"
+                    f"⚡ <b>للتحليل الفوري:</b> @ObeidaTrading\n"
+                    f"💬 <b>مناقشة الأخبار:</b> @ObeidaTradingchat\n"
+                    f"📅 <b>الوقت:</b> {datetime.now().strftime('%H:%M:%S')} UTC"
+                )
+                
+                # إرسال إلى المجموعة
+                self.send_telegram_message(self.chat_group_id, message_text)
+                
+                # حفظ في قاعدة البيانات
+                conn = sqlite3.connect(self.db_name)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO sent_news (guid, title, link, published, currency_tag, chat_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (news_id, news.title, news.get('link', ''), news.get('published', ''), currency_tag, self.chat_group_id))
+                conn.commit()
+                conn.close()
+                
+                self.processed_news.add(news_id)
+                await asyncio.sleep(2)  # تأخير بين الأخبار
+                
+        except Exception as e:
+            print(f"❌ خطأ في رادار الأخبار: {e}")
+
+    async def start_radar(self):
+        """تشغيل الرادار بشكل مستمر"""
+        print("📡 رادار الأخبار يعمل...")
+        while True:
+            try:
+                await self.process_news()
+            except Exception as e:
+                print(f"❌ خطأ في الرادار: {e}")
+            await asyncio.sleep(30)  # تحديث كل 30 ثانية
 
 # ============================================
 # نظام الاشتراكات والمتجر
@@ -165,17 +313,14 @@ class SubscriptionSystem:
         if not user:
             return False, 'غير مسجل', {'free_analyses': 3}
         
-        # التحقق من الاشتراك المدفوع
         if user['subscription_type'] != 'free' and user['subscription_end']:
             end_date = datetime.fromisoformat(user['subscription_end'])
             if end_date > datetime.now():
                 return True, user['subscription_type'], user
         
-        # التحقق من التسجيل في الوكالة
         if user['affiliate_verified']:
             return True, 'وكالة', user
         
-        # التحقق من التحليلات المجانية
         if user['free_analyses'] > 0:
             return True, 'مجاني', user
         
@@ -500,9 +645,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 **Powered by Obeida Trading**"
     )
     
-    # تحديد الأزرار حسب حالة المستخدم فقط
     if status:
-        # المستخدم مسجل أو مشترك - تظهر جميع الأزرار
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
             ["🔔 تنبيه بدء جلسة", "👤 معلوماتي"],
@@ -512,7 +655,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id == ADMIN_ID:
             keyboard.append(["👑 لوحة التحكم"])
     else:
-        # المستخدم غير مسجل - تظهر أزرار محدودة فقط (بدون تحليل)
         keyboard = [
             ["👤 معلوماتي"],
             ["🔔 تنبيه بدء جلسة", "🛒 المتجر"],
@@ -575,7 +717,6 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_message == "📝 تسجيل الوكالة":
         return await affiliate_registration_menu(update, context)
     
-    # هذه الأزرار تظهر فقط للمستخدمين المسجلين/المشتركين
     if status:
         if user_message == "⚙️ إعدادات التحليل":
             keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
@@ -602,7 +743,6 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return ANALYZE_MODE
     else:
-        # إذا حاول المستخدم الضغط على أزرار غير مسموحة
         if user_message in ["⚙️ إعدادات التحليل", "📊 تحليل صورة"]:
             await update.message.reply_text(
                 "⚠️ **ليس لديك صلاحية للتحليل** ⚠️\n\n"
@@ -825,7 +965,6 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # التحقق من الصلاحية قبل التحليل
     status, sub_type, user_data = SubscriptionSystem.check_subscription(user_id)
     
     if not status:
@@ -840,7 +979,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return MAIN_MENU
     
-    # استخدام التحليل
     if not SubscriptionSystem.use_analysis(user_id):
         await update.message.reply_text("❌ حدث خطأ، يرجى المحاولة مرة أخرى", parse_mode="Markdown")
         return MAIN_MENU
@@ -938,7 +1076,6 @@ async def analyze_chart_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         order_block_match = re.search(r'Order Block.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
         positioning_match = re.search(r'التمركز السعري.*?:\s*([A-Z_]+)', analysis_result)
         
-        # استخراج مستويات فيبوناتشي
         fib_levels = {}
         for fib_key in ['0.236', '0.382', '0.500', '0.618', '0.786', '1.272', '1.618']:
             fib_match = re.search(f'مستوى {fib_key}.*?:\s*([\d.]+)', analysis_result)
@@ -953,7 +1090,6 @@ async def analyze_chart_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         current_direction = direction_match.group(1).upper() if direction_match else "UP"
         fib_500 = fib_levels.get("0.500", current_price)
         
-        # حساب نقاط الدخول والخروج
         if current_direction == "UP":
             entry_price = current_price
             tp1 = fib_levels.get("0.500", current_price * 1.005)
@@ -967,7 +1103,6 @@ async def analyze_chart_image(update: Update, context: ContextTypes.DEFAULT_TYPE
             tp3 = fib_levels.get("1.272", current_price * 0.98)
             stop_loss = fib_levels.get("0.618", current_price * 1.005)
         
-        # حساب قوة الإشارة
         if breakout_force > 1.5:
             signal_strength = "عالية جدا 💥"
             confidence = 85
@@ -993,7 +1128,6 @@ async def analyze_chart_image(update: Update, context: ContextTypes.DEFAULT_TYPE
             confidence -= 10
         confidence = min(100, max(0, confidence))
         
-        # تحديد القرار الفني
         if current_direction == "UP":
             if breakout_force > 1.5 and has_fvg:
                 action = "شراء 🟢"
@@ -1030,7 +1164,6 @@ async def analyze_chart_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         await asyncio.sleep(1)
         await wait_msg.edit_text("🤌 جاري تحليل الشارت... [🟩🟩🟩🟩🟩 100%]")
         
-        # بناء النتيجة مع الأهداف
         formatted_result = f"""
 📊 **التحليل الفني المتقدم:**
 • الوقت: {current_time.strftime('%H:%M:%S')} UTC
@@ -1058,12 +1191,10 @@ async def analyze_chart_image(update: Update, context: ContextTypes.DEFAULT_TYPE
 • مستوى الثقة: {confidence:.0f}%
 • نسبة نجاح متوقعة: {"85-95%" if confidence >= 85 else "70-85%" if confidence >= 70 else "55-70%" if confidence >= 55 else "40-55%"}
 • حجم الاستثمار المقترح: {"5%" if confidence >= 85 else "3%" if confidence >= 70 else "2%" if confidence >= 55 else "1%"}
-• نسبة المخاطرة/العائد: 1:2 على الأقل
 """
         
         await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
         
-        # تنظيف الملفات المؤقتة
         if os.path.exists(original_path):
             os.remove(original_path)
         if os.path.exists(compressed_path):
@@ -1427,7 +1558,7 @@ def run_flask():
 # الدالة الرئيسية
 # ============================================
 def main():
-    print("🚀 Starting Obeida Trading Bot...")
+    print("🚀 Starting Obeida Trading Bot with News Radar...")
     init_main_db()
     SubscriptionSystem.init_db()
     
@@ -1436,11 +1567,18 @@ def main():
     
     application = Application.builder().token(TOKEN).build()
     
+    # تشغيل رادار الأخبار
+    news_radar = ObeidaNewsRadar(TOKEN)
+    
+    async def run_radar():
+        await news_radar.start_radar()
+    
     async def run_scheduler():
         await session_alert_scheduler(application)
     
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    loop.create_task(run_radar())
     loop.create_task(run_scheduler())
     
     conv_handler = ConversationHandler(
@@ -1465,7 +1603,8 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     application.add_handler(CallbackQueryHandler(handle_admin_callback, pattern="^aff_"))
     
-    print("✅ Bot is running...")
+    print("✅ Bot is running with News Radar...")
+    print("📡 رادار الأخبار يعمل في الخلفية...")
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
