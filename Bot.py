@@ -1354,11 +1354,15 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
 async def analyze_chart_image(update, context, image_path, candle, trade_time, symbol, user_id):
     try:
         wait_msg = await update.message.reply_text("🤌 جاري تحليل الشارت... [⬜⬜⬜⬜⬜ 0%]")
-        compressed_path = compress_image(image_path)
+        
+        # ضغط الصورة بشكل أقوى لسرعة الرفع
+        compressed_path = compress_image(image_path, quality=70, max_size=(800, 800))
         base64_img = encode_image(compressed_path)
+        
         if not base64_img:
             await wait_msg.edit_text("❌ **خطأ في قراءة الصورة.**\nيرجى إرسال صورة واضحة.")
             return
+            
         current_time = datetime.utcnow()
         current_hour = current_time.hour
         current_minute = current_time.minute
@@ -1382,62 +1386,87 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             
         in_golden_window = 2 <= seconds_passed <= 58
         
+        # تبسيط الـ Prompt لتقليل وقت المعالجة
         MAIN_PROMPT = f"""
-أنت الآن المحرك التحليلي لنظام Obeida Trading. استخرج المعطيات الرقمية من الصورة بدقة.
+أنت المحرك التحليلي لنظام Obeida Trading. استخرج المعطيات الرقمية بدقة.
 
-📊 **بيانات الإطار الزمني:**
-- الفريم: {candle}
-- الوقت المتبقي: {seconds_remaining} ثانية
-- الوقت المنقضي: {seconds_passed} ثانية
+📊 الفريم: {candle}
+⏱️ الوقت المتبقي: {seconds_remaining} ثانية
 
-🎯 **التنسيق المطلوب:**
-📐 **المعطيات الرقمية:**
-• أعلى قمة (HH): [السعر]
-• أدنى قاع (LL): [السعر]
-• السعر الحالي: [السعر]
+📐 المعطيات الرقمية:
+• أعلى قمة (HH): [سعر]
+• أدنى قاع (LL): [سعر]
+• السعر الحالي: [سعر]
 
-⚡ **معطيات الزخم:**
+⚡ معطيات الزخم:
 • قوة الاندفاع: [رقم عشري]
 • اتجاه الموجة: [UP/DOWN]
-• نسبة جسم الشمعة: [0.xx]
 
-📈 **مستويات فيبوناتشي:**
-• مستوى 0.236: [السعر]
-• مستوى 0.382: [السعر]
-• مستوى 0.500: [السعر]
-• مستوى 0.618: [السعر]
-• مستوى 0.786: [السعر]
-• مستوى 1.272: [السعر]
-• مستوى 1.618: [السعر]
+📈 مستويات فيبوناتشي:
+• 0.236: [سعر]
+• 0.382: [سعر]
+• 0.500: [سعر]
+• 0.618: [سعر]
+• 0.786: [سعر]
+• 1.272: [سعر]
+• 1.618: [سعر]
 
-🔍 **معطيات SMC المتقدمة:**
+🔍 معطيات SMC:
 • FVG: [True/False]
-• مستويات FVG: [من X إلى Y] (إذا كانت موجودة)
+• مستويات FVG: [من X إلى Y]
 • Liquidity Sweep: [True/False]
 • Order Block: [True/False]
 • التمركز السعري: [PREMIUM/DISCOUNT/TRAP_ZONE]
 
-⚠️ **تعليمات إضافية:**
-- إذا كان FVG = True، قم بتحديد مستوياته بدقة (من السعر الأدنى إلى الأعلى)
-- حدد التمركز السعري بناءً على مستوى 0.500 فيبوناتشي
+⚠️ رد بالأرقام فقط بدون شرح إضافي.
 """
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         payload = {
             "model": MISTRAL_MODEL,
             "messages": [{"role": "user", "content": [{"type": "text", "text": MAIN_PROMPT}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}]}],
-            "max_tokens": 800, "temperature": 0.0, "top_p": 1.0, "random_seed": 42
+            "max_tokens": 600,  # تقليل من 800 إلى 600
+            "temperature": 0.0,
+            "top_p": 1.0
         }
         
-        # شريط التقدم
-        for i in range(1, 6):
-            await asyncio.sleep(3)
-            progress = i * 20
-            bars = "⬜" * (5 - i) + "🟩" * i
+        # شريط التقدم مع تأخير أقل
+        for i in range(1, 4):  # تقليل من 5 إلى 3 خطوات
+            await asyncio.sleep(2)  # تقليل من 3 إلى 2 ثواني
+            progress = i * 33
+            bars = "⬜" * (3 - i) + "🟩" * i
             await wait_msg.edit_text(f"🤌 جاري تحليل الشارت... [{bars} {progress}%]")
-            
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
-        if response.status_code != 200:
-            await wait_msg.edit_text(f"❌ خطأ: {response.status_code}")
+        
+        # إرسال الطلب مع زيادة المهلة وإعادة المحاولة
+        response = None
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=90)  # زيادة المهلة إلى 90 ثانية
+                if response.status_code == 200:
+                    break
+                elif response.status_code == 429:  # Too Many Requests
+                    await wait_msg.edit_text(f"⚠️ ضغط على الخادم، انتظر قليلاً... المحاولة {attempt + 2}")
+                    await asyncio.sleep(5)
+                    continue
+                else:
+                    break
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    await wait_msg.edit_text(f"⏳ المحاولة {attempt + 2} من {max_retries}...")
+                    await asyncio.sleep(3)
+                    continue
+                else:
+                    raise
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2)
+                    continue
+                else:
+                    raise
+        
+        if not response or response.status_code != 200:
+            error_msg = f"❌ خطأ: {response.status_code if response else 'لا يوجد استجابة'}\nالرجاء المحاولة مرة أخرى."
+            await wait_msg.edit_text(error_msg)
             return
             
         analysis_result = response.json()['choices'][0]['message']['content'].strip()
@@ -1485,7 +1514,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         is_in_discount = current_price < fib_500
         is_in_premium = current_price > fib_500
         
-        # حساب معاملات الصفقة المتقدمة
+        # حساب معاملات الصفقة
         trade_params = calculate_trade_parameters(current_price, fib_levels, current_direction, breakout_force)
         
         # حساب الثقة وقوة الإشارة
@@ -1521,7 +1550,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             golden_window_warning = "\n⚠️ **تنبيه:** أنت خارج النافذة الذهبية (2-58 ثانية) - دقة التحليل أقل"
         
         # حساب وقت الذروة المتوقع
-        peak_time_remaining = seconds_remaining - 3
         peak_time_message = f"خلال الـ {min(3, seconds_remaining)} شموع" if seconds_remaining > 3 else "قريباً جداً"
         
         # بناء النتيجة
@@ -1549,9 +1577,9 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • **نقطة الدخول المقترحة:** {trade_params['entry_price']:.6f}
 • **وقف الخسارة:** {trade_params['stop_loss']:.6f}
 • **الأهداف الربحية:**
-  🎯 TP1 (هدف أول): {trade_params['tp1']:.6f} - اختراق بسيط
-  🎯 TP2 (هدف ثاني): {trade_params['tp2']:.6f} - موجة متوسطة
-  🚀 TP3 (هدف ثالث): {trade_params['tp3']:.6f} - موجة رئيسية
+  🎯 TP1: {trade_params['tp1']:.6f}
+  🎯 TP2: {trade_params['tp2']:.6f}
+  🚀 TP3: {trade_params['tp3']:.6f}
 
 🔍 **معطيات SMC المتقدمة:**
 • **FVG:** {'✅ موجودة' if has_fvg else '❌ غير موجودة'} {fvg_details}
@@ -1569,7 +1597,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 🌍 **جلسة التداول:** {session_message}
 ⏱️ **الفريم:** {candle} | **الوقت المتبقي:** {seconds_remaining} ثانية
 ⏰ **الوقت المنقضي:** {seconds_passed} ثانية
-⚡ **وقت الذروة المتوقع:** {peak_time_message}
+⚡ **وقت الذروة:** {peak_time_message}
 {golden_window_warning}
 🤖 **Obeida Trading Pro v3.0**
 """
@@ -1592,6 +1620,9 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
     except asyncio.CancelledError:
         raise
+    except requests.exceptions.Timeout:
+        await update.message.reply_text("❌ **انتهت مهلة الاتصال بالخادم**\n\nيرجى المحاولة مرة أخرى.\n\n💡 **نصائح:**\n• تأكد من جودة الصورة\n• حاول ضغط الصورة بشكل أكبر\n• أعد المحاولة بعد بضع ثواني")
+        return None
     except Exception as e:
         await update.message.reply_text(f"❌ خطأ: {str(e)[:200]}")
         return None
