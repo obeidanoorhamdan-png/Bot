@@ -11,5 +11,3 @@ pytz
 pytz-deprecation-shim
 psutil
 feedparser
-werkzeug
-nest-asyncio
