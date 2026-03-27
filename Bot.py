@@ -759,153 +759,132 @@ async def check_agency_required(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return False
 
-async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض القائمة الرئيسية بعد تسجيل البلد"""
-    user = update.effective_user
-    user_id = user.id
-    
+async def check_country_required(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_id = update.effective_user.id
     country, _ = AgencySystem.get_user_country(user_id)
     
-    # التحقق من التسجيل في وكالة
-    if not AgencySystem.is_user_registered(user_id) and user_id != ADMIN_ID:
-        return await check_agency_required(update, context)
+    if country:
+        return True
     
-    current_session = get_user_local_session(user_id)
-    local_time = get_localized_time(user_id)
-    
-    welcome_msg = (
-        "🚀 **أهلاً بك في Obeida Trading** 🚀\n\n"
-        f"👤 **مرحباً:** {user.first_name}\n"
-        f"🌍 **بلدك:** {country}\n"
-        f"🕒 **وقتك المحلي:** {local_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"🌐 **الجلسة الحالية:** {current_session['name']}\n"
-        f"📊 **نسبة النجاح:** {current_session['success_rate']}\n\n"
-        "━━━━━━━━━━━━━━━━━━\n\n"
-        "4️⃣ **قراءة النتائج - أنواع القرارات الفنية** 🔍\n\n"
-        "   **🟢 شراء:** السعر صاعد - ادخل مع الاتجاه\n"
-        "   **🔴 بيع:** السعر هابط - ادخل مع الاتجاه\n"
-        "   **💥 كسر هيكلي:** تغير الاتجاه (صاعد ← هابط أو العكس)\n"
-        "   **🔄 سحب سيولة:** عكس مؤقت ثم استمرار الاتجاه الأصلي\n"
-        "   **🔄 انعكاس فوري:** تغير سريع ثم استقرار\n\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🤖 **Powered by Obeida Trading**"
-    )
-    
-    keyboard = [
-        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["📊 معلومات الجلسة", "👤 معلوماتي"],
-        ["🏢 وكالاتي", "🔔 تنبيه الجلسات"],
-        ["🛒 المتجر", "🌍 تغيير البلد"]
-    ]
-    
-    if user_id == ADMIN_ID:
-        keyboard.append(["👑 لوحة التحكم"])
+    countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
+    keyboard = [countries_list[i:i+2] for i in range(0, min(20, len(countries_list)), 2)]
+    keyboard.append(["🔄 تحديث", "❌ إلغاء"])
     
     await update.message.reply_text(
-        welcome_msg,
+        "🌍 **مرحباً بك في Obeida Trading** 🌍\n\n"
+        "لإكمال التسجيل، يرجى اختيار بلدك من القائمة:\n\n"
+        "سيتم ضبط المنطقة الزمنية تلقائياً حسب بلدك.",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
         parse_mode="Markdown"
     )
-    return MAIN_MENU
+    return False
+
+# ============================================
+# دوال معالجة البوت (المعدلة - بدون بلد افتراضي)
+# ============================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    
-    cleanup_user_data(context, user_id)
-    
-    # التحقق من وجود بلد مسجل للمستخدم
-    country, _ = AgencySystem.get_user_country(user_id)
-    
-    # إذا لم يكن هناك بلد مسجل، اطلب اختيار البلد أولاً
-    if not country:
-        countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
-        # ترتيب الدول العربية أولاً
-        arab_countries = ["مصر", "السعودية", "الإمارات", "الكويت", "قطر", "البحرين", "عمان", "اليمن", 
-                         "العراق", "الأردن", "لبنان", "سوريا", "فلسطين", "ليبيا", "تونس", "الجزائر", 
-                         "المغرب", "موريتانيا", "السودان", "الصومال"]
-        other_countries = [c for c in countries_list if c not in arab_countries]
-        sorted_countries = arab_countries + other_countries
+    """دالة بدء البوت - بدون طلب بلد"""
+    try:
+        user = update.effective_user
+        user_id = user.id
         
-        # تقسيم الدول إلى أزرار (2 أعمدة)
-        keyboard = [sorted_countries[i:i+2] for i in range(0, min(30, len(sorted_countries)), 2)]
-        keyboard.append(["🔄 تحديث", "❌ إلغاء"])
+        logger.info(f"User {user_id} started the bot")
         
-        await update.message.reply_text(
-            "🌍 **مرحباً بك في Obeida Trading** 🌍\n\n"
-            f"👤 **مرحباً:** {user.first_name}\n\n"
-            "📌 **لإكمال التسجيل، يرجى اختيار بلدك من القائمة:**\n\n"
-            "سيتم ضبط المنطقة الزمنية والجلسات تلقائياً حسب بلدك.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SET_COUNTRY
-    
-    # إذا كان البلد موجوداً، انتقل للقائمة الرئيسية
-    return await show_main_menu(update, context)
-
-async def handle_set_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة اختيار البلد"""
-    user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_message == "❌ إلغاء":
-        # إلغاء - إظهار رسالة ترحيب بسيطة
-        await update.message.reply_text(
-            "👋 **تم الإلغاء**\n\n"
-            "يمكنك إعادة المحاولة بكتابة /start",
-            reply_markup=ReplyKeyboardRemove(),
-            parse_mode="Markdown"
-        )
-        return ConversationHandler.END
-    
-    if user_message == "🔄 تحديث":
-        # تحديث القائمة
-        countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
-        arab_countries = ["مصر", "السعودية", "الإمارات", "الكويت", "قطر", "البحرين", "عمان", "اليمن", 
-                         "العراق", "الأردن", "لبنان", "سوريا", "فلسطين", "ليبيا", "تونس", "الجزائر", 
-                         "المغرب", "موريتانيا", "السودان", "الصومال"]
-        other_countries = [c for c in countries_list if c not in arab_countries]
-        sorted_countries = arab_countries + other_countries
+        cleanup_user_data(context, user_id)
         
-        keyboard = [sorted_countries[i:i+2] for i in range(0, min(30, len(sorted_countries)), 2)]
-        keyboard.append(["🔄 تحديث", "❌ إلغاء"])
+        # التحقق من وجود بلد مسجل (لا نضيف بلد افتراضي)
+        country, _ = AgencySystem.get_user_country(user_id)
         
-        await update.message.reply_text(
-            "🌍 **اختر بلدك:**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-        )
-        return SET_COUNTRY
-    
-    if user_message in COUNTRY_TIMEZONE_MAP:
-        # تعيين البلد والمنطقة الزمنية
-        timezone = AgencySystem.set_user_country(user_id, user_message)
-        
-        # رسالة تأكيد
-        await update.message.reply_text(
-            f"✅ **تم تعيين بلدك: {user_message}**\n\n"
-            f"🌍 **المنطقة الزمنية:** {timezone}\n\n"
-            f"🔄 جاري تحويلك للقائمة الرئيسية...",
-            parse_mode="Markdown"
-        )
+        # التحقق من التسجيل في وكالة
+        if not AgencySystem.is_user_registered(user_id) and user_id != ADMIN_ID:
+            return await check_agency_required(update, context)
         
         # عرض القائمة الرئيسية
         return await show_main_menu(update, context)
-    
-    # رسالة خطأ
-    await update.message.reply_text(
-        "❌ **الرجاء اختيار بلد من القائمة**\n\n"
-        "اضغط على زر 🔄 تحديث لعرض القائمة مرة أخرى.",
-        parse_mode="Markdown"
-    )
-    return SET_COUNTRY
+        
+    except Exception as e:
+        logger.error(f"Error in start: {e}")
+        traceback.print_exc()
+        await update.message.reply_text("❌ حدث خطأ. يرجى المحاولة مرة أخرى.")
+        return ConversationHandler.END
+
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض القائمة الرئيسية"""
+    try:
+        user = update.effective_user
+        user_id = user.id
+        
+        # الحصول على البلد (قد يكون None)
+        country, _ = AgencySystem.get_user_country(user_id)
+        
+        logger.info(f"Showing main menu for user {user_id}, country: {country}")
+        
+        # التحقق من التسجيل في وكالة
+        if not AgencySystem.is_user_registered(user_id) and user_id != ADMIN_ID:
+            return await check_agency_required(update, context)
+        
+        # الحصول على الجلسة (باستخدام UTC إذا لم يكن هناك بلد)
+        if country:
+            current_session = get_user_local_session(user_id)
+            local_time = get_localized_time(user_id)
+            country_text = f"🌍 **بلدك:** {country}\n"
+            time_text = f"🕒 **وقتك المحلي:** {local_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        else:
+            # إذا لم يحدد البلد، استخدم توقيت UTC
+            current_session = get_current_session()
+            local_time = datetime.utcnow()
+            country_text = "🌍 **بلدك:** غير محدد (يمكنك تعيينه من القائمة)\n"
+            time_text = f"🕒 **توقيت UTC:** {local_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        
+        welcome_msg = (
+            "🚀 **أهلاً بك في Obeida Trading** 🚀\n\n"
+            f"👤 **مرحباً:** {user.first_name}\n"
+            f"{country_text}"
+            f"{time_text}"
+            f"🌐 **الجلسة الحالية:** {current_session['name']}\n"
+            f"📊 **نسبة النجاح:** {current_session['success_rate']}\n\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "4️⃣ **قراءة النتائج - أنواع القرارات الفنية** 🔍\n\n"
+            "   **🟢 شراء:** السعر صاعد - ادخل مع الاتجاه\n"
+            "   **🔴 بيع:** السعر هابط - ادخل مع الاتجاه\n"
+            "   **💥 كسر هيكلي:** تغير الاتجاه (صاعد ← هابط أو العكس)\n"
+            "   **🔄 سحب سيولة:** عكس مؤقت ثم استمرار الاتجاه الأصلي\n"
+            "   **🔄 انعكاس فوري:** تغير سريع ثم استقرار\n\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🤖 **Powered by Obeida Trading**"
+        )
+        
+        keyboard = [
+            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+            ["📊 معلومات الجلسة", "👤 معلوماتي"],
+            ["🏢 وكالاتي", "🔔 تنبيه الجلسات"],
+            ["🛒 المتجر", "🌍 تعيين البلد"]
+        ]
+        
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
+        
+        await update.message.reply_text(
+            welcome_msg,
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return MAIN_MENU
+        
+    except Exception as e:
+        logger.error(f"Error in show_main_menu: {e}")
+        traceback.print_exc()
+        await update.message.reply_text("❌ حدث خطأ. يرجى المحاولة مرة أخرى.")
+        return ConversationHandler.END
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة القائمة الرئيسية"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
-    if user_message == "🌍 تغيير البلد":
-        # عرض قائمة الدول لتغيير البلد
+    if user_message == "🌍 تعيين البلد":
+        # عرض قائمة الدول لتعيين البلد
         countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
         arab_countries = ["مصر", "السعودية", "الإمارات", "الكويت", "قطر", "البحرين", "عمان", "اليمن", 
                          "العراق", "الأردن", "لبنان", "سوريا", "فلسطين", "ليبيا", "تونس", "الجزائر", 
@@ -917,8 +896,9 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(["🔄 تحديث", "🔙 العودة"])
         
         await update.message.reply_text(
-            "🌍 **تغيير البلد**\n\n"
-            "اختر بلدك الجديد من القائمة:",
+            "🌍 **تعيين البلد**\n\n"
+            "اختر بلدك من القائمة لضبط المنطقة الزمنية:\n\n"
+            "سيتم استخدام المنطقة الزمنية حسب البلد المختار.",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
             parse_mode="Markdown"
         )
@@ -1014,15 +994,26 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await start_admin_panel(update, context)
     
     elif user_message == "📊 معلومات الجلسة":
-        current_session = get_user_local_session(user_id)
-        utc_session = get_current_session()
-        local_time = get_localized_time(user_id)
+        # الحصول على البلد (قد يكون None)
         country, _ = AgencySystem.get_user_country(user_id)
+        
+        if country:
+            current_session = get_user_local_session(user_id)
+            local_time = get_localized_time(user_id)
+            country_text = f"🌍 **بلدك:** {country}\n"
+            time_text = f"🕒 **وقتك المحلي:** {local_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        else:
+            current_session = get_current_session()
+            local_time = datetime.utcnow()
+            country_text = "🌍 **بلدك:** غير محدد (اضغط على '🌍 تعيين البلد' لتعيينه)\n"
+            time_text = f"🕒 **توقيت UTC:** {local_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        
+        utc_session = get_current_session()
         
         session_info = (
             f"🌐 **معلومات الجلسة والوقت**\n\n"
-            f"🌍 **بلدك:** {country}\n"
-            f"🕒 **وقتك المحلي:** {local_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"{country_text}"
+            f"{time_text}"
             f"━━━━━━━━━━━━━━━━━━\n\n"
             f"📍 **جلسة UTC الحالية:** {utc_session['name']}\n"
             f"📍 **جلسة منطقتك:** {current_session['name']}\n"
@@ -1044,7 +1035,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_message == "👤 معلوماتي":
         user_regs = AgencySystem.get_user_registrations(user_id)
         country, tz = AgencySystem.get_user_country(user_id)
-        local_time = get_localized_time(user_id)
+        local_time = get_localized_time(user_id) if country else datetime.utcnow()
         
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -1057,9 +1048,9 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 **معلومات المستخدم**\n\n"
             f"🆔 **المعرف:** `{user_id}`\n"
             f"👤 **اليوزر:** @{update.effective_user.username or 'لا يوجد'}\n"
-            f"🌍 **البلد:** {country}\n"
-            f"🕒 **المنطقة الزمنية:** {tz}\n"
-            f"⏰ **الوقت المحلي:** {local_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"🌍 **البلد:** {country or 'غير محدد'}\n"
+            f"🕒 **المنطقة الزمنية:** {tz if country else 'غير محددة (توقيت UTC)'}\n"
+            f"⏰ **الوقت:** {local_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"📊 **إجمالي التحليلات:** {total_analyses}\n\n"
             f"🏢 **الوكالات المسجل بها:**\n"
         )
@@ -1071,6 +1062,9 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 info_msg += f"• {reg[1]} ({reg[2]}) - {status}\n"
         else:
             info_msg += "• لا توجد وكالات مسجل بها\n"
+        
+        if not country:
+            info_msg += "\n💡 **ملاحظة:** لم تقم بتعيين بلدك بعد. اضغط على '🌍 تعيين البلد' لضبط المنطقة الزمنية."
         
         await update.message.reply_text(info_msg, parse_mode="Markdown")
         return MAIN_MENU
@@ -1116,7 +1110,7 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
         ["📊 معلومات الجلسة", "👤 معلوماتي"],
         ["🏢 وكالاتي", "🔔 تنبيه الجلسات"],
-        ["🛒 المتجر", "🌍 تغيير البلد"]
+        ["🛒 المتجر", "🌍 تعيين البلد"]
     ]
     if user_id == ADMIN_ID:
         keyboard.append(["👑 لوحة التحكم"])
@@ -1126,6 +1120,66 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
     )
     return MAIN_MENU
+
+async def handle_set_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة تعيين البلد (اختياري)"""
+    try:
+        user_message = update.message.text
+        user_id = update.effective_user.id
+        
+        logger.info(f"User {user_id} setting country: {user_message}")
+        
+        if user_message == "🔙 العودة":
+            return await show_main_menu(update, context)
+        
+        if user_message == "🔄 تحديث":
+            # تحديث القائمة
+            countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
+            arab_countries = ["مصر", "السعودية", "الإمارات", "الكويت", "قطر", "البحرين", "عمان", "اليمن", 
+                             "العراق", "الأردن", "لبنان", "سوريا", "فلسطين", "ليبيا", "تونس", "الجزائر", 
+                             "المغرب", "موريتانيا", "السودان", "الصومال"]
+            other_countries = [c for c in countries_list if c not in arab_countries]
+            sorted_countries = arab_countries + other_countries
+            
+            keyboard = [sorted_countries[i:i+2] for i in range(0, min(30, len(sorted_countries)), 2)]
+            keyboard.append(["🔄 تحديث", "🔙 العودة"])
+            
+            await update.message.reply_text(
+                "🌍 **اختر بلدك:**",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+            )
+            return SET_COUNTRY
+        
+        if user_message in COUNTRY_TIMEZONE_MAP:
+            # تعيين البلد والمنطقة الزمنية
+            timezone = AgencySystem.set_user_country(user_id, user_message)
+            
+            logger.info(f"User {user_id} set country to {user_message}, timezone: {timezone}")
+            
+            # رسالة تأكيد
+            await update.message.reply_text(
+                f"✅ **تم تعيين بلدك: {user_message}**\n\n"
+                f"🌍 **المنطقة الزمنية:** {timezone}\n\n"
+                f"🔄 تم تحديث معلومات الجلسة والوقت حسب بلدك.",
+                parse_mode="Markdown"
+            )
+            
+            # عرض القائمة الرئيسية
+            return await show_main_menu(update, context)
+        
+        # رسالة خطأ
+        await update.message.reply_text(
+            "❌ **الرجاء اختيار بلد من القائمة**\n\n"
+            "اضغط على زر 🔄 تحديث لعرض القائمة مرة أخرى.",
+            parse_mode="Markdown"
+        )
+        return SET_COUNTRY
+        
+    except Exception as e:
+        logger.error(f"Error in handle_set_country: {e}")
+        traceback.print_exc()
+        await update.message.reply_text("❌ حدث خطأ. يرجى المحاولة مرة أخرى.")
+        return ConversationHandler.END
 
 async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
@@ -1509,7 +1563,7 @@ async def handle_select_agency(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     
     if user_message == "🔙 العودة":
-        return await show_main_menu(update, context)
+        return await start(update, context)
     
     if user_message.startswith("📝 "):
         agency_name = user_message.replace("📝 ", "").split(" - ")[0]
@@ -1548,7 +1602,7 @@ async def handle_register_agency(update: Update, context: ContextTypes.DEFAULT_T
         return MAIN_MENU
     
     if user_message == "🔙 العودة":
-        return await show_main_menu(update, context)
+        return await start(update, context)
     
     success, result = AgencySystem.register_user_agency(user_id, selected_agency[0], user_message)
     
@@ -1577,7 +1631,7 @@ async def handle_register_agency(update: Update, context: ContextTypes.DEFAULT_T
                 pass
         
         context.user_data.pop('selected_agency', None)
-        return await show_main_menu(update, context)
+        return await start(update, context)
     else:
         await update.message.reply_text(f"❌ فشل التسجيل: {result}")
         return SELECT_AGENCY
@@ -1753,7 +1807,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN_MENU
     
     if user_message == "🔙 العودة":
-        return await show_main_menu(update, context)
+        return await start(update, context)
     
     elif user_message == "➕ إضافة وكالة":
         await update.message.reply_text(
@@ -2670,19 +2724,12 @@ def complete_order():
         return jsonify({'success': False, 'error': str(e)})
 
 def run_flask_server():
-    """تشغيل Flask server"""
-    try:
-        port = int(os.environ.get('PORT', 8080))
-        from werkzeug.serving import run_simple
-        run_simple('0.0.0.0', port, app, use_reloader=False, use_debugger=False)
-    except Exception as e:
-        print(f"⚠️ Flask error: {e}")
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # ============================================
 # التشغيل الرئيسي
 # ============================================
-
-application = None
 
 async def main():
     global application
@@ -2742,24 +2789,7 @@ async def main():
     print("📡 News Radar running...")
     print("🔔 Session Alerts active...")
     
-    # بدء البوت
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True
-    )
-    
-    # الحفاظ على التشغيل
-    try:
-        stop_signal = asyncio.Event()
-        await stop_signal.wait()
-    except asyncio.CancelledError:
-        pass
-    finally:
-        await application.updater.stop()
-        await application.stop()
-        await application.shutdown()
+    await application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
