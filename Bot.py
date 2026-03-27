@@ -1364,6 +1364,8 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         current_minute = current_time.minute
         current_second = current_time.second
         seconds_remaining = 0
+        seconds_passed = 0
+        
         if candle.startswith('S'):
             candle_seconds = int(candle[1:]) if candle[1:].isdigit() else 5
             seconds_passed = current_second % candle_seconds
@@ -1376,13 +1378,17 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             seconds_remaining = (candle_minutes * 60) - seconds_passed
         else:
             seconds_remaining = 0
+            seconds_passed = 0
+            
         in_golden_window = 2 <= seconds_passed <= 58
+        
         MAIN_PROMPT = f"""
 أنت الآن المحرك التحليلي لنظام Obeida Trading. استخرج المعطيات الرقمية من الصورة بدقة.
 
 📊 **بيانات الإطار الزمني:**
 - الفريم: {candle}
 - الوقت المتبقي: {seconds_remaining} ثانية
+- الوقت المنقضي: {seconds_passed} ثانية
 
 🎯 **التنسيق المطلوب:**
 📐 **المعطيات الرقمية:**
@@ -1395,10 +1401,25 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • اتجاه الموجة: [UP/DOWN]
 • نسبة جسم الشمعة: [0.xx]
 
-🔍 **معطيات SMC:**
+📈 **مستويات فيبوناتشي:**
+• مستوى 0.236: [السعر]
+• مستوى 0.382: [السعر]
+• مستوى 0.500: [السعر]
+• مستوى 0.618: [السعر]
+• مستوى 0.786: [السعر]
+• مستوى 1.272: [السعر]
+• مستوى 1.618: [السعر]
+
+🔍 **معطيات SMC المتقدمة:**
 • FVG: [True/False]
+• مستويات FVG: [من X إلى Y] (إذا كانت موجودة)
 • Liquidity Sweep: [True/False]
 • Order Block: [True/False]
+• التمركز السعري: [PREMIUM/DISCOUNT/TRAP_ZONE]
+
+⚠️ **تعليمات إضافية:**
+- إذا كان FVG = True، قم بتحديد مستوياته بدقة (من السعر الأدنى إلى الأعلى)
+- حدد التمركز السعري بناءً على مستوى 0.500 فيبوناتشي
 """
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         payload = {
@@ -1406,18 +1427,22 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             "messages": [{"role": "user", "content": [{"type": "text", "text": MAIN_PROMPT}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}]}],
             "max_tokens": 800, "temperature": 0.0, "top_p": 1.0, "random_seed": 42
         }
+        
         # شريط التقدم
         for i in range(1, 6):
             await asyncio.sleep(3)
             progress = i * 20
             bars = "⬜" * (5 - i) + "🟩" * i
             await wait_msg.edit_text(f"🤌 جاري تحليل الشارت... [{bars} {progress}%]")
+            
         response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
         if response.status_code != 200:
             await wait_msg.edit_text(f"❌ خطأ: {response.status_code}")
             return
+            
         analysis_result = response.json()['choices'][0]['message']['content'].strip()
         analysis_result = clean_repeated_text(analysis_result)
+        
         import re
         hh_match = re.search(r'أعلى قمة.*?:\s*([\d.]+)', analysis_result)
         ll_match = re.search(r'أدنى قاع.*?:\s*([\d.]+)', analysis_result)
@@ -1425,13 +1450,80 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         breakout_force_match = re.search(r'قوة الاندفاع.*?:\s*([\d.]+)', analysis_result)
         direction_match = re.search(r'اتجاه الموجة.*?:\s*([A-Z]+)', analysis_result)
         fvg_match = re.search(r'FVG.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
+        fvg_levels_match = re.search(r'مستويات FVG.*?:\s*من\s*([\d.]+)\s*إلى\s*([\d.]+)', analysis_result)
+        liquidity_sweep_match = re.search(r'Liquidity Sweep.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
+        order_block_match = re.search(r'Order Block.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
+        positioning_match = re.search(r'التمركز السعري.*?:\s*([A-Z_]+)', analysis_result)
+        
+        # استخراج مستويات فيبوناتشي
+        fib_levels = {}
+        fib_keys = ['0.236', '0.382', '0.500', '0.618', '0.786', '1.272', '1.618']
+        for fib_key in fib_keys:
+            fib_match = re.search(f'مستوى {fib_key}.*?:\s*([\d.]+)', analysis_result)
+            if fib_match:
+                fib_levels[fib_key] = float(fib_match.group(1))
+        
         has_fvg = fvg_match.group(1).upper() == "TRUE" if fvg_match else False
+        has_liquidity_sweep = liquidity_sweep_match.group(1).upper() == "TRUE" if liquidity_sweep_match else False
+        has_order_block = order_block_match.group(1).upper() == "TRUE" if order_block_match else False
+        positioning = positioning_match.group(1) if positioning_match else "NEUTRAL"
+        
         highest_high = float(hh_match.group(1)) if hh_match else 0
         lowest_low = float(ll_match.group(1)) if ll_match else 0
         current_price = float(current_price_match.group(1)) if current_price_match else 0
         breakout_force = float(breakout_force_match.group(1)) if breakout_force_match else 1.0
         current_direction = direction_match.group(1).upper() if direction_match else "UP"
-        session_name, liquidity_level, session_message = ("LONDON", "HIGH", "🇬🇧 جلسة لندن - سيولة عالية") if 8 <= current_hour < 16 else ("NEW_YORK", "HIGH", "🇺🇸 جلسة نيويورك - سيولة عالية") if 13 <= current_hour < 21 else ("ASIA", "LOW", "🇯🇵 جلسة آسيا - سيولة منخفضة")
+        
+        fvg_details = ""
+        if has_fvg and fvg_levels_match:
+            fvg_from = float(fvg_levels_match.group(1))
+            fvg_to = float(fvg_levels_match.group(2))
+            fvg_details = f"[{fvg_from} إلى {fvg_to}]"
+        
+        # حساب التمركز السعري
+        fib_500 = fib_levels.get("0.500", current_price)
+        is_in_discount = current_price < fib_500
+        is_in_premium = current_price > fib_500
+        
+        # حساب معاملات الصفقة المتقدمة
+        trade_params = calculate_trade_parameters(current_price, fib_levels, current_direction, breakout_force)
+        
+        # حساب الثقة وقوة الإشارة
+        decision = get_trading_decision(
+            current_price, fib_levels, current_direction, breakout_force,
+            has_fvg, has_liquidity_sweep, has_order_block, positioning
+        )
+        
+        # حساب نسبة النجاح المتوقعة
+        success_rate = decision['confidence']
+        success_rate = min(95, max(55, success_rate))
+        
+        # تقييم جودة الإشارة
+        if success_rate >= 85:
+            success_evaluation = "ممتاز ⭐⭐⭐"
+        elif success_rate >= 70:
+            success_evaluation = "جيد ⭐⭐"
+        else:
+            success_evaluation = "مقبول ⭐"
+        
+        # حساب حجم الاستثمار الديناميكي
+        position_size = calculate_position_size(decision['confidence'])
+        
+        session_name, liquidity_level, session_message = (
+            ("LONDON", "HIGH", "🇬🇧 جلسة لندن - سيولة عالية") if 8 <= current_hour < 16 
+            else ("NEW_YORK", "HIGH", "🇺🇸 جلسة نيويورك - سيولة عالية") if 13 <= current_hour < 21 
+            else ("ASIA", "LOW", "🇯🇵 جلسة آسيا - سيولة منخفضة")
+        )
+        
+        # تحذير النافذة الذهبية
+        golden_window_warning = ""
+        if not in_golden_window and seconds_passed > 0:
+            golden_window_warning = "\n⚠️ **تنبيه:** أنت خارج النافذة الذهبية (2-58 ثانية) - دقة التحليل أقل"
+        
+        # حساب وقت الذروة المتوقع
+        peak_time_remaining = seconds_remaining - 3
+        peak_time_message = f"خلال الـ {min(3, seconds_remaining)} شموع" if seconds_remaining > 3 else "قريباً جداً"
+        
         # بناء النتيجة
         formatted_result = f"""
 📊 **التحليل الفني المتقدم:**
@@ -1440,33 +1532,206 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • **السعر الحالي:** {current_price}
 • **اتجاه الموجة:** {'صاعد 📈' if current_direction == 'UP' else 'هابط 📉'}
 • **قوة الاندفاع:** {breakout_force:.2f}x
-• **FVG (الفجوة السعرية):** {'✅ موجودة' if has_fvg else '❌ غير موجودة'}
+• **قوة الإشارة:** {decision['signal_strength']}
+• **مستوى الثقة:** {decision['confidence']:.0f}% ({success_evaluation})
+• **نوع الدخول:** {decision['entry_type']}
 
-• **نقطة الدخول المقترحة:** {current_price}
-• **وقف الخسارة:** {current_price * (0.998 if current_direction == 'UP' else 1.002):.6f}
+📐 **مستويات فيبوناتشي:**
+• 0.236: {fib_levels.get('0.236', 'غير متوفر')}
+• 0.382: {fib_levels.get('0.382', 'غير متوفر')}
+• 0.500: {fib_500}
+• 0.618: {fib_levels.get('0.618', 'غير متوفر')}
+• 0.786: {fib_levels.get('0.786', 'غير متوفر')}
+• 1.272: {fib_levels.get('1.272', 'غير متوفر')}
+• 1.618: {fib_levels.get('1.618', 'غير متوفر')}
+
+🎯 **نقاط الدخول والخروج:**
+• **نقطة الدخول المقترحة:** {trade_params['entry_price']:.6f}
+• **وقف الخسارة:** {trade_params['stop_loss']:.6f}
 • **الأهداف الربحية:**
-  🎯 TP1: {current_price * (1.005 if current_direction == 'UP' else 0.995):.6f}
-  🎯 TP2: {current_price * (1.01 if current_direction == 'UP' else 0.99):.6f}
-  🚀 TP3: {current_price * (1.02 if current_direction == 'UP' else 0.98):.6f}
+  🎯 TP1 (هدف أول): {trade_params['tp1']:.6f} - اختراق بسيط
+  🎯 TP2 (هدف ثاني): {trade_params['tp2']:.6f} - موجة متوسطة
+  🚀 TP3 (هدف ثالث): {trade_params['tp3']:.6f} - موجة رئيسية
+
+🔍 **معطيات SMC المتقدمة:**
+• **FVG:** {'✅ موجودة' if has_fvg else '❌ غير موجودة'} {fvg_details}
+• **Liquidity Sweep:** {'✅ موجود' if has_liquidity_sweep else '❌ غير موجود'}
+• **Order Block:** {'✅ موجود' if has_order_block else '❌ غير موجود'}
+• **التمركز السعري:** {positioning} {'(منطقة خصم 📉)' if is_in_discount else '(منطقة علاوة 📈)' if is_in_premium else '(منطقة محايدة)'}
 
 ⚠️ **إدارة المخاطر:**
-• **نسبة نجاح متوقعة:** {70 + int(breakout_force * 10):.0f}%
-• **حجم الاستثمار المقترح:** {('3%' if breakout_force > 1.2 else '2%')}
+• **نسبة نجاح متوقعة:** {success_rate:.0f}%
+• **حجم الاستثمار المقترح:** {position_size}
+• **المخاطرة:** {decision['risk_level']}
+• **قرار فني:** {decision['final_decision']}
 
 ━━━━━━━━━━━━━━━
 🌍 **جلسة التداول:** {session_message}
 ⏱️ **الفريم:** {candle} | **الوقت المتبقي:** {seconds_remaining} ثانية
-🤖 **Obeida Trading Pro v2.2**
+⏰ **الوقت المنقضي:** {seconds_passed} ثانية
+⚡ **وقت الذروة المتوقع:** {peak_time_message}
+{golden_window_warning}
+🤖 **Obeida Trading Pro v3.0**
 """
+        
         full_result = clean_repeated_text(formatted_result)
-        await wait_msg.edit_text(full_result, parse_mode="Markdown")
+        
+        # معالجة تقسيم الرسائل الطويلة
+        if len(full_result) > 4000:
+            parts = split_message(full_result, 3500)
+            await wait_msg.edit_text(parts[0], parse_mode="Markdown")
+            for part in parts[1:]:
+                await update.message.reply_text(part, parse_mode="Markdown")
+        else:
+            await wait_msg.edit_text(full_result, parse_mode="Markdown")
+        
+        # تحديث إحصائيات المستخدم
         SubscriptionSystem.increment_analyses(user_id)
+        
         return full_result
+        
     except asyncio.CancelledError:
         raise
     except Exception as e:
         await update.message.reply_text(f"❌ خطأ: {str(e)[:200]}")
         return None
+
+def calculate_fibonacci_levels(high_price, low_price, direction):
+    """حساب مستويات فيبوناتشي بدقة"""
+    diff = high_price - low_price
+    fib_levels = {
+        "0.236": high_price - (diff * 0.236) if direction == "UP" else low_price + (diff * 0.236),
+        "0.382": high_price - (diff * 0.382) if direction == "UP" else low_price + (diff * 0.382),
+        "0.500": high_price - (diff * 0.500) if direction == "UP" else low_price + (diff * 0.500),
+        "0.618": high_price - (diff * 0.618) if direction == "UP" else low_price + (diff * 0.618),
+        "0.786": high_price - (diff * 0.786) if direction == "UP" else low_price + (diff * 0.786),
+        "1.272": high_price + (diff * 0.272) if direction == "UP" else low_price - (diff * 0.272),
+        "1.618": high_price + (diff * 0.618) if direction == "UP" else low_price - (diff * 0.618)
+    }
+    return fib_levels
+
+def calculate_trade_parameters(current_price, fib_levels, direction, breakout_force):
+    """حساب معاملات الصفقة مع فحص السيولة"""
+    entry_price = current_price
+    stop_loss = 0
+    tp1 = 0
+    tp2 = 0
+    tp3 = 0
+    
+    # فحص السيولة الصارم
+    if breakout_force > 1.2:
+        # سيولة عالية - دخول أكثر عدوانية
+        if direction == "UP":
+            stop_loss = fib_levels.get("0.786", current_price * 0.998)
+            tp1 = fib_levels.get("1.272", current_price * 1.005)
+            tp2 = fib_levels.get("1.618", current_price * 1.01)
+            tp3 = fib_levels.get("1.618", current_price * 1.02) + (breakout_force * 0.5)
+        else:
+            stop_loss = fib_levels.get("0.786", current_price * 1.002)
+            tp1 = fib_levels.get("1.272", current_price * 0.995)
+            tp2 = fib_levels.get("1.618", current_price * 0.99)
+            tp3 = fib_levels.get("1.618", current_price * 0.98) - (breakout_force * 0.5)
+    else:
+        # سيولة منخفضة - دخول محافظ
+        if direction == "UP":
+            stop_loss = fib_levels.get("0.618", current_price * 0.998)
+            tp1 = fib_levels.get("1.272", current_price * 1.003)
+            tp2 = fib_levels.get("1.618", current_price * 1.007)
+            tp3 = fib_levels.get("1.618", current_price * 1.015)
+        else:
+            stop_loss = fib_levels.get("0.618", current_price * 1.002)
+            tp1 = fib_levels.get("1.272", current_price * 0.997)
+            tp2 = fib_levels.get("1.618", current_price * 0.993)
+            tp3 = fib_levels.get("1.618", current_price * 0.985)
+    
+    return {
+        "entry_price": entry_price,
+        "stop_loss": stop_loss,
+        "tp1": tp1,
+        "tp2": tp2,
+        "tp3": tp3
+    }
+
+def get_trading_decision(current_price, fib_levels, direction, breakout_force, has_fvg, has_liquidity_sweep, has_order_block, positioning):
+    """حساب الثقة وقوة الإشارة"""
+    confidence = 50  # أساس الثقة
+    signal_strength = "ضعيفة"
+    entry_type = "دخول معلق"
+    risk_level = "عالي"
+    final_decision = "انتظار تأكيد إضافي"
+    
+    # عوامل تعزيز الثقة
+    if breakout_force > 1.2:
+        confidence += 15
+    elif breakout_force > 1.0:
+        confidence += 8
+    
+    if has_fvg:
+        confidence += 10
+    if has_liquidity_sweep:
+        confidence += 12
+    if has_order_block:
+        confidence += 8
+    
+    if positioning == "DISCOUNT" and direction == "UP":
+        confidence += 10
+    elif positioning == "PREMIUM" and direction == "DOWN":
+        confidence += 10
+    elif positioning == "TRAP_ZONE":
+        confidence -= 15
+    
+    # تحديد قوة الإشارة
+    if confidence >= 80:
+        signal_strength = "قوية جداً 🚀"
+        entry_type = "دخول مباشر"
+        risk_level = "منخفض"
+        final_decision = "دخول قوي مع تأكيد"
+    elif confidence >= 65:
+        signal_strength = "قوية ✅"
+        entry_type = "دخول مباشر"
+        risk_level = "متوسط"
+        final_decision = "دخول مقبول"
+    elif confidence >= 50:
+        signal_strength = "متوسطة ⚠️"
+        entry_type = "دخول معلق"
+        risk_level = "مرتفع"
+        final_decision = "دخول بحذر"
+    else:
+        signal_strength = "ضعيفة ❌"
+        entry_type = "بدون دخول"
+        risk_level = "عالي جداً"
+        final_decision = "انتظار تحسن الظروف"
+    
+    return {
+        "confidence": confidence,
+        "signal_strength": signal_strength,
+        "entry_type": entry_type,
+        "risk_level": risk_level,
+        "final_decision": final_decision
+    }
+
+def calculate_position_size(confidence_score):
+    """حساب حجم الاستثمار الديناميكي"""
+    if confidence_score >= 85:
+        return "5% 🟢"
+    elif confidence_score >= 70:
+        return "3% 🟡"
+    elif confidence_score >= 55:
+        return "2% 🟠"
+    else:
+        return "1% 🔴"
+
+def split_message(text, max_length=3500):
+    """تقسيم الرسالة الطويلة"""
+    parts = []
+    while len(text) > max_length:
+        split_index = text[:max_length].rfind('\n')
+        if split_index == -1:
+            split_index = max_length
+        parts.append(text[:split_index])
+        text = text[split_index:]
+    parts.append(text)
+    return parts
 
 async def timezone_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
