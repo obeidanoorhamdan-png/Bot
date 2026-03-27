@@ -7,9 +7,6 @@ aiohttp
 apscheduler
 cachetools
 emoji
-feedparser
 pytz
 pytz-deprecation-shim
 psutil
-python-dateutil
-pysqlite3
