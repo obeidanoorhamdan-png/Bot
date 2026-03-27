@@ -779,22 +779,56 @@ async def check_country_required(update: Update, context: ContextTypes.DEFAULT_T
     )
     return False
 
+# ============================================
+# دوال معالجة البوت (المعدلة)
+# ============================================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     
     cleanup_user_data(context, user_id)
     
+    # التحقق من وجود بلد مسجل للمستخدم
     country, _ = AgencySystem.get_user_country(user_id)
     
+    # إذا لم يكن هناك بلد مسجل، اطلب اختيار البلد أولاً
     if not country:
-        return await check_country_required(update, context)
+        countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
+        # ترتيب الدول العربية أولاً
+        arab_countries = ["مصر", "السعودية", "الإمارات", "الكويت", "قطر", "البحرين", "عمان", "اليمن", 
+                         "العراق", "الأردن", "لبنان", "سوريا", "فلسطين", "ليبيا", "تونس", "الجزائر", 
+                         "المغرب", "موريتانيا", "السودان", "الصومال"]
+        other_countries = [c for c in countries_list if c not in arab_countries]
+        sorted_countries = arab_countries + other_countries
+        
+        # تقسيم الدول إلى أزرار (3 أعمدة)
+        keyboard = [sorted_countries[i:i+2] for i in range(0, min(30, len(sorted_countries)), 2)]
+        keyboard.append(["🔄 تحديث", "❌ إلغاء"])
+        
+        await update.message.reply_text(
+            "🌍 **مرحباً بك في Obeida Trading** 🌍\n\n"
+            f"👤 **مرحباً:** {user.first_name}\n\n"
+            "📌 **لإكمال التسجيل، يرجى اختيار بلدك من القائمة:**\n\n"
+            "سيتم ضبط المنطقة الزمنية والجلسات تلقائياً حسب بلدك.",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return SET_COUNTRY
     
+    # إذا كان البلد موجوداً، انتقل للقائمة الرئيسية
+    return await show_main_menu(update, context)
+
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض القائمة الرئيسية بعد تسجيل البلد"""
+    user = update.effective_user
+    user_id = user.id
+    
+    country, _ = AgencySystem.get_user_country(user_id)
+    
+    # التحقق من التسجيل في وكالة
     if not AgencySystem.is_user_registered(user_id) and user_id != ADMIN_ID:
         return await check_agency_required(update, context)
-    
-    registered = AgencySystem.is_user_registered(user_id)
-    user_regs = AgencySystem.get_user_registrations(user_id)
     
     current_session = get_user_local_session(user_id)
     local_time = get_localized_time(user_id)
@@ -821,7 +855,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
         ["📊 معلومات الجلسة", "👤 معلوماتي"],
         ["🏢 وكالاتي", "🔔 تنبيه الجلسات"],
-        ["🛒 المتجر"]
+        ["🛒 المتجر", "🌍 تغيير البلد"]
     ]
     
     if user_id == ADMIN_ID:
@@ -835,21 +869,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 async def handle_set_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة اختيار البلد"""
     user_message = update.message.text
     user_id = update.effective_user.id
     
     if user_message == "❌ إلغاء":
-        keyboard = [["🌍 تغيير البلد"]]
+        # إلغاء - إظهار رسالة ترحيب بسيطة
         await update.message.reply_text(
-            "تم الإلغاء. يمكنك تغيير بلدك لاحقاً من الإعدادات.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            "👋 **تم الإلغاء**\n\n"
+            "يمكنك إعادة المحاولة بكتابة /start",
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode="Markdown"
         )
         return ConversationHandler.END
     
     if user_message == "🔄 تحديث":
+        # تحديث القائمة
         countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
-        keyboard = [countries_list[i:i+2] for i in range(0, min(20, len(countries_list)), 2)]
+        arab_countries = ["مصر", "السعودية", "الإمارات", "الكويت", "قطر", "البحرين", "عمان", "اليمن", 
+                         "العراق", "الأردن", "لبنان", "سوريا", "فلسطين", "ليبيا", "تونس", "الجزائر", 
+                         "المغرب", "موريتانيا", "السودان", "الصومال"]
+        other_countries = [c for c in countries_list if c not in arab_countries]
+        sorted_countries = arab_countries + other_countries
+        
+        keyboard = [sorted_countries[i:i+2] for i in range(0, min(30, len(sorted_countries)), 2)]
         keyboard.append(["🔄 تحديث", "❌ إلغاء"])
+        
         await update.message.reply_text(
             "🌍 **اختر بلدك:**",
             reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -857,18 +902,26 @@ async def handle_set_country(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return SET_COUNTRY
     
     if user_message in COUNTRY_TIMEZONE_MAP:
+        # تعيين البلد والمنطقة الزمنية
         timezone = AgencySystem.set_user_country(user_id, user_message)
         
+        # رسالة تأكيد
         await update.message.reply_text(
             f"✅ **تم تعيين بلدك: {user_message}**\n\n"
             f"🌍 **المنطقة الزمنية:** {timezone}\n\n"
-            "الآن يمكنك التسجيل في إحدى وكالاتنا للبدء في استخدام التحليل.",
+            f"🔄 جاري تحويلك للقائمة الرئيسية...",
             parse_mode="Markdown"
         )
         
-        return await check_agency_required(update, context)
+        # عرض القائمة الرئيسية
+        return await show_main_menu(update, context)
     
-    await update.message.reply_text("❌ الرجاء اختيار بلد من القائمة.")
+    # رسالة خطأ
+    await update.message.reply_text(
+        "❌ **الرجاء اختيار بلد من القائمة**\n\n"
+        "اضغط على زر 🔄 تحديث لعرض القائمة مرة أخرى.",
+        parse_mode="Markdown"
+    )
     return SET_COUNTRY
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -876,16 +929,26 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     if user_message == "🌍 تغيير البلد":
+        # عرض قائمة الدول لتغيير البلد
         countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
-        keyboard = [countries_list[i:i+2] for i in range(0, min(20, len(countries_list)), 2)]
-        keyboard.append(["🔄 تحديث", "❌ إلغاء"])
+        arab_countries = ["مصر", "السعودية", "الإمارات", "الكويت", "قطر", "البحرين", "عمان", "اليمن", 
+                         "العراق", "الأردن", "لبنان", "سوريا", "فلسطين", "ليبيا", "تونس", "الجزائر", 
+                         "المغرب", "موريتانيا", "السودان", "الصومال"]
+        other_countries = [c for c in countries_list if c not in arab_countries]
+        sorted_countries = arab_countries + other_countries
+        
+        keyboard = [sorted_countries[i:i+2] for i in range(0, min(30, len(sorted_countries)), 2)]
+        keyboard.append(["🔄 تحديث", "🔙 العودة"])
+        
         await update.message.reply_text(
-            "🌍 **اختر بلدك:**",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+            "🌍 **تغيير البلد**\n\n"
+            "اختر بلدك الجديد من القائمة:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
         )
         return SET_COUNTRY
     
-    if user_message == "🏢 التسجيل في الوكالة" or user_message == "🏢 وكالاتي":
+    elif user_message == "🏢 التسجيل في الوكالة" or user_message == "🏢 وكالاتي":
         agencies = AgencySystem.get_agencies()
         
         if not agencies:
@@ -1072,11 +1135,12 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ANALYZE_MODE
     
+    # إذا لم يتعرف على الأمر، عرض القائمة مرة أخرى
     keyboard = [
         ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
         ["📊 معلومات الجلسة", "👤 معلوماتي"],
         ["🏢 وكالاتي", "🔔 تنبيه الجلسات"],
-        ["🛒 المتجر"]
+        ["🛒 المتجر", "🌍 تغيير البلد"]
     ]
     if user_id == ADMIN_ID:
         keyboard.append(["👑 لوحة التحكم"])
