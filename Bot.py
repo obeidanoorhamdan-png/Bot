@@ -1003,19 +1003,61 @@ def encode_image(image_path):
         return None
 
 def clean_repeated_text(text):
-    if not text: return ""
+    """تنظيف النص من التكرارات والأحرف الخاصة"""
+    if not text:
+        return ""
+    
+    # إزالة التكرارات
     lines = text.split('\n')
     unique_lines = []
     for line in lines:
         if line.strip() not in [ul.strip() for ul in unique_lines] or line.strip() == "":
             unique_lines.append(line)
     text = '\n'.join(unique_lines)
+    
+    # إزالة التكرارات للأنماط المتكررة
     patterns = ["📊 التحليل الفني المتقدم:", "🎯 الإشارة التنفيذية:", "⚠️ إدارة المخاطر:"]
     for p in patterns:
         if text.count(p) > 1:
             parts = text.split(p)
             text = parts[0] + p + parts[-1]
+    
+    # تنظيف النص من الأحرف الخاصة بـ Markdown
+    text = escape_markdown_text(text)
+    
     return text
+
+def escape_markdown_text(text):
+    """تجنب الأحرف الخاصة في Markdown"""
+    # قائمة الأحرف التي تحتاج إلى تخطي في Markdown
+    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    
+    # لا نقوم بتخطي الأحرف داخل أرقام الأسعار (مثل 1.12345)
+    result = []
+    i = 0
+    while i < len(text):
+        char = text[i]
+        # التحقق إذا كان الحرف جزء من رقم (نقطة بين أرقام)
+        if char == '.' and i > 0 and i < len(text) - 1:
+            prev_is_digit = text[i-1].isdigit()
+            next_is_digit = text[i+1].isdigit()
+            if prev_is_digit and next_is_digit:
+                result.append(char)  # نقطة عشرية - لا يتم تخطيها
+                i += 1
+                continue
+        
+        # تخطي الأحرف الخاصة إذا لزم الأمر
+        if char in special_chars:
+            # استثناء: لا يتم تخطي النجمة في بداية السطر (علامة نقطة)
+            if char == '*' and (i == 0 or text[i-1] == '\n'):
+                result.append(char)
+            else:
+                result.append(f'\\{char}')
+        else:
+            result.append(char)
+        i += 1
+    
+    return ''.join(result)
 
 def split_message(text, max_length=4000):
     if len(text) <= max_length:
@@ -1386,7 +1428,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             
         in_golden_window = 2 <= seconds_passed <= 58
         
-        # تبسيط الـ Prompt لتقليل وقت المعالجة
+        # تبسيط الـ Prompt
         MAIN_PROMPT = f"""
 أنت المحرك التحليلي لنظام Obeida Trading. استخرج المعطيات الرقمية بدقة.
 
@@ -1394,8 +1436,8 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 ⏱️ الوقت المتبقي: {seconds_remaining} ثانية
 
 📐 المعطيات الرقمية:
-• أعلى قمة (HH): [سعر]
-• أدنى قاع (LL): [سعر]
+• أعلى قمة HH: [سعر]
+• أدنى قاع LL: [سعر]
 • السعر الحالي: [سعر]
 
 ⚡ معطيات الزخم:
@@ -1417,55 +1459,47 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • Liquidity Sweep: [True/False]
 • Order Block: [True/False]
 • التمركز السعري: [PREMIUM/DISCOUNT/TRAP_ZONE]
-
-⚠️ رد بالأرقام فقط بدون شرح إضافي.
 """
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         payload = {
             "model": MISTRAL_MODEL,
             "messages": [{"role": "user", "content": [{"type": "text", "text": MAIN_PROMPT}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}]}],
-            "max_tokens": 600,  # تقليل من 800 إلى 600
+            "max_tokens": 600,
             "temperature": 0.0,
             "top_p": 1.0
         }
         
-        # شريط التقدم مع تأخير أقل
-        for i in range(1, 4):  # تقليل من 5 إلى 3 خطوات
-            await asyncio.sleep(2)  # تقليل من 3 إلى 2 ثواني
+        # شريط التقدم
+        for i in range(1, 4):
+            await asyncio.sleep(2)
             progress = i * 33
             bars = "⬜" * (3 - i) + "🟩" * i
             await wait_msg.edit_text(f"🤌 جاري تحليل الشارت... [{bars} {progress}%]")
         
-        # إرسال الطلب مع زيادة المهلة وإعادة المحاولة
+        # إرسال الطلب مع إعادة المحاولة
         response = None
         max_retries = 2
         for attempt in range(max_retries):
             try:
-                response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=90)  # زيادة المهلة إلى 90 ثانية
+                response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=90)
                 if response.status_code == 200:
                     break
-                elif response.status_code == 429:  # Too Many Requests
-                    await wait_msg.edit_text(f"⚠️ ضغط على الخادم، انتظر قليلاً... المحاولة {attempt + 2}")
+                elif response.status_code == 429:
+                    await wait_msg.edit_text(f"⚠️ ضغط على الخادم، انتظر... المحاولة {attempt + 2}")
                     await asyncio.sleep(5)
                     continue
                 else:
                     break
             except requests.exceptions.Timeout:
                 if attempt < max_retries - 1:
-                    await wait_msg.edit_text(f"⏳ المحاولة {attempt + 2} من {max_retries}...")
+                    await wait_msg.edit_text(f"⏳ المحاولة {attempt + 2}...")
                     await asyncio.sleep(3)
-                    continue
-                else:
-                    raise
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(2)
                     continue
                 else:
                     raise
         
         if not response or response.status_code != 200:
-            error_msg = f"❌ خطأ: {response.status_code if response else 'لا يوجد استجابة'}\nالرجاء المحاولة مرة أخرى."
+            error_msg = f"❌ خطأ: {response.status_code if response else 'لا يوجد استجابة'}"
             await wait_msg.edit_text(error_msg)
             return
             
@@ -1529,42 +1563,42 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         
         # تقييم جودة الإشارة
         if success_rate >= 85:
-            success_evaluation = "ممتاز ⭐⭐⭐"
+            success_evaluation = "ممتاز"
         elif success_rate >= 70:
-            success_evaluation = "جيد ⭐⭐"
+            success_evaluation = "جيد"
         else:
-            success_evaluation = "مقبول ⭐"
+            success_evaluation = "مقبول"
         
         # حساب حجم الاستثمار الديناميكي
         position_size = calculate_position_size(decision['confidence'])
         
         session_name, liquidity_level, session_message = (
-            ("LONDON", "HIGH", "🇬🇧 جلسة لندن - سيولة عالية") if 8 <= current_hour < 16 
-            else ("NEW_YORK", "HIGH", "🇺🇸 جلسة نيويورك - سيولة عالية") if 13 <= current_hour < 21 
-            else ("ASIA", "LOW", "🇯🇵 جلسة آسيا - سيولة منخفضة")
+            ("LONDON", "HIGH", "جلسة لندن - سيولة عالية") if 8 <= current_hour < 16 
+            else ("NEW_YORK", "HIGH", "جلسة نيويورك - سيولة عالية") if 13 <= current_hour < 21 
+            else ("ASIA", "LOW", "جلسة آسيا - سيولة منخفضة")
         )
         
         # تحذير النافذة الذهبية
         golden_window_warning = ""
         if not in_golden_window and seconds_passed > 0:
-            golden_window_warning = "\n⚠️ **تنبيه:** أنت خارج النافذة الذهبية (2-58 ثانية) - دقة التحليل أقل"
+            golden_window_warning = "\n⚠️ تنبيه: أنت خارج النافذة الذهبية - دقة التحليل أقل"
         
         # حساب وقت الذروة المتوقع
-        peak_time_message = f"خلال الـ {min(3, seconds_remaining)} شموع" if seconds_remaining > 3 else "قريباً جداً"
+        peak_time_message = f"خلال {min(3, seconds_remaining)} شموع" if seconds_remaining > 3 else "قريباً"
         
-        # بناء النتيجة
+        # بناء النتيجة بدون إيموجي معقدة
         formatted_result = f"""
-📊 **التحليل الفني المتقدم:**
+📊 التحليل الفني المتقدم
 
-🎯 **الإشارة التنفيذية:**
-• **السعر الحالي:** {current_price}
-• **اتجاه الموجة:** {'صاعد 📈' if current_direction == 'UP' else 'هابط 📉'}
-• **قوة الاندفاع:** {breakout_force:.2f}x
-• **قوة الإشارة:** {decision['signal_strength']}
-• **مستوى الثقة:** {decision['confidence']:.0f}% ({success_evaluation})
-• **نوع الدخول:** {decision['entry_type']}
+🎯 الإشارة التنفيذية
+• السعر الحالي: {current_price}
+• اتجاه الموجة: {'صاعد 📈' if current_direction == 'UP' else 'هابط 📉'}
+• قوة الاندفاع: {breakout_force:.2f}x
+• قوة الإشارة: {decision['signal_strength']}
+• مستوى الثقة: {decision['confidence']:.0f}% ({success_evaluation})
+• نوع الدخول: {decision['entry_type']}
 
-📐 **مستويات فيبوناتشي:**
+📐 مستويات فيبوناتشي
 • 0.236: {fib_levels.get('0.236', 'غير متوفر')}
 • 0.382: {fib_levels.get('0.382', 'غير متوفر')}
 • 0.500: {fib_500}
@@ -1573,45 +1607,46 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
 • 1.272: {fib_levels.get('1.272', 'غير متوفر')}
 • 1.618: {fib_levels.get('1.618', 'غير متوفر')}
 
-🎯 **نقاط الدخول والخروج:**
-• **نقطة الدخول المقترحة:** {trade_params['entry_price']:.6f}
-• **وقف الخسارة:** {trade_params['stop_loss']:.6f}
-• **الأهداف الربحية:**
-  🎯 TP1: {trade_params['tp1']:.6f}
-  🎯 TP2: {trade_params['tp2']:.6f}
-  🚀 TP3: {trade_params['tp3']:.6f}
+🎯 نقاط الدخول والخروج
+• نقطة الدخول: {trade_params['entry_price']:.6f}
+• وقف الخسارة: {trade_params['stop_loss']:.6f}
+• الأهداف:
+  TP1: {trade_params['tp1']:.6f}
+  TP2: {trade_params['tp2']:.6f}
+  TP3: {trade_params['tp3']:.6f}
 
-🔍 **معطيات SMC المتقدمة:**
-• **FVG:** {'✅ موجودة' if has_fvg else '❌ غير موجودة'} {fvg_details}
-• **Liquidity Sweep:** {'✅ موجود' if has_liquidity_sweep else '❌ غير موجود'}
-• **Order Block:** {'✅ موجود' if has_order_block else '❌ غير موجود'}
-• **التمركز السعري:** {positioning} {'(منطقة خصم 📉)' if is_in_discount else '(منطقة علاوة 📈)' if is_in_premium else '(منطقة محايدة)'}
+🔍 معطيات SMC
+• FVG: {'موجودة ✅' if has_fvg else 'غير موجودة ❌'} {fvg_details}
+• Liquidity Sweep: {'موجود ✅' if has_liquidity_sweep else 'غير موجود ❌'}
+• Order Block: {'موجود ✅' if has_order_block else 'غير موجود ❌'}
+• التمركز السعري: {positioning} {'(منطقة خصم)' if is_in_discount else '(منطقة علاوة)' if is_in_premium else '(منطقة محايدة)'}
 
-⚠️ **إدارة المخاطر:**
-• **نسبة نجاح متوقعة:** {success_rate:.0f}%
-• **حجم الاستثمار المقترح:** {position_size}
-• **المخاطرة:** {decision['risk_level']}
-• **قرار فني:** {decision['final_decision']}
+⚠️ إدارة المخاطر
+• نسبة نجاح متوقعة: {success_rate:.0f}%
+• حجم الاستثمار: {position_size}
+• المخاطرة: {decision['risk_level']}
+• القرار الفني: {decision['final_decision']}
 
 ━━━━━━━━━━━━━━━
-🌍 **جلسة التداول:** {session_message}
-⏱️ **الفريم:** {candle} | **الوقت المتبقي:** {seconds_remaining} ثانية
-⏰ **الوقت المنقضي:** {seconds_passed} ثانية
-⚡ **وقت الذروة:** {peak_time_message}
+🌍 {session_message}
+⏱️ الفريم: {candle} | الوقت المتبقي: {seconds_remaining} ثانية
+⏰ الوقت المنقضي: {seconds_passed} ثانية
+⚡ وقت الذروة: {peak_time_message}
 {golden_window_warning}
-🤖 **Obeida Trading Pro v3.0**
+🤖 Obeida Trading Pro v3.0
 """
         
+        # تنظيف النص النهائي
         full_result = clean_repeated_text(formatted_result)
         
-        # معالجة تقسيم الرسائل الطويلة
+        # إرسال النص بدون parse_mode للتأكد
         if len(full_result) > 4000:
             parts = split_message(full_result, 3500)
-            await wait_msg.edit_text(parts[0], parse_mode="Markdown")
+            await wait_msg.edit_text(parts[0])
             for part in parts[1:]:
-                await update.message.reply_text(part, parse_mode="Markdown")
+                await update.message.reply_text(part)
         else:
-            await wait_msg.edit_text(full_result, parse_mode="Markdown")
+            await wait_msg.edit_text(full_result)
         
         # تحديث إحصائيات المستخدم
         SubscriptionSystem.increment_analyses(user_id)
@@ -1621,7 +1656,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
     except asyncio.CancelledError:
         raise
     except requests.exceptions.Timeout:
-        await update.message.reply_text("❌ **انتهت مهلة الاتصال بالخادم**\n\nيرجى المحاولة مرة أخرى.\n\n💡 **نصائح:**\n• تأكد من جودة الصورة\n• حاول ضغط الصورة بشكل أكبر\n• أعد المحاولة بعد بضع ثواني")
+        await update.message.reply_text("❌ انتهت مهلة الاتصال بالخادم\n\nيرجى المحاولة مرة أخرى.")
         return None
     except Exception as e:
         await update.message.reply_text(f"❌ خطأ: {str(e)[:200]}")
