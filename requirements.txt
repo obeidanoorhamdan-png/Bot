@@ -10,3 +10,4 @@ emoji
 pytz
 pytz-deprecation-shim
 psutil
+feedparser
