@@ -1397,7 +1397,7 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
     try:
         wait_msg = await update.message.reply_text("🤌 جاري تحليل الشارت... [⬜⬜⬜⬜⬜ 0%]")
         
-        # ضغط الصورة بشكل أقوى لسرعة الرفع
+        # ضغط الصورة
         compressed_path = compress_image(image_path, quality=70, max_size=(800, 800))
         base64_img = encode_image(compressed_path)
         
@@ -1427,36 +1427,27 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
             seconds_passed = 0
             
         in_golden_window = 2 <= seconds_passed <= 58
+        candle_status = "مغلقة" if seconds_remaining <= 0 else "مفتوحة"
         
         # تبسيط الـ Prompt
         MAIN_PROMPT = f"""
 أنت المحرك التحليلي لنظام Obeida Trading. استخرج المعطيات الرقمية بدقة.
 
-📊 الفريم: {candle}
-⏱️ الوقت المتبقي: {seconds_remaining} ثانية
-
-📐 المعطيات الرقمية:
-• أعلى قمة HH: [سعر]
-• أدنى قاع LL: [سعر]
+المطلوب استخراجه:
+• أعلى قمة (HH): [سعر]
+• أدنى قاع (LL): [سعر]
 • السعر الحالي: [سعر]
-
-⚡ معطيات الزخم:
 • قوة الاندفاع: [رقم عشري]
 • اتجاه الموجة: [UP/DOWN]
-
-📈 مستويات فيبوناتشي:
-• 0.236: [سعر]
-• 0.382: [سعر]
-• 0.500: [سعر]
-• 0.618: [سعر]
-• 0.786: [سعر]
-• 1.272: [سعر]
-• 1.618: [سعر]
-
-🔍 معطيات SMC:
+• مستوى 0.500 فيبوناتشي: [سعر]
+• مستوى 0.236 فيبوناتشي: [سعر]
+• مستوى 0.382 فيبوناتشي: [سعر]
+• مستوى 0.618 فيبوناتشي: [سعر]
+• مستوى 0.786 فيبوناتشي: [سعر]
+• مستوى 1.272 فيبوناتشي: [سعر]
+• مستوى 1.618 فيبوناتشي: [سعر]
 • FVG: [True/False]
 • مستويات FVG: [من X إلى Y]
-• Liquidity Sweep: [True/False]
 • Order Block: [True/False]
 • التمركز السعري: [PREMIUM/DISCOUNT/TRAP_ZONE]
 """
@@ -1499,12 +1490,10 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                     raise
         
         if not response or response.status_code != 200:
-            error_msg = f"❌ خطأ: {response.status_code if response else 'لا يوجد استجابة'}"
-            await wait_msg.edit_text(error_msg)
+            await wait_msg.edit_text(f"❌ خطأ: {response.status_code if response else 'لا يوجد استجابة'}")
             return
             
         analysis_result = response.json()['choices'][0]['message']['content'].strip()
-        analysis_result = clean_repeated_text(analysis_result)
         
         import re
         hh_match = re.search(r'أعلى قمة.*?:\s*([\d.]+)', analysis_result)
@@ -1514,7 +1503,6 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         direction_match = re.search(r'اتجاه الموجة.*?:\s*([A-Z]+)', analysis_result)
         fvg_match = re.search(r'FVG.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
         fvg_levels_match = re.search(r'مستويات FVG.*?:\s*من\s*([\d.]+)\s*إلى\s*([\d.]+)', analysis_result)
-        liquidity_sweep_match = re.search(r'Liquidity Sweep.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
         order_block_match = re.search(r'Order Block.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
         positioning_match = re.search(r'التمركز السعري.*?:\s*([A-Z_]+)', analysis_result)
         
@@ -1527,131 +1515,169 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
                 fib_levels[fib_key] = float(fib_match.group(1))
         
         has_fvg = fvg_match.group(1).upper() == "TRUE" if fvg_match else False
-        has_liquidity_sweep = liquidity_sweep_match.group(1).upper() == "TRUE" if liquidity_sweep_match else False
         has_order_block = order_block_match.group(1).upper() == "TRUE" if order_block_match else False
         positioning = positioning_match.group(1) if positioning_match else "NEUTRAL"
         
-        highest_high = float(hh_match.group(1)) if hh_match else 0
-        lowest_low = float(ll_match.group(1)) if ll_match else 0
         current_price = float(current_price_match.group(1)) if current_price_match else 0
         breakout_force = float(breakout_force_match.group(1)) if breakout_force_match else 1.0
         current_direction = direction_match.group(1).upper() if direction_match else "UP"
         
         fvg_details = ""
+        fvg_status = "غير مؤكدة"
         if has_fvg and fvg_levels_match:
             fvg_from = float(fvg_levels_match.group(1))
             fvg_to = float(fvg_levels_match.group(2))
             fvg_details = f"[{fvg_from} إلى {fvg_to}]"
+            fvg_status = "مؤكدة"
         
         # حساب التمركز السعري
         fib_500 = fib_levels.get("0.500", current_price)
         is_in_discount = current_price < fib_500
         is_in_premium = current_price > fib_500
         
-        # حساب معاملات الصفقة
-        trade_params = calculate_trade_parameters(current_price, fib_levels, current_direction, breakout_force)
+        # تحديد القرار الفني
+        decision = get_simple_trading_decision(current_direction, breakout_force, has_fvg, has_order_block, positioning, current_price, fib_500)
         
-        # حساب الثقة وقوة الإشارة
-        decision = get_trading_decision(
-            current_price, fib_levels, current_direction, breakout_force,
-            has_fvg, has_liquidity_sweep, has_order_block, positioning
-        )
-        
-        # حساب نسبة النجاح المتوقعة
-        success_rate = decision['confidence']
-        success_rate = min(95, max(55, success_rate))
-        
-        # تقييم جودة الإشارة
-        if success_rate >= 85:
-            success_evaluation = "ممتاز"
-        elif success_rate >= 70:
-            success_evaluation = "جيد"
+        # حساب قوة الإشارة
+        if breakout_force > 1.5:
+            signal_strength = "عالية جدا 💥"
+            confidence_base = 85
+        elif breakout_force > 1.2:
+            signal_strength = "عالية 🔥"
+            confidence_base = 75
+        elif breakout_force > 1.0:
+            signal_strength = "متوسطة ⚡"
+            confidence_base = 65
         else:
-            success_evaluation = "مقبول"
+            signal_strength = "ضعيفة ❄️"
+            confidence_base = 55
         
-        # حساب حجم الاستثمار الديناميكي
-        position_size = calculate_position_size(decision['confidence'])
+        # تعديل الثقة بناءً على العوامل الأخرى
+        confidence = confidence_base
+        if has_fvg:
+            confidence += 5
+        if has_order_block:
+            confidence += 5
+        if positioning == "DISCOUNT" and current_direction == "UP":
+            confidence += 5
+        elif positioning == "PREMIUM" and current_direction == "DOWN":
+            confidence += 5
+        elif positioning == "TRAP_ZONE":
+            confidence -= 10
         
-        session_name, liquidity_level, session_message = (
-            ("LONDON", "HIGH", "جلسة لندن - سيولة عالية") if 8 <= current_hour < 16 
-            else ("NEW_YORK", "HIGH", "جلسة نيويورك - سيولة عالية") if 13 <= current_hour < 21 
-            else ("ASIA", "LOW", "جلسة آسيا - سيولة منخفضة")
-        )
+        confidence = min(100, max(0, confidence))
         
-        # تحذير النافذة الذهبية
-        golden_window_warning = ""
-        if not in_golden_window and seconds_passed > 0:
-            golden_window_warning = "\n⚠️ تنبيه: أنت خارج النافذة الذهبية - دقة التحليل أقل"
+        # تقييم نسبة النجاح
+        if confidence >= 85:
+            success_rate = 85 + (confidence - 85) * 0.5
+            success_evaluation = "ممتاز"
+            success_icon = "💥"
+        elif confidence >= 70:
+            success_rate = 70 + (confidence - 70) * 0.5
+            success_evaluation = "جيد"
+            success_icon = "🔥"
+        elif confidence >= 55:
+            success_rate = 55 + (confidence - 55) * 0.5
+            success_evaluation = "متوسط"
+            success_icon = "⚡"
+        else:
+            success_rate = confidence * 0.8
+            success_evaluation = "ضعيف"
+            success_icon = "❄️"
         
-        # حساب وقت الذروة المتوقع
-        peak_time_message = f"خلال {min(3, seconds_remaining)} شموع" if seconds_remaining > 3 else "قريباً"
+        success_rate = min(95, max(45, success_rate))
         
-        # بناء النتيجة بدون إيموجي معقدة
+        # حجم الاستثمار
+        if confidence >= 85:
+            position_size = "5% - عالي المخاطرة"
+        elif confidence >= 70:
+            position_size = "3% - متوسط المخاطرة"
+        elif confidence >= 55:
+            position_size = "2% - منخفض المخاطرة"
+        else:
+            position_size = "1% - تجنب الدخول"
+        
+        # حساب نقاط الدخول والخروج
+        if current_direction == "UP":
+            entry_price = current_price
+            tp1 = fib_levels.get("0.500", current_price * 1.005)
+            tp2 = fib_levels.get("0.236", current_price * 1.01)
+            tp3 = fib_levels.get("1.272", current_price * 1.02)
+            stop_loss = fib_levels.get("0.618", current_price * 0.995)
+        else:
+            entry_price = current_price
+            tp1 = fib_levels.get("0.500", current_price * 0.995)
+            tp2 = fib_levels.get("0.236", current_price * 0.99)
+            tp3 = fib_levels.get("1.272", current_price * 0.98)
+            stop_loss = fib_levels.get("0.618", current_price * 1.005)
+        
+        # المدة المتوقعة
+        if candle.startswith('S'):
+            expected_minutes = round((seconds_remaining / 60), 1)
+            expected_duration = f"{expected_minutes} دقيقة"
+        elif candle.startswith('M'):
+            expected_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
+            expected_duration = f"{expected_minutes} دقيقة"
+        else:
+            expected_duration = "غير محدد"
+        
+        # وقت الذروة
+        if seconds_remaining > 0:
+            peak_time = f"خلال الـ {min(3, seconds_remaining // 60 + 1 if seconds_remaining >= 60 else 1)} شموع القادمة"
+        else:
+            peak_time = "قريباً"
+        
+        # مستوى الثقة
+        if confidence >= 85:
+            confidence_icon = "💥"
+        elif confidence >= 70:
+            confidence_icon = "🔥"
+        elif confidence >= 55:
+            confidence_icon = "⚡"
+        elif confidence >= 40:
+            confidence_icon = "🔄"
+        else:
+            confidence_icon = "🚫"
+        
+        # بناء النتيجة بالتنسيق المطلوب
         formatted_result = f"""
-📊 التحليل الفني المتقدم
+📊 **التحليل الفني المتقدم:**
+• بروتوكول الفشل الذاتي: الصورة صالحة
+• الوقت على المنصة (المرجع): {datetime.utcnow().strftime('%H:%M:%S')} UTC
+• حالة النافذة الذهبية: {"✅ داخل النافذة - دقة عالية" if in_golden_window else "❌ خارج النافذة - دقة أقل 15%"}
+• FVG (الفجوة السعرية): {fvg_details if fvg_details else 'غير موجودة'} - {fvg_status}
+• Order Block (كتلة الأوامر): {"موجودة" if has_order_block else "غير موجودة"} - {"قوة: عالية" if has_order_block and breakout_force > 1.2 else "قوة: متوسطة" if has_order_block else "قوة: ضعيفة"}
 
-🎯 الإشارة التنفيذية
-• السعر الحالي: {current_price}
-• اتجاه الموجة: {'صاعد 📈' if current_direction == 'UP' else 'هابط 📉'}
-• قوة الاندفاع: {breakout_force:.2f}x
-• قوة الإشارة: {decision['signal_strength']}
-• مستوى الثقة: {decision['confidence']:.0f}% ({success_evaluation})
-• نوع الدخول: {decision['entry_type']}
+🎯 **الإشارة التنفيذية:**
+• السعر الحالي: {current_price:.6f}
+• حالة الشمعة: {candle_status} - الوقت المتبقي: {seconds_remaining} ثانية
 
-📐 مستويات فيبوناتشي
-• 0.236: {fib_levels.get('0.236', 'غير متوفر')}
-• 0.382: {fib_levels.get('0.382', 'غير متوفر')}
-• 0.500: {fib_500}
-• 0.618: {fib_levels.get('0.618', 'غير متوفر')}
-• 0.786: {fib_levels.get('0.786', 'غير متوفر')}
-• 1.272: {fib_levels.get('1.272', 'غير متوفر')}
-• 1.618: {fib_levels.get('1.618', 'غير متوفر')}
+• القرار الفني: {decision['action']}
 
-🎯 نقاط الدخول والخروج
-• نقطة الدخول: {trade_params['entry_price']:.6f}
-• وقف الخسارة: {trade_params['stop_loss']:.6f}
-• الأهداف:
-  TP1: {trade_params['tp1']:.6f}
-  TP2: {trade_params['tp2']:.6f}
-  TP3: {trade_params['tp3']:.6f}
+• قوة الإشارة: {signal_strength}
+• نقطة الدخول : {entry_price:.6f} - (يجب أن تكون في المنطقة الذهبية)
+• نوع الدخول 🚨: {decision['entry_type']}
+• **الأهداف الربحية:**
+  🎯 TP1: {tp1:.6f} - (مستوى 0.500)
+  🎯 TP2: {tp2:.6f} - (مستوى 0.236 أو القمة/القاع)
+  🎯 TP3: {tp3:.6f} - (مستوى 1.272 أو 1.618)
+• وقف الخسارة: {stop_loss:.6f} - (أسفل/أعلى المنطقة الذهبية)
+• المدة المتوقعة: {expected_duration}
+• وقت الذروة المتوقع: {peak_time}
 
-🔍 معطيات SMC
-• FVG: {'موجودة ✅' if has_fvg else 'غير موجودة ❌'} {fvg_details}
-• Liquidity Sweep: {'موجود ✅' if has_liquidity_sweep else 'غير موجود ❌'}
-• Order Block: {'موجود ✅' if has_order_block else 'غير موجود ❌'}
-• التمركز السعري: {positioning} {'(منطقة خصم)' if is_in_discount else '(منطقة علاوة)' if is_in_premium else '(منطقة محايدة)'}
-
-⚠️ إدارة المخاطر
-• نسبة نجاح متوقعة: {success_rate:.0f}%
+⚠️ **إدارة المخاطر:**
+• مستوى الثقة: {confidence:.0f}% = {confidence_icon}
+• نسبة نجاح الصفقة المتوقعة : {success_rate:.0f}% - {success_evaluation}
 • حجم الاستثمار: {position_size}
-• المخاطرة: {decision['risk_level']}
-• القرار الفني: {decision['final_decision']}
-
-━━━━━━━━━━━━━━━
-🌍 {session_message}
-⏱️ الفريم: {candle} | الوقت المتبقي: {seconds_remaining} ثانية
-⏰ الوقت المنقضي: {seconds_passed} ثانية
-⚡ وقت الذروة: {peak_time_message}
-{golden_window_warning}
-🤖 Obeida Trading Pro v3.0
 """
         
-        # تنظيف النص النهائي
-        full_result = clean_repeated_text(formatted_result)
-        
-        # إرسال النص بدون parse_mode للتأكد
-        if len(full_result) > 4000:
-            parts = split_message(full_result, 3500)
-            await wait_msg.edit_text(parts[0])
-            for part in parts[1:]:
-                await update.message.reply_text(part)
-        else:
-            await wait_msg.edit_text(full_result)
+        # إرسال النتيجة
+        await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
         
         # تحديث إحصائيات المستخدم
         SubscriptionSystem.increment_analyses(user_id)
         
-        return full_result
+        return formatted_result
         
     except asyncio.CancelledError:
         raise
@@ -1662,130 +1688,61 @@ async def analyze_chart_image(update, context, image_path, candle, trade_time, s
         await update.message.reply_text(f"❌ خطأ: {str(e)[:200]}")
         return None
 
-def calculate_fibonacci_levels(high_price, low_price, direction):
-    """حساب مستويات فيبوناتشي بدقة"""
-    diff = high_price - low_price
-    fib_levels = {
-        "0.236": high_price - (diff * 0.236) if direction == "UP" else low_price + (diff * 0.236),
-        "0.382": high_price - (diff * 0.382) if direction == "UP" else low_price + (diff * 0.382),
-        "0.500": high_price - (diff * 0.500) if direction == "UP" else low_price + (diff * 0.500),
-        "0.618": high_price - (diff * 0.618) if direction == "UP" else low_price + (diff * 0.618),
-        "0.786": high_price - (diff * 0.786) if direction == "UP" else low_price + (diff * 0.786),
-        "1.272": high_price + (diff * 0.272) if direction == "UP" else low_price - (diff * 0.272),
-        "1.618": high_price + (diff * 0.618) if direction == "UP" else low_price - (diff * 0.618)
-    }
-    return fib_levels
-
-def calculate_trade_parameters(current_price, fib_levels, direction, breakout_force):
-    """حساب معاملات الصفقة مع فحص السيولة"""
-    entry_price = current_price
-    stop_loss = 0
-    tp1 = 0
-    tp2 = 0
-    tp3 = 0
+def get_simple_trading_decision(direction, breakout_force, has_fvg, has_order_block, positioning, current_price, fib_500):
+    """تحديد القرار الفني بناءً على المعطيات"""
     
-    # فحص السيولة الصارم
-    if breakout_force > 1.2:
-        # سيولة عالية - دخول أكثر عدوانية
-        if direction == "UP":
-            stop_loss = fib_levels.get("0.786", current_price * 0.998)
-            tp1 = fib_levels.get("1.272", current_price * 1.005)
-            tp2 = fib_levels.get("1.618", current_price * 1.01)
-            tp3 = fib_levels.get("1.618", current_price * 1.02) + (breakout_force * 0.5)
+    if direction == "UP":
+        if breakout_force > 1.5 and has_fvg:
+            return {
+                'action': 'شراء 🟢',
+                'entry_type': 'دخول مباشر'
+            }
+        elif breakout_force > 1.2 and has_order_block:
+            return {
+                'action': 'كسر هيكلي صاعد 💥🟢',
+                'entry_type': 'دخول مباشر'
+            }
+        elif positioning == "DISCOUNT" and current_price < fib_500:
+            return {
+                'action': 'سحب سيولة صاعد 🔄🟢',
+                'entry_type': 'إعادة اختبار'
+            }
+        elif breakout_force > 1.0:
+            return {
+                'action': 'انعكاس فوري صاعد 🔄🟢',
+                'entry_type': 'انعكاس فوري'
+            }
         else:
-            stop_loss = fib_levels.get("0.786", current_price * 1.002)
-            tp1 = fib_levels.get("1.272", current_price * 0.995)
-            tp2 = fib_levels.get("1.618", current_price * 0.99)
-            tp3 = fib_levels.get("1.618", current_price * 0.98) - (breakout_force * 0.5)
-    else:
-        # سيولة منخفضة - دخول محافظ
-        if direction == "UP":
-            stop_loss = fib_levels.get("0.618", current_price * 0.998)
-            tp1 = fib_levels.get("1.272", current_price * 1.003)
-            tp2 = fib_levels.get("1.618", current_price * 1.007)
-            tp3 = fib_levels.get("1.618", current_price * 1.015)
+            return {
+                'action': 'انتظار تصحيح 🟡',
+                'entry_type': 'دخول معلق'
+            }
+    else:  # DOWN
+        if breakout_force > 1.5 and has_fvg:
+            return {
+                'action': 'بيع 🔴',
+                'entry_type': 'دخول مباشر'
+            }
+        elif breakout_force > 1.2 and has_order_block:
+            return {
+                'action': 'كسر هيكلي هابط 💥🔴',
+                'entry_type': 'دخول مباشر'
+            }
+        elif positioning == "PREMIUM" and current_price > fib_500:
+            return {
+                'action': 'سحب سيولة هابط 🔄🔴',
+                'entry_type': 'إعادة اختبار'
+            }
+        elif breakout_force > 1.0:
+            return {
+                'action': 'انعكاس فوري هابط 🔄🔴',
+                'entry_type': 'انعكاس فوري'
+            }
         else:
-            stop_loss = fib_levels.get("0.618", current_price * 1.002)
-            tp1 = fib_levels.get("1.272", current_price * 0.997)
-            tp2 = fib_levels.get("1.618", current_price * 0.993)
-            tp3 = fib_levels.get("1.618", current_price * 0.985)
-    
-    return {
-        "entry_price": entry_price,
-        "stop_loss": stop_loss,
-        "tp1": tp1,
-        "tp2": tp2,
-        "tp3": tp3
-    }
-
-def get_trading_decision(current_price, fib_levels, direction, breakout_force, has_fvg, has_liquidity_sweep, has_order_block, positioning):
-    """حساب الثقة وقوة الإشارة"""
-    confidence = 50  # أساس الثقة
-    signal_strength = "ضعيفة"
-    entry_type = "دخول معلق"
-    risk_level = "عالي"
-    final_decision = "انتظار تأكيد إضافي"
-    
-    # عوامل تعزيز الثقة
-    if breakout_force > 1.2:
-        confidence += 15
-    elif breakout_force > 1.0:
-        confidence += 8
-    
-    if has_fvg:
-        confidence += 10
-    if has_liquidity_sweep:
-        confidence += 12
-    if has_order_block:
-        confidence += 8
-    
-    if positioning == "DISCOUNT" and direction == "UP":
-        confidence += 10
-    elif positioning == "PREMIUM" and direction == "DOWN":
-        confidence += 10
-    elif positioning == "TRAP_ZONE":
-        confidence -= 15
-    
-    # تحديد قوة الإشارة
-    if confidence >= 80:
-        signal_strength = "قوية جداً 🚀"
-        entry_type = "دخول مباشر"
-        risk_level = "منخفض"
-        final_decision = "دخول قوي مع تأكيد"
-    elif confidence >= 65:
-        signal_strength = "قوية ✅"
-        entry_type = "دخول مباشر"
-        risk_level = "متوسط"
-        final_decision = "دخول مقبول"
-    elif confidence >= 50:
-        signal_strength = "متوسطة ⚠️"
-        entry_type = "دخول معلق"
-        risk_level = "مرتفع"
-        final_decision = "دخول بحذر"
-    else:
-        signal_strength = "ضعيفة ❌"
-        entry_type = "بدون دخول"
-        risk_level = "عالي جداً"
-        final_decision = "انتظار تحسن الظروف"
-    
-    return {
-        "confidence": confidence,
-        "signal_strength": signal_strength,
-        "entry_type": entry_type,
-        "risk_level": risk_level,
-        "final_decision": final_decision
-    }
-
-def calculate_position_size(confidence_score):
-    """حساب حجم الاستثمار الديناميكي"""
-    if confidence_score >= 85:
-        return "5% 🟢"
-    elif confidence_score >= 70:
-        return "3% 🟡"
-    elif confidence_score >= 55:
-        return "2% 🟠"
-    else:
-        return "1% 🔴"
+            return {
+                'action': 'انتظار تصحيح 🟡',
+                'entry_type': 'دخول معلق'
+            }
 
 def split_message(text, max_length=3500):
     """تقسيم الرسالة الطويلة"""
