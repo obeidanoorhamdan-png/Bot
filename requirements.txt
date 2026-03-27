@@ -11,3 +11,4 @@ feedparser
 pytz
 pytz-deprecation-shim
 psutil
+python-dateutil
