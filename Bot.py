@@ -6,7 +6,6 @@ import re
 import requests
 import threading
 import time
-import sys
 import traceback
 import asyncio
 import json
@@ -144,6 +143,39 @@ def get_current_session():
     else:
         return {'name': '🌊 جلسة المحيط الهادئ', 'volatility': 'منخفضة جداً', 'success_rate': '55-65%', 'features': 'سيولة منخفضة', 'time_range': '21:00-00:00 UTC'}
 
+def get_user_timezone(user_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT timezone FROM users WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result and result[0] else "GMT+02:00"
+
+def set_user_timezone(user_id, timezone):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO users (user_id, timezone) VALUES (?, ?)", (user_id, timezone))
+    else:
+        cursor.execute("UPDATE users SET timezone = ? WHERE user_id = ?", (timezone, user_id))
+    conn.commit()
+    conn.close()
+
+def get_localized_time(user_id):
+    try:
+        tz_str = get_user_timezone(user_id)
+        if tz_str.startswith('GMT'):
+            offset_str = tz_str.replace('GMT', '')
+            if offset_str and offset_str[0] in ('+', '-'):
+                hours = int(offset_str.split(':')[0])
+                minutes = int(offset_str.split(':')[1]) if ':' in offset_str else 0
+                tz = pytz.FixedOffset(hours * 60 + (minutes if hours >= 0 else -minutes))
+                return datetime.now(tz)
+        return datetime.now(pytz.UTC)
+    except:
+        return datetime.now()
+
 # ============================================
 # نظام الاشتراك
 # ============================================
@@ -197,6 +229,7 @@ class SubscriptionSystem:
         
         conn.commit()
         conn.close()
+        print("✅ تم تهيئة نظام الاشتراك")
     
     @staticmethod
     def register_user(user_id, username=None, first_name=None):
@@ -684,10 +717,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            candle TEXT DEFAULT 'M1',
+            trade_time TEXT DEFAULT 'قصير (1m-15m)',
+            timezone TEXT DEFAULT 'GMT+02:00'
+        )
+    ''')
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user.id,))
     if not cursor.fetchone():
-        cursor.execute("INSERT INTO users (user_id, username, candle, trade_time) VALUES (?, ?, ?, ?)", 
-                      (user.id, user.username, "M1", "قصير (1m-15m)"))
+        cursor.execute("INSERT INTO users (user_id, username, candle, trade_time, timezone) VALUES (?, ?, ?, ?, ?)", 
+                      (user.id, user.username, "M1", "قصير (1m-15m)", "GMT+02:00"))
     conn.commit()
     conn.close()
     
@@ -723,15 +765,21 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prices = "\n".join([f"• {v['name']}: {v['price']}{v['currency']}" for v in SUBSCRIPTION_PRICES.values()])
         await update.message.reply_text(
             f"🛒 **متجر الاشتراكات**\n\n💰 الأسعار:\n{prices}\n\n"
-            f"📞 للاشتراك: @Sz2zv",
+            f"📞 للاشتراك: @Sz2zv\n\n"
+            f"بعد الدفع، أرسل إيصال الدفع للمشرف",
             parse_mode="Markdown"
         )
         return MAIN_MENU
     elif msg == "🔄 تم التحديث":
         await update.message.reply_text(
             "🔄 **تم تحديث البوت!**\n\n"
-            "✨ ميزات جديدة:\n• تحليل متطور مع فيبوناتشي\n• نافذة تنفيذ ذهبية\n• شريط تقدم متحرك\n\n"
-            "📤 أرسل صورة للتحليل",
+            "✨ **الميزات الجديدة:**\n"
+            "• تحليل متقدم مع فيبوناتشي\n"
+            "• نافذة تنفيذ ذهبية\n"
+            "• شريط تقدم متحرك\n"
+            "• مؤشرات SMC (FVG, Order Block)\n"
+            "• تحليل دقة الوقت\n\n"
+            "📤 أرسل صورة للتحليل الآن",
             parse_mode="Markdown"
         )
         return MAIN_MENU
@@ -739,27 +787,49 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await admin_panel(update, context)
     elif msg == "📊 معلومات الجلسة":
         session = get_current_session()
+        local_time = get_localized_time(uid)
         await update.message.reply_text(
-            f"🌐 **معلومات الجلسة**\n\n📍 {session['name']}\n"
-            f"📊 التقلب: {session['volatility']}\n🎯 النجاح: {session['success_rate']}\n⏰ {session['time_range']}",
+            f"🌐 **معلومات الجلسة**\n\n"
+            f"📍 {session['name']}\n"
+            f"📊 التقلب: {session['volatility']}\n"
+            f"🎯 نسبة النجاح: {session['success_rate']}\n"
+            f"⏰ وقت الجلسة: {session['time_range']}\n"
+            f"✨ {session['features']}\n\n"
+            f"🕒 وقتك المحلي: {local_time.strftime('%Y-%m-%d %H:%M:%S')}",
             parse_mode="Markdown"
         )
         return MAIN_MENU
     elif msg == "👤 معلوماتي":
         info = SubscriptionSystem.get_user_info(uid)
         remaining = SubscriptionSystem.get_remaining_time(uid)
-        remain_text = f"\n⏳ المتبقي: {remaining.days} يوم {remaining.seconds//3600} ساعة" if remaining else ""
+        remain_text = f"\n⏳ المدة المتبقية: {remaining.days} يوم {remaining.seconds//3600} ساعة" if remaining else ""
+        
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT candle, trade_time FROM users WHERE user_id = ?", (uid,))
+        settings = cursor.fetchone()
+        conn.close()
+        
         await update.message.reply_text(
-            f"👤 **معلوماتك**\n\n🆔 `{uid}`\n📊 تحليلات: {info['total_analyses'] if info else 0}{remain_text}",
+            f"👤 **معلوماتك الشخصية**\n\n"
+            f"🆔 المعرف: `{uid}`\n"
+            f"👤 اليوزر: @{info['username'] if info else 'لا يوجد'}\n"
+            f"📈 إجمالي التحليلات: {info['total_analyses'] if info else 0}{remain_text}\n"
+            f"⚙️ إعدادات التحليل:\n"
+            f"  • سرعة الشموع: `{settings[0] if settings else 'M1'}`\n"
+            f"  • مدة الصفقة: `{settings[1] if settings else 'قصير'}`\n"
+            f"🌍 منطقتك الزمنية: {info['timezone'] if info else 'GMT+02:00'}",
             parse_mode="Markdown"
         )
         return MAIN_MENU
     elif msg == "⚙️ إعدادات التحليل":
         keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
-        keyboard.append(["الرجوع"])
+        keyboard.append(["🔙 الرجوع للقائمة"])
         await update.message.reply_text(
-            "⚙️ اختر سرعة الشموع:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            "⚙️ **إعدادات التحليل الفني**\n\n"
+            "اختر سرعة الشموع المناسبة:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+            parse_mode="Markdown"
         )
         return SETTINGS_CANDLE
     
@@ -770,14 +840,17 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     if uid == ADMIN_ID:
         keyboard.append(["👑 لوحة التحكم"])
-    await update.message.reply_text("اختر من القائمة:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+    await update.message.reply_text(
+        "📊 **اختر من القائمة:**",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    )
     return MAIN_MENU
 
 async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
     uid = update.effective_user.id
     
-    if msg == "الرجوع":
+    if msg == "🔙 الرجوع للقائمة":
         return await start(update, context)
     
     if msg in CANDLE_SPEEDS:
@@ -792,21 +865,23 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
         conn.close()
         
         keyboard = [TRADE_TIMES[i:i+2] for i in range(0, len(TRADE_TIMES), 2)]
-        keyboard.append(["الرجوع"])
+        keyboard.append(["🔙 الرجوع للقائمة"])
         await update.message.reply_text(
-            f"✅ تم تعيين سرعة الشموع: {msg}\n\nاختر مدة الصفقة:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            f"✅ **تم تعيين سرعة الشموع:** {msg}\n\n"
+            f"⬇️ الآن حدد **مدة الصفقة**:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+            parse_mode="Markdown"
         )
         return SETTINGS_TIME
     
-    await update.message.reply_text("❌ اختر سرعة صحيحة")
+    await update.message.reply_text("❌ الرجاء اختيار سرعة شموع صحيحة.")
     return SETTINGS_CANDLE
 
 async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
     uid = update.effective_user.id
     
-    if msg == "الرجوع":
+    if msg == "🔙 الرجوع للقائمة":
         return await start(update, context)
     
     if msg in TRADE_TIMES:
@@ -817,22 +892,28 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
         conn.close()
         
         await update.message.reply_text(
-            f"✅ تم حفظ الإعدادات!\n\n📤 أرسل صورة الشارت للتحليل",
-            reply_markup=ReplyKeyboardMarkup([["الرجوع"]], resize_keyboard=True)
+            f"✅ **تم حفظ الإعدادات بنجاح!**\n\n"
+            f"✅ مدة الصفقة: {msg}\n\n"
+            f"📤 **قم الآن برفع صورة الشارت للتحليل:**",
+            reply_markup=ReplyKeyboardMarkup([["🔙 الرجوع للقائمة"]], resize_keyboard=True),
+            parse_mode="Markdown"
         )
         return ANALYZE_MODE
     
-    await update.message.reply_text("❌ اختر مدة صحيحة")
+    await update.message.reply_text("❌ الرجاء اختيار مدة صفقة صحيحة.")
     return SETTINGS_TIME
 
 async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == "الرجوع":
+    if update.message.text == "🔙 الرجوع للقائمة":
         return await start(update, context)
     
     if update.message.photo:
         return await handle_photo_analysis(update, context)
     
-    await update.message.reply_text("📤 أرسل صورة الشارت للتحليل")
+    await update.message.reply_text(
+        "📤 **الرجاء إرسال صورة الشارت للتحليل**\nأو اضغط 'الرجوع للقائمة'",
+        reply_markup=ReplyKeyboardMarkup([["🔙 الرجوع للقائمة"]], resize_keyboard=True)
+    )
     return ANALYZE_MODE
 
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -844,7 +925,9 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     with analysis_lock:
         if user_id in active_analyses and active_analyses[user_id]:
             await update.message.reply_text(
-                "⏳ **يوجد تحليل قيد التنفيذ!**\nالرجاء الانتظار.",
+                "⏳ **يوجد تحليل قيد التنفيذ!**\n\n"
+                "الرجاء الانتظار حتى انتهاء التحليل الحالي.\n\n"
+                "لإيقاف التحليل الحالي، اضغط على /cancel",
                 parse_mode="Markdown"
             )
             return MAIN_MENU
@@ -852,7 +935,8 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     
     try:
         wait_msg = await update.message.reply_text(
-            "🤌 **جاري تحليل الصورة...** 🤌\n\n▱▱▱▱▱▱▱▱▱▱ 0%",
+            "🤌 **جاري تحليل الصورة...** 🤌\n\n"
+            "▱▱▱▱▱▱▱▱▱▱ 0%",
             parse_mode="Markdown"
         )
         
@@ -884,7 +968,9 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         compressed_path = compress_image(image_path)
         
         await wait_msg.edit_text(
-            f"🤌 **جاري تحليل الصورة...** 🤌\n\n██████████ 100%\n\n✅ **جاري استخراج البيانات...**",
+            f"🤌 **جاري تحليل الصورة...** 🤌\n\n"
+            f"██████████ 100%\n\n"
+            f"✅ **جارٍ استخراج البيانات...**",
             parse_mode="Markdown"
         )
         
@@ -899,19 +985,26 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
             else:
                 await update.message.reply_text(analysis_result, parse_mode="Markdown")
         else:
-            await wait_msg.edit_text(analysis_result or "❌ حدث خطأ")
+            await wait_msg.edit_text(analysis_result or "❌ حدث خطأ في التحليل")
         
         for path in [image_path, compressed_path]:
             if os.path.exists(path):
-                os.remove(path)
+                try:
+                    os.remove(path)
+                except:
+                    pass
                 
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {str(e)[:200]}")
+        logger.error(f"خطأ: {traceback.format_exc()}")
+        await update.message.reply_text(f"❌ **حدث خطأ:** {str(e)[:200]}")
     finally:
         with analysis_lock:
             active_analyses[user_id] = False
         
-        await update.message.reply_text("✅ جاهز لاستقبال صور جديدة!", parse_mode="Markdown")
+        await update.message.reply_text(
+            "✅ **جاهز لاستقبال صور جديدة!**\n\nيمكنك إرسال صورة أخرى للتحليل الآن.",
+            parse_mode="Markdown"
+        )
     
     keyboard = [
         ["⚙️ إعدادات التحليل", "🛒 الاشتراك"],
@@ -922,45 +1015,73 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         keyboard.append(["👑 لوحة التحكم"])
     
     await update.message.reply_text(
-        "📊 اختر الإجراء التالي:",
+        "📊 **اختر الإجراء التالي:**",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
     return MAIN_MENU
 
 async def timezone_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    timezones = ["GMT+02:00", "GMT+03:00", "GMT+04:00", "GMT+00:00", "GMT-05:00"]
-    keyboard = [[tz] for tz in timezones] + [["🔙 العودة"]]
+    uid = update.effective_user.id
+    current_tz = get_user_timezone(uid)
+    
+    timezones = [
+        "GMT-12:00", "GMT-11:00", "GMT-10:00", "GMT-09:00", "GMT-08:00",
+        "GMT-07:00", "GMT-06:00", "GMT-05:00", "GMT-04:00", "GMT-03:00",
+        "GMT-02:00", "GMT-01:00", "GMT+00:00", "GMT+01:00", "GMT+02:00",
+        "GMT+03:00", "GMT+03:30", "GMT+04:00", "GMT+04:30", "GMT+05:00",
+        "GMT+05:30", "GMT+05:45", "GMT+06:00", "GMT+06:30", "GMT+07:00",
+        "GMT+08:00", "GMT+09:00", "GMT+09:30", "GMT+10:00", "GMT+11:00",
+        "GMT+12:00", "GMT+13:00", "GMT+14:00"
+    ]
+    
+    keyboard = [[tz] for tz in timezones[:15]]
+    keyboard.append(["🔙 الرجوع للقائمة"])
+    
     await update.message.reply_text(
-        "🌍 اختر المنطقة الزمنية:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        f"🌍 **المناطق الزمنية**\n\n"
+        f"🕒 **منطقتك الحالية:** {current_tz}\n\n"
+        f"اختر المنطقة الزمنية المناسبة:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        parse_mode="Markdown"
     )
     return TIMEZONE_MENU
 
 async def handle_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
     uid = update.effective_user.id
-    if msg == "🔙 العودة":
+    
+    if msg == "🔙 الرجوع للقائمة":
         return await start(update, context)
+    
     if msg.startswith("GMT"):
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET timezone = ? WHERE user_id = ?", (msg, uid))
-        conn.commit()
-        conn.close()
-        await update.message.reply_text(f"✅ تم تعيين المنطقة: {msg}")
+        set_user_timezone(uid, msg)
+        local_time = get_localized_time(uid)
+        await update.message.reply_text(
+            f"✅ **تم تعيين منطقتك الزمنية بنجاح!**\n\n"
+            f"🕒 **المنطقة:** {msg}\n"
+            f"⏰ **الوقت المحلي:** {local_time.strftime('%Y-%m-%d %H:%M:%S')}",
+            parse_mode="Markdown"
+        )
+    
     return await start(update, context)
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return MAIN_MENU
+    
     stats = SubscriptionSystem.get_stats()
     keyboard = [
         ["👥 عرض المستخدمين", "➕ إضافة اشتراك"],
-        ["📢 إذاعة", "📊 إحصائيات"],
-        ["🔙 العودة"]
+        ["🗑️ إلغاء اشتراك", "📢 إذاعة"],
+        ["📊 إحصائيات", "🔙 العودة"]
     ]
     await update.message.reply_text(
-        f"👑 **لوحة التحكم**\n\n📊 مستخدمين: {stats.get('total_users', 0)}\n✅ نشطين: {stats.get('active_users', 0)}\n📈 تحليلات: {stats.get('total_analyses', 0)}",
+        f"👑 **لوحة تحكم المشرف**\n\n"
+        f"📊 **الإحصائيات:**\n"
+        f"• إجمالي المستخدمين: {stats.get('total_users', 0)}\n"
+        f"• المشتركين النشطين: {stats.get('active_users', 0)}\n"
+        f"• إجمالي التحليلات: {stats.get('total_analyses', 0)}\n"
+        f"• نشط اليوم: {stats.get('active_today', 0)}",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
         parse_mode="Markdown"
     )
@@ -969,80 +1090,189 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
     uid = update.effective_user.id
+    
     if uid != ADMIN_ID:
         return MAIN_MENU
     
     if msg == "🔙 العودة":
         return await start(update, context)
+    
     elif msg == "👥 عرض المستخدمين":
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id, username, first_name, total_analyses FROM users ORDER BY created_at DESC LIMIT 20")
+        cursor.execute("SELECT user_id, username, first_name, total_analyses, created_at FROM users ORDER BY created_at DESC LIMIT 30")
         users = cursor.fetchall()
         conn.close()
-        text = "👥 **المستخدمين:**\n\n"
+        
+        text = "👥 **قائمة المستخدمين:**\n\n"
         for u in users:
             text += f"• `{u[0]}` | {u[1] or u[2] or 'لا اسم'} | تحليلات: {u[3]}\n"
-        await update.message.reply_text(text, parse_mode="Markdown")
+        
+        if len(text) > 4000:
+            for part in split_message(text, 3500):
+                await update.message.reply_text(part, parse_mode="Markdown")
+        else:
+            await update.message.reply_text(text, parse_mode="Markdown")
         return ADMIN_MENU
+    
     elif msg == "➕ إضافة اشتراك":
-        await update.message.reply_text("أرسل معرف المستخدم ونوع الاشتراك:\nمثال: `123456789 monthly`", parse_mode="Markdown")
+        await update.message.reply_text(
+            "➕ **إضافة اشتراك**\n\n"
+            "أرسل معرف المستخدم ونوع الاشتراك:\n"
+            "`123456789 monthly`\n\n"
+            "الأنواع المتاحة: hourly, daily, weekly, monthly",
+            parse_mode="Markdown"
+        )
         return ADD_SUBSCRIPTION
+    
+    elif msg == "🗑️ إلغاء اشتراك":
+        await update.message.reply_text(
+            "🗑️ **إلغاء اشتراك**\n\nأرسل معرف المستخدم:\n`123456789`",
+            parse_mode="Markdown"
+        )
+        return REMOVE_USER
+    
     elif msg == "📢 إذاعة":
-        await update.message.reply_text("أرسل الرسالة للإذاعة:", parse_mode="Markdown")
+        await update.message.reply_text(
+            "📢 **إذاعة**\n\nأرسل الرسالة للإذاعة:",
+            parse_mode="Markdown"
+        )
         return BROADCAST_MESSAGE
+    
     elif msg == "📊 إحصائيات":
         stats = SubscriptionSystem.get_stats()
         await update.message.reply_text(
-            f"📊 **إحصائيات**\n\n👥 المستخدمين: {stats.get('total_users', 0)}\n✅ النشطين: {stats.get('active_users', 0)}\n📈 التحليلات: {stats.get('total_analyses', 0)}",
+            f"📊 **إحصائيات النظام**\n\n"
+            f"👥 إجمالي المستخدمين: {stats.get('total_users', 0)}\n"
+            f"✅ المشتركين النشطين: {stats.get('active_users', 0)}\n"
+            f"🚫 المحظورين: {stats.get('blocked_users', 0)}\n"
+            f"📈 إجمالي التحليلات: {stats.get('total_analyses', 0)}\n"
+            f"📅 نشط اليوم: {stats.get('active_today', 0)}",
             parse_mode="Markdown"
         )
         return ADMIN_MENU
+    
     return ADMIN_MENU
 
 async def handle_add_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return MAIN_MENU
+    
     try:
         parts = update.message.text.split()
         user_id = int(parts[0])
         sub_type = parts[1] if len(parts) > 1 else "monthly"
+        
         if sub_type not in SUBSCRIPTION_PRICES:
             sub_type = "monthly"
+        
         success, result = SubscriptionSystem.add_subscription(user_id, sub_type, ADMIN_ID)
+        
         if success:
-            await update.message.reply_text(f"✅ تم إضافة اشتراك {result['subscription_name']} للمستخدم {user_id}")
+            await update.message.reply_text(
+                f"✅ **تم إضافة الاشتراك بنجاح!**\n\n"
+                f"👤 المستخدم: `{user_id}`\n"
+                f"📅 النوع: {result['subscription_name']}\n"
+                f"💰 السعر: {result['price']}{result['currency']}\n"
+                f"⏰ ينتهي في: {result['end_date'][:16]}",
+                parse_mode="Markdown"
+            )
+            
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"✅ **تم تفعيل اشتراكك!**\n\n"
+                         f"📅 نوع الاشتراك: {result['subscription_name']}\n"
+                         f"ينتهي في: {result['end_date'][:16]}\n\n"
+                         f"أرسل /start لبدء الاستخدام",
+                    parse_mode="Markdown"
+                )
+            except:
+                pass
         else:
             await update.message.reply_text(f"❌ فشل: {result}")
+            
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ: {str(e)[:200]}")
+    
+    return ADMIN_MENU
+
+async def handle_remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return MAIN_MENU
+    
+    try:
+        user_id = int(update.message.text.strip())
+        
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE active_subscriptions SET is_active = 0 WHERE user_id = ? AND is_active = 1", (user_id,))
+        conn.commit()
+        conn.close()
+        
+        await update.message.reply_text(f"✅ تم إلغاء اشتراك المستخدم `{user_id}`", parse_mode="Markdown")
+        
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="⚠️ **تم إلغاء اشتراكك في البوت**\n\nللتواصل مع المشرف: @Sz2zv",
+                parse_mode="Markdown"
+            )
+        except:
+            pass
+            
     except:
-        await update.message.reply_text("❌ صيغة خاطئة. استخدم: `123456789 monthly`")
+        await update.message.reply_text("❌ صيغة خاطئة. استخدم: `123456789`")
+    
     return ADMIN_MENU
 
 async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return MAIN_MENU
+    
     msg = update.message.text
+    
     conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users WHERE is_blocked = 0")
     users = cursor.fetchall()
     conn.close()
     
+    wait_msg = await update.message.reply_text(f"📢 جاري الإذاعة لـ {len(users)} مستخدم...")
+    
     sent = 0
+    failed = 0
+    
     for u in users:
         try:
-            await context.bot.send_message(u[0], f"📢 **رسالة إدارية**\n\n{msg}", parse_mode="Markdown")
+            await context.bot.send_message(
+                u[0],
+                f"📢 **رسالة إدارية**\n\n{msg}\n\n━━━━━━━━━━━━\nObeida Trading",
+                parse_mode="Markdown"
+            )
             sent += 1
             await asyncio.sleep(0.05)
         except:
-            pass
-    await update.message.reply_text(f"✅ تم الإرسال لـ {sent} مستخدم")
+            failed += 1
+    
+    await wait_msg.edit_text(
+        f"📊 **نتيجة الإذاعة**\n\n"
+        f"✅ تم الإرسال لـ: {sent} مستخدم\n"
+        f"❌ فشل الإرسال لـ: {failed} مستخدم"
+    )
+    
     return ADMIN_MENU
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 **أوامر البوت:**\n/start - بدء البوت\n/help - المساعدة\n/cancel - إلغاء\n\n"
-        "📤 أرسل صورة للتحليل\n⚙️ اضبط الإعدادات من القائمة",
+        "🤖 **أوامر البوت:**\n\n"
+        "/start - بدء البوت والعودة للقائمة\n"
+        "/help - عرض هذه المساعدة\n"
+        "/cancel - إلغاء العملية الحالية\n\n"
+        "📤 **لتحليل الشارت:** أرسل صورة مباشرة\n"
+        "⚙️ **لضبط الإعدادات:** استخدم قائمة 'إعدادات التحليل'\n"
+        "🛒 **للاشتراك:** استخدم قائمة 'الاشتراك'\n\n"
+        "📞 للتواصل: @Sz2zv",
         parse_mode="Markdown"
     )
 
@@ -1050,11 +1280,16 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     with analysis_lock:
         active_analyses[uid] = False
-    await update.message.reply_text("✅ تم الإلغاء", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text(
+        "✅ **تم إلغاء العملية الحالية**\n\nاكتب /start للبدء من جديد.",
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode="Markdown"
+    )
     return ConversationHandler.END
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"خطأ: {context.error}")
+    print(f"❌ خطأ: {context.error}")
 
 # ============================================
 # رادار الأخبار
@@ -1105,6 +1340,7 @@ class ObeidaNewsRadar:
                 'https://sa.investing.com/rss/news.rss',
                 'https://sa.investing.com/rss/economic_calendar.rss',
                 'https://sa.investing.com/rss/forex_news.rss',
+                'https://sa.investing.com/rss/commodities_news.rss',
             ]
             headers = {'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'ar-SA,ar;q=0.9'}
             all_news = {}
@@ -1122,7 +1358,7 @@ class ObeidaNewsRadar:
                     continue
             
             for nid, news in all_news.items():
-                text = f"🚨 <b>خبر جديد</b>\n\n{news.title}\n\n⚡ @ObeidaTrading"
+                text = f"🚨 <b>خبر اقتصادي جديد</b>\n\n{news.title}\n\n━━━━━━━━━━━━\n⚡ @ObeidaTrading"
                 self.send_message(self.chat_group_id, text)
                 self.processed_news.add(nid)
                 await asyncio.sleep(1)
@@ -1147,11 +1383,21 @@ app.secret_key = SECRET_KEY
 
 @app.route('/health')
 def health():
-    return {"status": "active", "time": time.time()}
+    stats = SubscriptionSystem.get_stats()
+    return {
+        "status": "active",
+        "total_users": stats.get('total_users', 0),
+        "active_users": stats.get('active_users', 0),
+        "timestamp": time.time()
+    }
+
+@app.route('/')
+def home():
+    return jsonify({"status": "Obeida Trading Bot is running", "version": DATA_VERSION})
 
 def run_flask():
     port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # ============================================
 # التشغيل الرئيسي
@@ -1170,9 +1416,10 @@ async def cleanup_task():
                     os.remove(os.path.join(IMAGE_CACHE_DIR, f))
                 except:
                     pass
+        print("🧹 تم تنظيف الملفات المؤقتة")
 
 def main():
-    print("🤖 تشغيل البوت...")
+    print("🤖 Starting Obeida Trading Bot...")
     
     SubscriptionSystem.init_db()
     
@@ -1193,7 +1440,8 @@ def main():
     for d in [IMAGE_CACHE_DIR, BACKUP_DIR]:
         os.makedirs(d, exist_ok=True)
     
-    threading.Thread(target=run_flask, daemon=True).start()
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
     
     app_bot = Application.builder().token(TOKEN).build()
     
@@ -1206,6 +1454,7 @@ def main():
             ANALYZE_MODE: [MessageHandler(filters.PHOTO, handle_photo_analysis), MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode)],
             ADMIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin)],
             ADD_SUBSCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_add_subscription)],
+            REMOVE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remove_user)],
             BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast)],
             TIMEZONE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_timezone)],
         },
@@ -1215,6 +1464,7 @@ def main():
     
     app_bot.add_handler(conv)
     app_bot.add_handler(CommandHandler("help", help_command))
+    app_bot.add_handler(CommandHandler("cancel", cancel))
     app_bot.add_error_handler(error_handler)
     
     loop = asyncio.new_event_loop()
@@ -1222,8 +1472,8 @@ def main():
     loop.create_task(news_task())
     loop.create_task(cleanup_task())
     
-    print("✅ البوت جاهز!")
-    app_bot.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("✅ البوت جاهز للعمل!")
+    app_bot.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
