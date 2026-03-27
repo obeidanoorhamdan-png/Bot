@@ -40,7 +40,7 @@ ADMIN_USERNAME = 'Obeida059'
 ADMIN_PASSWORD_HASH = hashlib.sha256('Obeida059'.encode()).hexdigest()
 
 # --- تعريف الأزرار والثوابت ---
-MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, ANALYZE_MODE, ADMIN_MENU, BROADCAST_MESSAGE, TIMEZONE_MENU, SEARCH_COUNTRY, REGISTRATION_MENU, REGISTER_AFFILIATE, SHOP_MENU, BUY_SUBSCRIPTION, VERIFY_PAYMENT = range(13)
+MAIN_MENU, SETTINGS_CANDLE, SETTINGS_TIME, ANALYZE_MODE, ADMIN_MENU, BROADCAST_MESSAGE, TIMEZONE_MENU, SEARCH_COUNTRY, REGISTRATION_MENU, REGISTER_AFFILIATE, SHOP_MENU, SESSION_ALERTS_MENU = range(12)
 
 CANDLE_SPEEDS = ["S5", "S10", "S15", "S30", "M1", "M2", "M3", "M5", "M10", "M15", "M30", "H1", "H4", "D1"]
 TRADE_TIMES = ["قصير (1m-15m)", "متوسط (4h-Daily)", "طويل (Weekly-Monthly)"]
@@ -55,12 +55,12 @@ for directory in [IMAGE_CACHE_DIR, BACKUP_DIR]:
 # نظام الاشتراكات والمتجر
 # ============================================
 SUBSCRIPTION_TYPES = {
-    'free': {'name': 'مجاني', 'duration': 0, 'price': 0, 'analyses': 3, 'features': ['basic_analysis']},
-    'daily': {'name': 'يوم', 'duration': 86400, 'price': 5, 'analyses': -1, 'features': ['all']},
-    'weekly': {'name': 'أسبوع', 'duration': 604800, 'price': 15, 'analyses': -1, 'features': ['all']},
-    'monthly': {'name': 'شهر', 'duration': 2592000, 'price': 40, 'analyses': -1, 'features': ['all']},
-    'yearly': {'name': 'سنة', 'duration': 31536000, 'price': 150, 'analyses': -1, 'features': ['all']},
-    'lifetime': {'name': 'مدى الحياة', 'duration': -1, 'price': 300, 'analyses': -1, 'features': ['all']}
+    'free': {'name': 'مجاني', 'duration': 0, 'price': 0, 'analyses': 3},
+    'daily': {'name': 'يوم', 'duration': 86400, 'price': 5, 'analyses': -1},
+    'weekly': {'name': 'أسبوع', 'duration': 604800, 'price': 15, 'analyses': -1},
+    'monthly': {'name': 'شهر', 'duration': 2592000, 'price': 40, 'analyses': -1},
+    'yearly': {'name': 'سنة', 'duration': 31536000, 'price': 150, 'analyses': -1},
+    'lifetime': {'name': 'مدى الحياة', 'duration': -1, 'price': 300, 'analyses': -1}
 }
 
 class SubscriptionSystem:
@@ -69,7 +69,6 @@ class SubscriptionSystem:
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
-        # جدول المستخدمين
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -86,7 +85,6 @@ class SubscriptionSystem:
             )
         ''')
         
-        # جدول طلبات التسجيل في الوكالة
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS affiliate_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,7 +96,6 @@ class SubscriptionSystem:
             )
         ''')
         
-        # جدول طلبات الشراء
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS purchase_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,8 +104,18 @@ class SubscriptionSystem:
                 payment_method TEXT,
                 payment_reference TEXT,
                 requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                status TEXT DEFAULT 'pending',
-                UNIQUE(user_id, subscription_type)
+                status TEXT DEFAULT 'pending'
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                session_name TEXT NOT NULL,
+                enabled INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, session_name)
             )
         ''')
         
@@ -158,17 +165,14 @@ class SubscriptionSystem:
         if not user:
             return False, 'غير مسجل', {'free_analyses': 3}
         
-        # التحقق من الاشتراك المدفوع
         if user['subscription_type'] != 'free' and user['subscription_end']:
             end_date = datetime.fromisoformat(user['subscription_end'])
             if end_date > datetime.now():
                 return True, user['subscription_type'], user
         
-        # التحقق من التسجيل في الوكالة
         if user['affiliate_verified']:
             return True, 'وكالة', user
         
-        # المستخدم المجاني
         if user['free_analyses'] > 0:
             return True, 'مجاني', user
         
@@ -183,25 +187,19 @@ class SubscriptionSystem:
         if user and user['subscription_type'] != 'free' and user['subscription_end']:
             end_date = datetime.fromisoformat(user['subscription_end'])
             if end_date > datetime.now():
-                cursor.execute('''
-                    UPDATE users SET total_analyses = total_analyses + 1 WHERE user_id = ?
-                ''', (user_id,))
+                cursor.execute('UPDATE users SET total_analyses = total_analyses + 1 WHERE user_id = ?', (user_id,))
                 conn.commit()
                 conn.close()
                 return True
         
         if user and user['affiliate_verified']:
-            cursor.execute('''
-                UPDATE users SET total_analyses = total_analyses + 1 WHERE user_id = ?
-            ''', (user_id,))
+            cursor.execute('UPDATE users SET total_analyses = total_analyses + 1 WHERE user_id = ?', (user_id,))
             conn.commit()
             conn.close()
             return True
         
         if user and user['free_analyses'] > 0:
-            cursor.execute('''
-                UPDATE users SET free_analyses = free_analyses - 1, total_analyses = total_analyses + 1 WHERE user_id = ?
-            ''', (user_id,))
+            cursor.execute('UPDATE users SET free_analyses = free_analyses - 1, total_analyses = total_analyses + 1 WHERE user_id = ?', (user_id,))
             conn.commit()
             conn.close()
             return True
@@ -210,43 +208,16 @@ class SubscriptionSystem:
         return False
 
     @staticmethod
-    def add_subscription(user_id, sub_type, admin_id=None):
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        
-        if sub_type not in SUBSCRIPTION_TYPES:
-            return False, "نوع اشتراك غير صالح"
-        
-        duration = SUBSCRIPTION_TYPES[sub_type]['duration']
-        end_date = None
-        if duration > 0:
-            end_date = (datetime.now() + timedelta(seconds=duration)).isoformat()
-        
-        cursor.execute('''
-            UPDATE users SET subscription_type = ?, subscription_end = ?, free_analyses = 0 WHERE user_id = ?
-        ''', (sub_type, end_date, user_id))
-        conn.commit()
-        conn.close()
-        
-        return True, f"تم تفعيل اشتراك {SUBSCRIPTION_TYPES[sub_type]['name']}"
-
-    @staticmethod
     def request_affiliate_registration(user_id, affiliate_id):
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         
-        # التحقق من عدم وجود طلب سابق
-        cursor.execute('''
-            SELECT id FROM affiliate_requests WHERE user_id = ? AND status = 'pending'
-        ''', (user_id,))
+        cursor.execute('SELECT id FROM affiliate_requests WHERE user_id = ? AND status = "pending"', (user_id,))
         if cursor.fetchone():
             conn.close()
             return False, "لديك طلب قيد المراجعة بالفعل"
         
-        cursor.execute('''
-            INSERT INTO affiliate_requests (user_id, affiliate_id)
-            VALUES (?, ?)
-        ''', (user_id, affiliate_id))
+        cursor.execute('INSERT INTO affiliate_requests (user_id, affiliate_id) VALUES (?, ?)', (user_id, affiliate_id))
         conn.commit()
         conn.close()
         return True, "تم إرسال طلب التسجيل بنجاح"
@@ -257,10 +228,8 @@ class SubscriptionSystem:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT r.id, r.user_id, r.affiliate_id, r.requested_at, u.username, u.first_name
-            FROM affiliate_requests r
-            LEFT JOIN users u ON r.user_id = u.user_id
-            WHERE r.status = 'pending'
-            ORDER BY r.requested_at DESC
+            FROM affiliate_requests r LEFT JOIN users u ON r.user_id = u.user_id
+            WHERE r.status = 'pending' ORDER BY r.requested_at DESC
         ''')
         rows = cursor.fetchall()
         conn.close()
@@ -280,9 +249,7 @@ class SubscriptionSystem:
         user_id, affiliate_id = row
         
         if approve:
-            cursor.execute('''
-                UPDATE users SET affiliate_id = ?, affiliate_verified = 1, free_analyses = 3 WHERE user_id = ?
-            ''', (affiliate_id, user_id))
+            cursor.execute('UPDATE users SET affiliate_id = ?, affiliate_verified = 1, free_analyses = 3 WHERE user_id = ?', (affiliate_id, user_id))
             cursor.execute('UPDATE affiliate_requests SET status = "approved" WHERE id = ?', (request_id,))
             conn.commit()
             conn.close()
@@ -294,68 +261,10 @@ class SubscriptionSystem:
             return True, f"تم رفض طلب المستخدم {user_id}"
 
     @staticmethod
-    def request_purchase(user_id, sub_type, payment_method, payment_reference):
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO purchase_requests (user_id, subscription_type, payment_method, payment_reference)
-            VALUES (?, ?, ?, ?)
-        ''', (user_id, sub_type, payment_method, payment_reference))
-        conn.commit()
-        conn.close()
-        return True, "تم إرسال طلب الشراء بنجاح"
-
-    @staticmethod
-    def get_pending_purchases():
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT p.id, p.user_id, p.subscription_type, p.payment_method, p.payment_reference, p.requested_at, u.username, u.first_name
-            FROM purchase_requests p
-            LEFT JOIN users u ON p.user_id = u.user_id
-            WHERE p.status = 'pending'
-            ORDER BY p.requested_at DESC
-        ''')
-        rows = cursor.fetchall()
-        conn.close()
-        return rows
-
-    @staticmethod
-    def approve_purchase(request_id, admin_id):
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT user_id, subscription_type FROM purchase_requests WHERE id = ?', (request_id,))
-        row = cursor.fetchone()
-        if not row:
-            conn.close()
-            return False, "الطلب غير موجود"
-        
-        user_id, sub_type = row
-        
-        duration = SUBSCRIPTION_TYPES[sub_type]['duration']
-        end_date = None
-        if duration > 0:
-            end_date = (datetime.now() + timedelta(seconds=duration)).isoformat()
-        
-        cursor.execute('''
-            UPDATE users SET subscription_type = ?, subscription_end = ?, free_analyses = 0 WHERE user_id = ?
-        ''', (sub_type, end_date, user_id))
-        cursor.execute('UPDATE purchase_requests SET status = "approved" WHERE id = ?', (request_id,))
-        conn.commit()
-        conn.close()
-        
-        return True, f"تم تفعيل اشتراك {SUBSCRIPTION_TYPES[sub_type]['name']} للمستخدم {user_id}"
-
-    @staticmethod
     def get_all_users():
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT user_id, username, first_name, free_analyses, total_analyses, subscription_type, subscription_end, affiliate_id, affiliate_verified, timezone
-            FROM users ORDER BY user_id
-        ''')
+        cursor.execute('SELECT user_id, username, first_name, free_analyses, total_analyses, subscription_type, affiliate_id, affiliate_verified, timezone FROM users ORDER BY user_id')
         rows = cursor.fetchall()
         conn.close()
         return rows
@@ -364,44 +273,27 @@ class SubscriptionSystem:
     def get_stats():
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
-        
         cursor.execute("SELECT COUNT(*) FROM users")
         total_users = cursor.fetchone()[0]
-        
         cursor.execute("SELECT SUM(total_analyses) FROM users")
         total_analyses = cursor.fetchone()[0] or 0
-        
         cursor.execute("SELECT COUNT(*) FROM users WHERE affiliate_verified = 1")
         affiliate_users = cursor.fetchone()[0]
-        
         cursor.execute("SELECT COUNT(*) FROM users WHERE subscription_type != 'free'")
         paid_users = cursor.fetchone()[0]
-        
         cursor.execute("SELECT COUNT(*) FROM affiliate_requests WHERE status = 'pending'")
         pending_affiliate = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM purchase_requests WHERE status = 'pending'")
-        pending_purchases = cursor.fetchone()[0]
-        
         conn.close()
-        
-        return {
-            'total_users': total_users,
-            'total_analyses': total_analyses,
-            'affiliate_users': affiliate_users,
-            'paid_users': paid_users,
-            'pending_affiliate': pending_affiliate,
-            'pending_purchases': pending_purchases
-        }
+        return {'total_users': total_users, 'total_analyses': total_analyses, 'affiliate_users': affiliate_users, 'paid_users': paid_users, 'pending_affiliate': pending_affiliate}
 
 # ============================================
 # نظام جلسات التداول
 # ============================================
 TRADING_SESSIONS = {
-    'asian': {'name': '🌏 الجلسة الآسيوية', 'start': 0, 'end': 8, 'volatility': 'منخفضة', 'pairs': 'الين الياباني، الدولار الأسترالي', 'success_rate': '65-70%', 'features': 'حركات هادئة', 'time_range': '00:00-08:00 UTC'},
-    'london': {'name': '🇬🇧 جلسة لندن', 'start': 8, 'end': 16, 'volatility': 'مرتفعة', 'pairs': 'اليورو، الجنيه، الفرنك', 'success_rate': '75-85%', 'features': 'سيولة عالية', 'time_range': '08:00-16:00 UTC'},
-    'newyork': {'name': '🗽 جلسة نيويورك', 'start': 13, 'end': 21, 'volatility': 'عالية جداً', 'pairs': 'الدولار، المؤشرات', 'success_rate': '80-90%', 'features': 'ذروة السيولة', 'time_range': '13:00-21:00 UTC'},
-    'pacific': {'name': '🌊 جلسة المحيط الهادئ', 'start': 21, 'end': 24, 'volatility': 'منخفضة جداً', 'pairs': 'جميع الأزواج', 'success_rate': '55-65%', 'features': 'حركات جانبية', 'time_range': '21:00-00:00 UTC'},
+    'asian': {'name': '🌏 الجلسة الآسيوية', 'start': 0, 'end': 8, 'volatility': 'منخفضة', 'pairs': 'الين الياباني، الدولار الأسترالي', 'success_rate': '65-70%', 'features': 'حركات هادئة', 'time_range': '00:00-08:00 UTC', 'icon': '🌏'},
+    'london': {'name': '🇬🇧 جلسة لندن', 'start': 8, 'end': 16, 'volatility': 'مرتفعة', 'pairs': 'اليورو، الجنيه، الفرنك', 'success_rate': '75-85%', 'features': 'سيولة عالية', 'time_range': '08:00-16:00 UTC', 'icon': '🇬🇧'},
+    'newyork': {'name': '🗽 جلسة نيويورك', 'start': 13, 'end': 21, 'volatility': 'عالية جداً', 'pairs': 'الدولار، المؤشرات', 'success_rate': '80-90%', 'features': 'ذروة السيولة', 'time_range': '13:00-21:00 UTC', 'icon': '🗽'},
+    'pacific': {'name': '🌊 جلسة المحيط الهادئ', 'start': 21, 'end': 24, 'volatility': 'منخفضة جداً', 'pairs': 'جميع الأزواج', 'success_rate': '55-65%', 'features': 'حركات جانبية', 'time_range': '21:00-00:00 UTC', 'icon': '🌊'},
 }
 
 def get_current_session():
@@ -414,6 +306,53 @@ def get_current_session():
         return TRADING_SESSIONS['newyork']
     else:
         return TRADING_SESSIONS['pacific']
+
+# ============================================
+# دوال التنبيهات
+# ============================================
+def add_user_alert(user_id: int, session_name: str) -> bool:
+    try:
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR REPLACE INTO user_alerts (user_id, session_name, enabled) VALUES (?, ?, 1)', (user_id, session_name))
+        conn.commit()
+        conn.close()
+        return True
+    except:
+        return False
+
+def remove_user_alert(user_id: int, session_name: str) -> bool:
+    try:
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM user_alerts WHERE user_id = ? AND session_name = ?', (user_id, session_name))
+        conn.commit()
+        conn.close()
+        return True
+    except:
+        return False
+
+def get_user_alerts(user_id: int) -> list:
+    try:
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('SELECT session_name FROM user_alerts WHERE user_id = ? AND enabled = 1', (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [row[0] for row in rows]
+    except:
+        return []
+
+def get_users_for_session_alert(session_name: str) -> list:
+    try:
+        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('SELECT user_id FROM user_alerts WHERE session_name = ? AND enabled = 1', (session_name,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [row[0] for row in rows]
+    except:
+        return []
 
 # ============================================
 # دوال قاعدة البيانات الأساسية
@@ -522,64 +461,6 @@ def split_message(text, max_length=3500):
     return parts
 
 # ============================================
-# دوال المساعدة للبوت
-# ============================================
-async def check_access(update: Update, user_id: int) -> bool:
-    """التحقق من صلاحية المستخدم للتحليل"""
-    if user_id == ADMIN_ID:
-        return True
-    
-    SubscriptionSystem.register_user(user_id, update.effective_user.username, update.effective_user.first_name)
-    
-    status, sub_type, user_data = SubscriptionSystem.check_subscription(user_id)
-    
-    if status:
-        return True
-    
-    # عرض خيارات التسجيل والشراء
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 تسجيل في الوكالة (مجاني)", callback_data="show_affiliate")],
-        [InlineKeyboardButton("🛒 شراء اشتراك", callback_data="show_shop")],
-        [InlineKeyboardButton("📊 تجربة مجانية", callback_data="try_free")]
-    ])
-    
-    await update.message.reply_text(
-        "⚠️ **ليس لديك صلاحية استخدام البوت** ⚠️\n\n"
-        f"📊 **تحليلك المجاني المتبقي:** {user_data['free_analyses'] if user_data else 0}\n\n"
-        "🔓 **طرق الحصول على صلاحية:**\n\n"
-        "1️⃣ **تسجيل في وكالتنا (مجاني)**\n"
-        "   • التسجيل عبر رابط الوكالة\n"
-        "   • إرسال معرف العميل\n"
-        "   • تفعيل مجاني فوري\n\n"
-        "2️⃣ **شراء اشتراك مدفوع**\n"
-        f"   • يوم: {SUBSCRIPTION_TYPES['daily']['price']}$\n"
-        f"   • أسبوع: {SUBSCRIPTION_TYPES['weekly']['price']}$\n"
-        f"   • شهر: {SUBSCRIPTION_TYPES['monthly']['price']}$\n"
-        f"   • سنة: {SUBSCRIPTION_TYPES['yearly']['price']}$\n\n"
-        "3️⃣ **تجربة مجانية**\n"
-        "   • لديك 3 تحليلات مجانية\n\n"
-        "اختر إحدى الطرق أدناه:",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-    return False
-
-async def send_access_denied(update: Update):
-    """إرسال رسالة رفض الوصول مع الخيارات"""
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 تسجيل في الوكالة", callback_data="show_affiliate")],
-        [InlineKeyboardButton("🛒 شراء اشتراك", callback_data="show_shop")],
-        [InlineKeyboardButton("📊 تحليل مجاني", callback_data="use_free")]
-    ])
-    
-    await update.message.reply_text(
-        "⚠️ **ليس لديك صلاحية** ⚠️\n\n"
-        "اختر إحدى الطرق للحصول على صلاحية:",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-
-# ============================================
 # دوال معالجة البوت
 # ============================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -587,7 +468,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     
     SubscriptionSystem.register_user(user_id, user.username, user.first_name)
-    
     status, sub_type, user_data = SubscriptionSystem.check_subscription(user_id)
     current_session = get_current_session()
     
@@ -616,26 +496,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 **Powered by Obeida Trading**"
     )
     
-    keyboard = [
-        ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
-        ["📊 معلومات الجلسة", "👤 معلوماتي"],
-        ["🌍 المناطق الزمنية", "🛒 المتجر"],
-        ["📝 تسجيل الوكالة"]
-    ]
+    if status:
+        keyboard = [
+            ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
+            ["🔔 تنبيه بدء جلسة", "👤 معلوماتي"],
+            ["🌍 المناطق الزمنية", "🛒 المتجر"],
+            ["📝 تسجيل الوكالة"]
+        ]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
+    else:
+        keyboard = [
+            ["👤 معلوماتي"],
+            ["🔔 تنبيه بدء جلسة", "🛒 المتجر"],
+            ["📝 تسجيل الوكالة"]
+        ]
+        if user_id == ADMIN_ID:
+            keyboard.append(["👑 لوحة التحكم"])
     
-    if user_id == ADMIN_ID:
-        keyboard.append(["👑 لوحة التحكم"])
-    
-    await update.message.reply_text(
-        welcome_msg,
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(welcome_msg, reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True), parse_mode="Markdown")
     return MAIN_MENU
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     user_id = update.effective_user.id
+    status, sub_type, user_data = SubscriptionSystem.check_subscription(user_id)
     
     if user_message == "🌍 المناطق الزمنية":
         return await timezone_menu(update, context)
@@ -643,34 +528,10 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_message == "👑 لوحة التحكم" and user_id == ADMIN_ID:
         return await start_admin_panel(update, context)
     
-    elif user_message == "📊 معلومات الجلسة":
-        current_session = get_current_session()
-        user_tz = get_user_timezone(user_id)
-        local_time = get_localized_time(user_id)
-        
-        info = (
-            f"🌐 **معلومات الجلسة**\n\n"
-            f"⏰ **UTC:** {datetime.utcnow().strftime('%H:%M:%S')}\n"
-            f"🌍 **منطقتك:** {user_tz}\n"
-            f"🕒 **وقتك:** {local_time.strftime('%H:%M:%S')}\n\n"
-            f"📍 **الجلسة:** {current_session['name']}\n"
-            f"📊 **التقلب:** {current_session['volatility']}\n"
-            f"🎯 **نسبة النجاح:** {current_session['success_rate']}\n"
-            f"💰 **الأزواج:** {current_session['pairs']}\n"
-        )
-        await update.message.reply_text(info, parse_mode="Markdown")
-        return MAIN_MENU
-    
     elif user_message == "👤 معلوماتي":
         user_data = SubscriptionSystem.get_user(user_id)
         status, sub_type, _ = SubscriptionSystem.check_subscription(user_id)
-        
-        info = (
-            f"👤 **معلوماتك**\n\n"
-            f"🆔 **المعرف:** `{user_id}`\n"
-            f"👤 **اليوزر:** @{update.effective_user.username or 'لا يوجد'}\n\n"
-        )
-        
+        info = f"👤 **معلوماتك**\n\n🆔 **المعرف:** `{user_id}`\n👤 **اليوزر:** @{update.effective_user.username or 'لا يوجد'}\n\n"
         if status:
             if sub_type == 'وكالة':
                 info += f"✅ **الحالة:** مسجل في الوكالة\n🆔 **معرف الوكالة:** `{user_data['affiliate_id']}`\n"
@@ -683,47 +544,19 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 info += f"📊 **تحليلات مجانية:** {user_data['free_analyses']}\n"
         else:
             info += f"⚠️ **الحالة:** غير مفعل\n📊 **تحليلات مجانية:** {user_data['free_analyses']}\n"
+        info += f"📈 **إجمالي التحليلات:** {user_data['total_analyses']}\n🌍 **المنطقة:** {user_data['timezone']}\n"
         
-        info += f"📈 **إجمالي التحليلات:** {user_data['total_analyses']}\n"
-        info += f"🌍 **المنطقة:** {user_data['timezone']}\n"
+        user_alerts = get_user_alerts(user_id)
+        if user_alerts:
+            alerts_list = [TRADING_SESSIONS[s]['name'] for s in user_alerts if s in TRADING_SESSIONS]
+            if alerts_list:
+                info += f"\n🔔 **التنبيهات المفعلة:**\n" + "\n".join([f"• {a}" for a in alerts_list])
         
         await update.message.reply_text(info, parse_mode="Markdown")
         return MAIN_MENU
     
-    elif user_message == "⚙️ إعدادات التحليل":
-        keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
-        keyboard.append(["الرجوع"])
-        
-        await update.message.reply_text(
-            "⚙️ **إعدادات التحليل**\n\nاختر سرعة الشموع:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-            parse_mode="Markdown"
-        )
-        return SETTINGS_CANDLE
-    
-    elif user_message == "📊 تحليل صورة":
-        status, _, _ = SubscriptionSystem.check_subscription(user_id)
-        
-        if not status:
-            await send_access_denied(update)
-            return MAIN_MENU
-        
-        candle, trade_time, _, _ = get_user_setting(user_id)
-        
-        if not candle:
-            await update.message.reply_text(
-                "❌ **يجب ضبط الإعدادات أولاً**\nاستخدم زر '⚙️ إعدادات التحليل'",
-                parse_mode="Markdown"
-            )
-            return MAIN_MENU
-        
-        await update.message.reply_text(
-            f"📤 **أرسل صورة الشارت**\n\n"
-            f"⚙️ **الإعدادات:** {candle} | {trade_time}",
-            reply_markup=ReplyKeyboardMarkup([["الرجوع"]], resize_keyboard=True),
-            parse_mode="Markdown"
-        )
-        return ANALYZE_MODE
+    elif user_message == "🔔 تنبيه بدء جلسة":
+        return await session_alerts_menu(update, context)
     
     elif user_message == "🛒 المتجر":
         return await shop_menu(update, context)
@@ -731,13 +564,73 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_message == "📝 تسجيل الوكالة":
         return await affiliate_registration_menu(update, context)
     
+    if status:
+        if user_message == "⚙️ إعدادات التحليل":
+            keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
+            keyboard.append(["الرجوع"])
+            await update.message.reply_text("⚙️ **إعدادات التحليل**\n\nاختر سرعة الشموع:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True), parse_mode="Markdown")
+            return SETTINGS_CANDLE
+        
+        elif user_message == "📊 تحليل صورة":
+            candle, trade_time, _, _ = get_user_setting(user_id)
+            if not candle:
+                await update.message.reply_text("❌ **يجب ضبط الإعدادات أولاً**\nاستخدم زر '⚙️ إعدادات التحليل'", parse_mode="Markdown")
+                return MAIN_MENU
+            await update.message.reply_text(f"📤 **أرسل صورة الشارت**\n\n⚙️ **الإعدادات:** {candle} | {trade_time}", reply_markup=ReplyKeyboardMarkup([["الرجوع"]], resize_keyboard=True), parse_mode="Markdown")
+            return ANALYZE_MODE
+    
     elif user_message == "الرجوع":
         return await start(update, context)
     
     return MAIN_MENU
 
+async def session_alerts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    user_alerts = get_user_alerts(user_id)
+    
+    keyboard = []
+    for session_key, session in TRADING_SESSIONS.items():
+        is_active = session_key in user_alerts
+        status = "✅" if is_active else "⬜"
+        keyboard.append([f"{status} {session['icon']} {session['name']}"])
+    
+    keyboard.append(["🗑️ إلغاء الكل"])
+    keyboard.append(["🔙 العودة للقائمة الرئيسية"])
+    
+    await update.message.reply_text(
+        f"🔔 **إدارة تنبيهات الجلسات**\n\nاختر الجلسات التي تريد تلقي تنبيه عند بدايتها:\n\n✅ = مفعل\n⬜ = غير مفعل\n\nسيتم إرسال تنبيه لك فور بدء كل جلسة.",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        parse_mode="Markdown"
+    )
+    return SESSION_ALERTS_MENU
+
+async def handle_session_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text
+    user_id = update.effective_user.id
+    
+    if user_message == "🔙 العودة للقائمة الرئيسية":
+        return await start(update, context)
+    
+    elif user_message == "🗑️ إلغاء الكل":
+        for session_key in TRADING_SESSIONS.keys():
+            remove_user_alert(user_id, session_key)
+        await update.message.reply_text("✅ تم إلغاء جميع تنبيهات الجلسات", parse_mode="Markdown")
+        return await session_alerts_menu(update, context)
+    
+    for session_key, session in TRADING_SESSIONS.items():
+        if session['name'] in user_message:
+            user_alerts = get_user_alerts(user_id)
+            if session_key in user_alerts:
+                remove_user_alert(user_id, session_key)
+                await update.message.reply_text(f"❌ تم إلغاء تنبيه {session['name']}", parse_mode="Markdown")
+            else:
+                add_user_alert(user_id, session_key)
+                await update.message.reply_text(f"✅ تم تفعيل تنبيه {session['name']}\n\nستتلقى إشعاراً فور بدء الجلسة.", parse_mode="Markdown")
+            break
+    
+    return await session_alerts_menu(update, context)
+
 async def shop_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """عرض المتجر"""
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📅 يوم - 5$", callback_data="buy_daily")],
         [InlineKeyboardButton("📆 أسبوع - 15$", callback_data="buy_weekly")],
@@ -746,78 +639,40 @@ async def shop_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("♾️ مدى الحياة - 300$", callback_data="buy_lifetime")],
         [InlineKeyboardButton("🔙 رجوع", callback_data="back_to_menu")]
     ])
-    
     await update.message.reply_text(
-        "🛒 **متجر الاشتراكات**\n\n"
-        "اختر نوع الاشتراك المناسب لك:\n\n"
-        f"📅 **يوم:** {SUBSCRIPTION_TYPES['daily']['price']}$ - تحليلات غير محدودة\n"
-        f"📆 **أسبوع:** {SUBSCRIPTION_TYPES['weekly']['price']}$ - تحليلات غير محدودة\n"
-        f"📅 **شهر:** {SUBSCRIPTION_TYPES['monthly']['price']}$ - تحليلات غير محدودة\n"
-        f"📅 **سنة:** {SUBSCRIPTION_TYPES['yearly']['price']}$ - تحليلات غير محدودة\n"
-        f"♾️ **مدى الحياة:** {SUBSCRIPTION_TYPES['lifetime']['price']}$ - تحليلات غير محدودة\n\n"
-        "💰 **طرق الدفع:**\n"
-        "• تحويل بنكي\n"
-        "• USDT (TRC20)\n"
-        "• باي بال\n\n"
-        "بعد الدفع، أرسل إيصال الدفع مع معرف المستخدم الخاص بك للمشرف @Sz2zv",
+        "🛒 **متجر الاشتراكات**\n\nاختر نوع الاشتراك:\n\n📅 يوم: 5$ - تحليلات غير محدودة\n📆 أسبوع: 15$ - تحليلات غير محدودة\n📅 شهر: 40$ - تحليلات غير محدودة\n📅 سنة: 150$ - تحليلات غير محدودة\n♾️ مدى الحياة: 300$ - تحليلات غير محدودة\n\n💰 **طرق الدفع:** تحويل بنكي، USDT، باي بال\n\nبعد الدفع، أرسل الإيصال للمشرف @Sz2zv",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
     return SHOP_MENU
 
 async def affiliate_registration_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """قائمة التسجيل في الوكالة"""
     user_id = update.effective_user.id
     user_data = SubscriptionSystem.get_user(user_id)
     
     if user_data and user_data['affiliate_verified']:
-        await update.message.reply_text(
-            f"✅ **أنت مسجل بالفعل في الوكالة!**\n\n🆔 **معرف الوكالة:** `{user_data['affiliate_id']}`\n\nيمكنك استخدام البوت مجاناً.",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(f"✅ **أنت مسجل بالفعل في الوكالة!**\n\n🆔 **معرف الوكالة:** `{user_data['affiliate_id']}`\n\nيمكنك استخدام البوت مجاناً.", parse_mode="Markdown")
         return MAIN_MENU
     
     await update.message.reply_text(
-        "📝 **التسجيل في وكالة Tickmill**\n\n"
-        "🔗 **رابط التسجيل:**\n"
-        "https://my.tickmill.com/en/sign-up/account-type?utm_campaign=ib_link&utm_content=IB96119705_MT\n\n"
-        "📌 **خطوات التسجيل:**\n"
-        "1️⃣ اضغط على الرابط أعلاه\n"
-        "2️⃣ قم بإنشاء حساب جديد\n"
-        "3️⃣ بعد الانتهاء، أرسل معرف العميل (Account ID)\n\n"
-        "✅ **أرسل معرف العميل الآن:**\n"
-        "مثال: `12345678`\n\n"
-        "سيتم تفعيل حسابك خلال 24 ساعة",
+        "📝 **التسجيل في وكالة Tickmill (مجاني)**\n\n🔗 **رابط التسجيل:**\nhttps://my.tickmill.com/en/sign-up/account-type?utm_campaign=ib_link&utm_content=IB96119705_MT\n\n📌 **خطوات التسجيل:**\n1️⃣ اضغط على الرابط أعلاه\n2️⃣ قم بإنشاء حساب جديد\n3️⃣ بعد الانتهاء، أرسل معرف العميل (Account ID)\n\n✅ **أرسل معرف العميل الآن:**\nمثال: `12345678`\n\nسيتم تفعيل حسابك خلال 24 ساعة",
         parse_mode="Markdown"
     )
     return REGISTER_AFFILIATE
 
 async def handle_affiliate_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة إرسال معرف الوكالة"""
     user_id = update.effective_user.id
     affiliate_id = update.message.text.strip()
     
     if not affiliate_id.isdigit() or len(affiliate_id) < 5:
-        await update.message.reply_text(
-            "❌ **معرف غير صالح**\nالرجاء إرسال معرف الحساب الصحيح (أرقام فقط)",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ **معرف غير صالح**\nالرجاء إرسال معرف الحساب الصحيح (أرقام فقط)", parse_mode="Markdown")
         return REGISTER_AFFILIATE
     
     success, msg = SubscriptionSystem.request_affiliate_registration(user_id, affiliate_id)
     
     if success:
-        await update.message.reply_text(
-            f"✅ {msg}\n\n🆔 **المعرف المرسل:** `{affiliate_id}`\n\nسيتم إعلامك عند التفعيل.",
-            parse_mode="Markdown"
-        )
-        
-        # إشعار المشرف
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=f"📝 **طلب تسجيل وكالة جديد**\n\n👤 المستخدم: {user_id}\n🆔 المعرف: `{affiliate_id}`\n\nاستخدم لوحة التحكم للموافقة.",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(f"✅ {msg}\n\n🆔 **المعرف المرسل:** `{affiliate_id}`\n\nسيتم إعلامك عند التفعيل.", parse_mode="Markdown")
+        await context.bot.send_message(chat_id=ADMIN_ID, text=f"📝 **طلب تسجيل وكالة جديد**\n\n👤 المستخدم: {user_id}\n🆔 المعرف: `{affiliate_id}`\n\nاستخدم لوحة التحكم للموافقة.", parse_mode="Markdown")
     else:
         await update.message.reply_text(f"❌ {msg}", parse_mode="Markdown")
     
@@ -829,86 +684,19 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     data = query.data
     user_id = query.from_user.id
     
-    if data == "show_affiliate":
-        await query.edit_message_text(
-            "📝 **التسجيل في الوكالة (مجاني)**\n\n"
-            "🔗 **رابط التسجيل:**\n"
-            "https://my.tickmill.com/en/sign-up/account-type?utm_campaign=ib_link&utm_content=IB96119705_MT\n\n"
-            "📌 **خطوات التسجيل:**\n"
-            "1️⃣ اضغط على الرابط أعلاه\n"
-            "2️⃣ قم بإنشاء حساب جديد\n"
-            "3️⃣ أرسل معرف العميل (Account ID)\n\n"
-            "✅ **أرسل المعرف الآن:**",
-            parse_mode="Markdown"
-        )
-        return REGISTER_AFFILIATE
-    
-    elif data == "show_shop":
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📅 يوم - 5$", callback_data="buy_daily")],
-            [InlineKeyboardButton("📆 أسبوع - 15$", callback_data="buy_weekly")],
-            [InlineKeyboardButton("📅 شهر - 40$", callback_data="buy_monthly")],
-            [InlineKeyboardButton("📅 سنة - 150$", callback_data="buy_yearly")],
-            [InlineKeyboardButton("♾️ مدى الحياة - 300$", callback_data="buy_lifetime")],
-            [InlineKeyboardButton("🔙 رجوع", callback_data="back_to_menu")]
-        ])
-        
-        await query.edit_message_text(
-            "🛒 **متجر الاشتراكات**\n\n"
-            f"📅 يوم: {SUBSCRIPTION_TYPES['daily']['price']}$\n"
-            f"📆 أسبوع: {SUBSCRIPTION_TYPES['weekly']['price']}$\n"
-            f"📅 شهر: {SUBSCRIPTION_TYPES['monthly']['price']}$\n"
-            f"📅 سنة: {SUBSCRIPTION_TYPES['yearly']['price']}$\n"
-            f"♾️ مدى الحياة: {SUBSCRIPTION_TYPES['lifetime']['price']}$\n\n"
-            "💰 **طرق الدفع:** تحويل بنكي، USDT، باي بال\n\n"
-            "بعد الدفع، أرسل الإيصال للمشرف @Sz2zv",
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
-        return SHOP_MENU
-    
-    elif data.startswith("buy_"):
+    if data.startswith("buy_"):
         sub_type = data.replace("buy_", "")
         if sub_type in SUBSCRIPTION_TYPES:
             price = SUBSCRIPTION_TYPES[sub_type]['price']
             name = SUBSCRIPTION_TYPES[sub_type]['name']
-            
             await query.edit_message_text(
-                f"🛒 **طلب شراء اشتراك {name}**\n\n"
-                f"💰 **السعر:** {price}$\n\n"
-                f"📝 **لإتمام الشراء:**\n"
-                f"1️⃣ قم بالتحويل إلى:\n"
-                f"   • باي بال: obeida@trading.com\n"
-                f"   • USDT (TRC20): TXxx...xxx\n\n"
-                f"2️⃣ أرسل إيصال الدفع مع معرف المستخدم `{user_id}` للمشرف @Sz2zv\n\n"
-                f"3️⃣ سيتم تفعيل اشتراكك خلال 24 ساعة",
+                f"🛒 **طلب شراء اشتراك {name}**\n\n💰 **السعر:** {price}$\n\n📝 **لإتمام الشراء:**\n1️⃣ قم بالتحويل إلى:\n   • باي بال: obeida@trading.com\n   • USDT (TRC20): TXxx...xxx\n\n2️⃣ أرسل إيصال الدفع مع معرف المستخدم `{user_id}` للمشرف @Sz2zv\n\n3️⃣ سيتم تفعيل اشتراكك خلال 24 ساعة",
                 parse_mode="Markdown"
             )
-            
-            # إشعار المشرف
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"🛒 **طلب شراء جديد**\n\n👤 المستخدم: {user_id}\n📦 الاشتراك: {name}\n💰 السعر: {price}$\n⏰ الوقت: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                parse_mode="Markdown"
-            )
-        return
-    
-    elif data == "use_free":
-        user_data = SubscriptionSystem.get_user(user_id)
-        if user_data and user_data['free_analyses'] > 0:
-            await query.edit_message_text(
-                "✅ **يمكنك استخدام تحليل مجاني!**\n\nأرسل /start ثم اختر '📊 تحليل صورة'",
-                parse_mode="Markdown"
-            )
-        else:
-            await query.edit_message_text(
-                "❌ **لا يوجد تحليلات مجانية متبقية**\n\nيرجى التسجيل في الوكالة أو شراء اشتراك.",
-                parse_mode="Markdown"
-            )
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"🛒 **طلب شراء جديد**\n\n👤 المستخدم: {user_id}\n📦 الاشتراك: {name}\n💰 السعر: {price}$", parse_mode="Markdown")
     
     elif data == "back_to_menu":
         await query.edit_message_text("🏠 العودة للقائمة الرئيسية")
-        return MAIN_MENU
 
 async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
@@ -919,15 +707,9 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
     
     if user_message in CANDLE_SPEEDS:
         save_user_setting(user_id, "candle", user_message)
-        
         keyboard = [TRADE_TIMES[i:i+2] for i in range(0, len(TRADE_TIMES), 2)]
         keyboard.append(["الرجوع"])
-        
-        await update.message.reply_text(
-            f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n⬇️ حدد مدة الصفقة:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n⬇️ حدد مدة الصفقة:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True), parse_mode="Markdown")
         return SETTINGS_TIME
     
     await update.message.reply_text("❌ اختر سرعة صحيحة")
@@ -942,180 +724,254 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
     
     if user_message in TRADE_TIMES:
         save_user_setting(user_id, "trade_time", user_message)
-        
-        await update.message.reply_text(
-            f"✅ **تم حفظ الإعدادات!**\n\n📤 أرسل صورة الشارت الآن:",
-            reply_markup=ReplyKeyboardMarkup([["📊 تحليل صورة"], ["الرجوع"]], resize_keyboard=True),
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(f"✅ **تم حفظ الإعدادات!**\n\n📤 أرسل صورة الشارت الآن:", reply_markup=ReplyKeyboardMarkup([["📊 تحليل صورة"], ["الرجوع"]], resize_keyboard=True), parse_mode="Markdown")
         return MAIN_MENU
     
     await update.message.reply_text("❌ اختر مدة صحيحة")
     return SETTINGS_TIME
 
+async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text
+    if user_message == "الرجوع":
+        return await start(update, context)
+    return ANALYZE_MODE
+
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # التحقق من الصلاحية
     status, _, user_data = SubscriptionSystem.check_subscription(user_id)
     
     if not status:
         await update.message.reply_text(
-            "⚠️ **ليس لديك صلاحية للتحليل**\n\n"
-            f"📊 **تحليلك المجاني المتبقي:** {user_data['free_analyses']}\n\n"
-            "🔓 **طرق الحصول على صلاحية:**\n"
-            "• تسجيل في الوكالة (مجاني)\n"
-            "• شراء اشتراك مدفوع\n\n"
-            "استخدم /start للبدء",
+            f"⚠️ **ليس لديك صلاحية للتحليل**\n\n📊 **تحليلك المجاني المتبقي:** {user_data['free_analyses']}\n\n🔓 **طرق الحصول على صلاحية:**\n• تسجيل في الوكالة (مجاني)\n• شراء اشتراك مدفوع",
             parse_mode="Markdown"
         )
         return MAIN_MENU
     
-    # استخدام التحليل
     if not SubscriptionSystem.use_analysis(user_id):
-        await update.message.reply_text("❌ حدث خطأ، يرجى المحاولة مرة أخرى")
+        await update.message.reply_text("❌ حدث خطأ", parse_mode="Markdown")
         return MAIN_MENU
     
     candle, trade_time, _, _ = get_user_setting(user_id)
-    
-    wait_msg = await update.message.reply_text("🤌 جاري تحليل الشارت... [⬜⬜⬜⬜⬜ 0%]")
-    photo = await update.message.photo[-1].get_file()
-    
-    timestamp = int(time.time())
-    original_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}.jpg")
-    
+    await analyze_chart_image(update, context, candle, trade_time, user_id)
+    return MAIN_MENU
+
+async def analyze_chart_image(update: Update, context: ContextTypes.DEFAULT_TYPE, candle, trade_time, user_id):
     try:
+        wait_msg = await update.message.reply_text("🤌 جاري تحليل الشارت... [⬜⬜⬜⬜⬜ 0%]")
+        photo = await update.message.photo[-1].get_file()
+        timestamp = int(time.time())
+        original_path = os.path.join(IMAGE_CACHE_DIR, f"img_{user_id}_{timestamp}.jpg")
+        
         await photo.download_to_drive(original_path)
         compressed_path = compress_image(original_path)
         base64_img = encode_image(compressed_path)
         
         if not base64_img:
             await wait_msg.edit_text("❌ خطأ في قراءة الصورة")
-            return MAIN_MENU
-        
-        await asyncio.sleep(1)
-        await wait_msg.edit_text("🤌 جاري التحليل... [⬜⬜⬜⬜🟩 20%]")
+            return
         
         current_time = datetime.utcnow()
+        current_hour, current_minute, current_second = current_time.hour, current_time.minute, current_time.second
+        seconds_remaining, seconds_passed = 0, 0
         
-        await asyncio.sleep(1)
-        await wait_msg.edit_text("🤌 جاري التحليل... [⬜⬜⬜🟩🟩 40%]")
+        if candle.startswith('S'):
+            candle_seconds = int(candle[1:]) if candle[1:].isdigit() else 5
+            seconds_passed = current_second % candle_seconds
+            seconds_remaining = candle_seconds - seconds_passed
+        elif candle.startswith('M'):
+            candle_minutes = int(candle[1:]) if candle[1:].isdigit() else 1
+            total_minutes = current_hour * 60 + current_minute
+            minutes_passed = total_minutes % candle_minutes
+            seconds_passed = minutes_passed * 60 + current_second
+            seconds_remaining = (candle_minutes * 60) - seconds_passed
         
-        PROMPT = f"""
-أنت محلل فني. استخرج من الصورة:
+        in_golden_window = 2 <= seconds_passed <= 58
+        candle_status = "مغلقة" if seconds_remaining <= 0 else "مفتوحة"
+        
+        await asyncio.sleep(1.5)
+        await wait_msg.edit_text("🤌 جاري تحليل الشارت... [⬜⬜⬜⬜🟩 20%]")
+        
+        MAIN_PROMPT = f"""
+أنت المحرك التحليلي لنظام Obeida Trading. استخرج المعطيات الرقمية بدقة.
+
+المطلوب استخراجه:
+• أعلى قمة (HH): [سعر]
+• أدنى قاع (LL): [سعر]
 • السعر الحالي: [سعر]
-• قوة الاندفاع: [رقم]
+• قوة الاندفاع: [رقم عشري]
 • اتجاه الموجة: [UP/DOWN]
+• مستوى 0.500 فيبوناتشي: [سعر]
+• مستوى 0.236 فيبوناتشي: [سعر]
+• مستوى 0.382 فيبوناتشي: [سعر]
+• مستوى 0.618 فيبوناتشي: [سعر]
+• مستوى 0.786 فيبوناتشي: [سعر]
+• مستوى 1.272 فيبوناتشي: [سعر]
+• مستوى 1.618 فيبوناتشي: [سعر]
 • FVG: [True/False]
+• مستويات FVG: [من X إلى Y]
 • Order Block: [True/False]
+• التمركز السعري: [PREMIUM/DISCOUNT/TRAP_ZONE]
 """
         
         headers = {"Authorization": f"Bearer {MISTRAL_KEY}", "Content-Type": "application/json"}
         payload = {
             "model": MISTRAL_MODEL,
-            "messages": [{"role": "user", "content": [{"type": "text", "text": PROMPT}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}]}],
-            "max_tokens": 400,
-            "temperature": 0.0
+            "messages": [{"role": "user", "content": [{"type": "text", "text": MAIN_PROMPT}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}]}],
+            "max_tokens": 600,
+            "temperature": 0.0,
+            "top_p": 1.0
         }
         
-        await asyncio.sleep(1)
-        await wait_msg.edit_text("🤌 جاري التحليل... [⬜⬜🟩🟩🟩 60%]")
+        for i in range(1, 4):
+            await asyncio.sleep(1.5)
+            progress = i * 26
+            bars = "⬜" * (3 - i) + "🟩" * i
+            await wait_msg.edit_text(f"🤌 جاري تحليل الشارت... [{bars} {progress}%]")
         
-        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=60)
-        
-        await asyncio.sleep(1)
-        await wait_msg.edit_text("🤌 جاري التحليل... [⬜🟩🟩🟩🟩 80%]")
+        response = requests.post(MISTRAL_URL, headers=headers, json=payload, timeout=90)
         
         if response.status_code != 200:
             await wait_msg.edit_text(f"❌ خطأ: {response.status_code}")
-            return MAIN_MENU
+            return
         
-        await asyncio.sleep(1)
-        await wait_msg.edit_text("🤌 جاري التحليل... [🟩🟩🟩🟩🟩 100%]")
-        
-        result = response.json()['choices'][0]['message']['content']
+        analysis_result = response.json()['choices'][0]['message']['content'].strip()
         
         import re
-        price_match = re.search(r'السعر الحالي.*?:\s*([\d.]+)', result)
-        direction_match = re.search(r'اتجاه الموجة.*?:\s*([A-Z]+)', result, re.IGNORECASE)
+        current_price_match = re.search(r'السعر الحالي.*?:\s*([\d.]+)', analysis_result)
+        breakout_force_match = re.search(r'قوة الاندفاع.*?:\s*([\d.]+)', analysis_result)
+        direction_match = re.search(r'اتجاه الموجة.*?:\s*([A-Z]+)', analysis_result)
+        fvg_match = re.search(r'FVG.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
+        order_block_match = re.search(r'Order Block.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
+        positioning_match = re.search(r'التمركز السعري.*?:\s*([A-Z_]+)', analysis_result)
         
-        current_price = price_match.group(1) if price_match else "غير متاح"
-        direction = direction_match.group(1) if direction_match else "غير محدد"
+        fib_levels = {}
+        for fib_key in ['0.236', '0.382', '0.500', '0.618', '0.786', '1.272', '1.618']:
+            fib_match = re.search(f'مستوى {fib_key}.*?:\s*([\d.]+)', analysis_result)
+            if fib_match:
+                fib_levels[fib_key] = float(fib_match.group(1))
         
-        if direction == "UP":
-            action = "شراء 🟢"
-        elif direction == "DOWN":
-            action = "بيع 🔴"
+        has_fvg = fvg_match.group(1).upper() == "TRUE" if fvg_match else False
+        has_order_block = order_block_match.group(1).upper() == "TRUE" if order_block_match else False
+        positioning = positioning_match.group(1) if positioning_match else "NEUTRAL"
+        current_price = float(current_price_match.group(1)) if current_price_match else 0
+        breakout_force = float(breakout_force_match.group(1)) if breakout_force_match else 1.0
+        current_direction = direction_match.group(1).upper() if direction_match else "UP"
+        fib_500 = fib_levels.get("0.500", current_price)
+        
+        if breakout_force > 1.5:
+            signal_strength = "عالية جدا 💥"
+            confidence = 85
+        elif breakout_force > 1.2:
+            signal_strength = "عالية 🔥"
+            confidence = 75
+        elif breakout_force > 1.0:
+            signal_strength = "متوسطة ⚡"
+            confidence = 65
         else:
-            action = "انتظار 🟡"
+            signal_strength = "ضعيفة ❄️"
+            confidence = 55
         
-        formatted = f"""
-📊 **التحليل الفني**
+        if has_fvg:
+            confidence += 5
+        if has_order_block:
+            confidence += 5
+        if positioning == "DISCOUNT" and current_direction == "UP":
+            confidence += 5
+        elif positioning == "PREMIUM" and current_direction == "DOWN":
+            confidence += 5
+        elif positioning == "TRAP_ZONE":
+            confidence -= 10
+        confidence = min(100, max(0, confidence))
+        
+        if current_direction == "UP":
+            if breakout_force > 1.5 and has_fvg:
+                action = "شراء 🟢"
+                entry_type = "دخول مباشر"
+            elif breakout_force > 1.2 and has_order_block:
+                action = "كسر هيكلي صاعد 💥🟢"
+                entry_type = "دخول مباشر"
+            elif positioning == "DISCOUNT" and current_price < fib_500:
+                action = "سحب سيولة صاعد 🔄🟢"
+                entry_type = "إعادة اختبار"
+            elif breakout_force > 1.0:
+                action = "انعكاس فوري صاعد 🔄🟢"
+                entry_type = "انعكاس فوري"
+            else:
+                action = "انتظار تصحيح 🟡"
+                entry_type = "دخول معلق"
+        else:
+            if breakout_force > 1.5 and has_fvg:
+                action = "بيع 🔴"
+                entry_type = "دخول مباشر"
+            elif breakout_force > 1.2 and has_order_block:
+                action = "كسر هيكلي هابط 💥🔴"
+                entry_type = "دخول مباشر"
+            elif positioning == "PREMIUM" and current_price > fib_500:
+                action = "سحب سيولة هابط 🔄🔴"
+                entry_type = "إعادة اختبار"
+            elif breakout_force > 1.0:
+                action = "انعكاس فوري هابط 🔄🔴"
+                entry_type = "انعكاس فوري"
+            else:
+                action = "انتظار تصحيح 🟡"
+                entry_type = "دخول معلق"
+        
+        await asyncio.sleep(1)
+        await wait_msg.edit_text("🤌 جاري تحليل الشارت... [🟩🟩🟩🟩🟩 100%]")
+        
+        formatted_result = f"""
+📊 **التحليل الفني المتقدم:**
+• الوقت: {current_time.strftime('%H:%M:%S')} UTC
+• حالة النافذة: {"✅ داخل" if in_golden_window else "❌ خارج"}
+• FVG: {"موجودة" if has_fvg else "غير موجودة"}
+• Order Block: {"موجود" if has_order_block else "غير موجود"}
 
-• السعر الحالي: {current_price}
-• الاتجاه: {direction}
-• القرار: {action}
-
-📌 **نقاط الدخول:**
-• TP1: {float(current_price) * 1.005 if current_price != "غير متاح" else "..."}
-• TP2: {float(current_price) * 1.01 if current_price != "غير متاح" else "..."}
-• SL: {float(current_price) * 0.995 if current_price != "غير متاح" else "..."}
+🎯 **الإشارة التنفيذية:**
+• السعر الحالي: {current_price:.6f}
+• حالة الشمعة: {candle_status} - متبقي: {seconds_remaining} ثانية
+• القرار الفني: {action}
+• قوة الإشارة: {signal_strength}
+• نوع الدخول: {entry_type}
 
 ⚠️ **إدارة المخاطر:**
-• استخدم وقف خسارة
-• حجم مخاطرة مناسب
+• مستوى الثقة: {confidence:.0f}%
+• حجم الاستثمار: {"5%" if confidence >= 85 else "3%" if confidence >= 70 else "2%"}
 """
         
-        await wait_msg.edit_text(formatted, parse_mode="Markdown")
+        await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
         
-    except Exception as e:
-        await wait_msg.edit_text(f"❌ خطأ: {str(e)[:200]}")
-    finally:
         if os.path.exists(original_path):
             os.remove(original_path)
-    
-    return MAIN_MENU
+        if os.path.exists(compressed_path):
+            os.remove(compressed_path)
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ: {str(e)[:200]}")
 
 # ============================================
 # المناطق الزمنية
 # ============================================
-TIMEZONES = {
-    "GMT+00:00": "لندن",
-    "GMT+01:00": "برلين",
-    "GMT+02:00": "القاهرة",
-    "GMT+03:00": "الرياض",
-    "GMT+04:00": "دبي",
-    "GMT-05:00": "نيويورك",
-}
+TIMEZONES = {"GMT+00:00": "لندن", "GMT+01:00": "برلين", "GMT+02:00": "القاهرة", "GMT+03:00": "الرياض", "GMT+04:00": "دبي", "GMT-05:00": "نيويورك"}
 
 async def timezone_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     current_tz = get_user_timezone(user_id)
     local_time = get_localized_time(user_id)
-    
     keyboard = [[f"{gmt} ({name})"] for gmt, name in TIMEZONES.items()]
     keyboard.append(["الرجوع"])
-    
-    await update.message.reply_text(
-        f"🌍 **المناطق الزمنية**\n\n🕒 **منطقتك:** {current_tz}\n⏰ **الوقت:** {local_time.strftime('%H:%M:%S')}\n\nاختر المنطقة:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(f"🌍 **المناطق الزمنية**\n\n🕒 **منطقتك:** {current_tz}\n⏰ **الوقت:** {local_time.strftime('%H:%M:%S')}\n\nاختر المنطقة:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True), parse_mode="Markdown")
     return TIMEZONE_MENU
 
 async def handle_timezone_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     user_id = update.effective_user.id
-    
     if user_message == "الرجوع":
         return await start(update, context)
-    
     for gmt in TIMEZONES.keys():
         if user_message.startswith(gmt):
             set_user_timezone(user_id, gmt)
             await update.message.reply_text(f"✅ تم تعيين المنطقة: {gmt}", parse_mode="Markdown")
             break
-    
     return TIMEZONE_MENU
 
 # ============================================
@@ -1123,27 +979,14 @@ async def handle_timezone_selection(update: Update, context: ContextTypes.DEFAUL
 # ============================================
 async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ غير مصرح")
         return MAIN_MENU
-    
-    keyboard = [
-        ["👥 المستخدمين", "📝 طلبات الوكالة"],
-        ["🛒 طلبات الشراء", "📊 إحصائيات"],
-        ["📢 إذاعة", "🔙 العودة"]
-    ]
-    
-    await update.message.reply_text(
-        "👑 **لوحة التحكم**\n\nاختر الإجراء:",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
-        parse_mode="Markdown"
-    )
+    keyboard = [["👥 المستخدمين", "📝 طلبات الوكالة"], ["📊 إحصائيات", "📢 إذاعة"], ["🔙 العودة"]]
+    await update.message.reply_text("👑 **لوحة التحكم**", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True), parse_mode="Markdown")
     return ADMIN_MENU
 
 async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
-    user_id = update.effective_user.id
-    
-    if user_id != ADMIN_ID:
+    if update.effective_user.id != ADMIN_ID:
         return MAIN_MENU
     
     if user_message == "🔙 العودة":
@@ -1153,74 +996,28 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users = SubscriptionSystem.get_all_users()
         msg = "👥 **المستخدمين:**\n\n"
         for u in users[:20]:
-            msg += f"• {u[1] or u[0]} (`{u[0]}`)\n"
-            msg += f"  📊 تحليلات: {u[3]}/{u[4]} | {u[5]}\n"
-            msg += f"  ✅ وكالة: {'نعم' if u[8] else 'لا'}\n\n"
-        
+            msg += f"• {u[1] or u[0]} (`{u[0]}`)\n  📊 {u[3]}/{u[4]} | وكالة: {'نعم' if u[7] else 'لا'}\n\n"
         for part in split_message(msg, 4000):
             await update.message.reply_text(part, parse_mode="Markdown")
         return ADMIN_MENU
     
     elif user_message == "📝 طلبات الوكالة":
         pending = SubscriptionSystem.get_pending_affiliate_requests()
-        
         if not pending:
             await update.message.reply_text("📭 لا توجد طلبات")
             return ADMIN_MENU
-        
         for req in pending:
-            req_id, uid, aid, req_time, username, name = req
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ قبول", callback_data=f"aff_approve_{req_id}"),
-                 InlineKeyboardButton("❌ رفض", callback_data=f"aff_reject_{req_id}")]
-            ])
-            await update.message.reply_text(
-                f"📝 **طلب وكالة**\n\n👤 المستخدم: {uid} ({username or name})\n🆔 المعرف: `{aid}`\n📅 الوقت: {req_time[:16]}",
-                reply_markup=keyboard,
-                parse_mode="Markdown"
-            )
-        return ADMIN_MENU
-    
-    elif user_message == "🛒 طلبات الشراء":
-        pending = SubscriptionSystem.get_pending_purchases()
-        
-        if not pending:
-            await update.message.reply_text("📭 لا توجد طلبات شراء")
-            return ADMIN_MENU
-        
-        for req in pending:
-            req_id, uid, sub_type, method, ref, req_time, username, name = req
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ تفعيل", callback_data=f"purchase_approve_{req_id}"),
-                 InlineKeyboardButton("❌ رفض", callback_data=f"purchase_reject_{req_id}")]
-            ])
-            await update.message.reply_text(
-                f"🛒 **طلب شراء**\n\n👤 المستخدم: {uid} ({username or name})\n📦 الاشتراك: {SUBSCRIPTION_TYPES[sub_type]['name']}\n💰 السعر: {SUBSCRIPTION_TYPES[sub_type]['price']}$\n📅 الوقت: {req_time[:16]}",
-                reply_markup=keyboard,
-                parse_mode="Markdown"
-            )
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ قبول", callback_data=f"aff_approve_{req[0]}"), InlineKeyboardButton("❌ رفض", callback_data=f"aff_reject_{req[0]}")]])
+            await update.message.reply_text(f"📝 **طلب وكالة**\n\n👤 المستخدم: {req[1]} ({req[4] or req[5]})\n🆔 المعرف: `{req[2]}`\n📅 الوقت: {req[3][:16]}", reply_markup=keyboard, parse_mode="Markdown")
         return ADMIN_MENU
     
     elif user_message == "📊 إحصائيات":
         stats = SubscriptionSystem.get_stats()
-        msg = (
-            f"📊 **إحصائيات النظام**\n\n"
-            f"👥 المستخدمين: {stats['total_users']}\n"
-            f"📊 التحليلات: {stats['total_analyses']}\n"
-            f"✅ وكالة: {stats['affiliate_users']}\n"
-            f"💎 مشتركين: {stats['paid_users']}\n"
-            f"📝 طلبات وكالة: {stats['pending_affiliate']}\n"
-            f"🛒 طلبات شراء: {stats['pending_purchases']}\n\n"
-            f"🌐 الجلسة: {get_current_session()['name']}"
-        )
-        await update.message.reply_text(msg, parse_mode="Markdown")
+        await update.message.reply_text(f"📊 **إحصائيات**\n\n👥 المستخدمين: {stats['total_users']}\n📊 التحليلات: {stats['total_analyses']}\n✅ وكالة: {stats['affiliate_users']}\n💎 مشتركين: {stats['paid_users']}\n📝 طلبات: {stats['pending_affiliate']}", parse_mode="Markdown")
         return ADMIN_MENU
     
     elif user_message == "📢 إذاعة":
-        await update.message.reply_text(
-            "📢 **إذاعة**\n\nأرسل الرسالة للإذاعة:",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("📢 **إذاعة**\n\nأرسل الرسالة:", parse_mode="Markdown")
         return BROADCAST_MESSAGE
     
     return ADMIN_MENU
@@ -1234,8 +1031,6 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         req_id = int(data.replace("aff_approve_", ""))
         success, msg = SubscriptionSystem.verify_affiliate(req_id, ADMIN_ID, True)
         await query.edit_message_text(f"✅ {msg}")
-        
-        # إعلام المستخدم
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT user_id FROM affiliate_requests WHERE id = ?", (req_id,))
@@ -1243,11 +1038,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         conn.close()
         if row:
             try:
-                await context.bot.send_message(
-                    chat_id=row[0],
-                    text="✅ **تم تفعيل حسابك في الوكالة!**\n\nيمكنك الآن استخدام البوت مجاناً.\nأرسل /start للبدء.",
-                    parse_mode="Markdown"
-                )
+                await context.bot.send_message(chat_id=row[0], text="✅ **تم تفعيل حسابك في الوكالة!**\n\nيمكنك الآن استخدام البوت مجاناً.\nأرسل /start للبدء.", parse_mode="Markdown")
             except:
                 pass
     
@@ -1255,58 +1046,46 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         req_id = int(data.replace("aff_reject_", ""))
         success, msg = SubscriptionSystem.verify_affiliate(req_id, ADMIN_ID, False)
         await query.edit_message_text(f"❌ {msg}")
-    
-    elif data.startswith("purchase_approve_"):
-        req_id = int(data.replace("purchase_approve_", ""))
-        success, msg = SubscriptionSystem.approve_purchase(req_id, ADMIN_ID)
-        await query.edit_message_text(f"✅ {msg}")
-        
-        # إعلام المستخدم
-        conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM purchase_requests WHERE id = ?", (req_id,))
-        row = cursor.fetchone()
-        conn.close()
-        if row:
-            try:
-                await context.bot.send_message(
-                    chat_id=row[0],
-                    text="✅ **تم تفعيل اشتراكك!**\n\nشكراً لثقتك. يمكنك الآن استخدام البوت.\nأرسل /start للبدء.",
-                    parse_mode="Markdown"
-                )
-            except:
-                pass
-    
-    elif data.startswith("purchase_reject_"):
-        req_id = int(data.replace("purchase_reject_", ""))
-        await query.edit_message_text("❌ تم رفض الطلب")
 
 async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    message = update.message.text.strip()
-    
-    if user_id != ADMIN_ID:
+    if update.effective_user.id != ADMIN_ID:
         return MAIN_MENU
-    
+    message = update.message.text
     users = SubscriptionSystem.get_all_users()
     sent = 0
-    
-    wait_msg = await update.message.reply_text(f"📢 جاري الإذاعة لـ {len(users)} مستخدم...")
-    
     for u in users:
         try:
-            await context.bot.send_message(
-                chat_id=u[0],
-                text=f"📢 **رسالة إدارية**\n\n{message}\n\nObeida Trading",
-                parse_mode="Markdown"
-            )
+            await context.bot.send_message(chat_id=u[0], text=f"📢 **رسالة إدارية**\n\n{message}\n\nObeida Trading", parse_mode="Markdown")
             sent += 1
             await asyncio.sleep(0.05)
         except:
             pass
-    
-    await wait_msg.edit_text(f"✅ تم الإرسال لـ {sent} مستخدم")
+    await update.message.reply_text(f"✅ تم الإرسال لـ {sent} مستخدم")
     return ADMIN_MENU
+
+# ============================================
+# جدولة التنبيهات
+# ============================================
+async def session_alert_scheduler(context):
+    last_sent = {}
+    while True:
+        current_hour = datetime.utcnow().hour
+        current_minute = datetime.utcnow().minute
+        
+        for session_key, session in TRADING_SESSIONS.items():
+            if current_hour == session['start'] and current_minute == 0:
+                if session_key not in last_sent or last_sent[session_key] != datetime.utcnow().date():
+                    users = get_users_for_session_alert(session_key)
+                    if users:
+                        alert_msg = f"🔔 **{session['icon']} بدأت {session['name']}** 🔔\n\n📊 **التقلب:** {session['volatility']}\n🎯 **نسبة النجاح:** {session['success_rate']}\n💰 **الأزواج:** {session['pairs']}\n✨ **المميزات:** {session['features']}\n⏰ **التوقيت:** {session['time_range']}\n\n🚀 استخدم /start للبدء!"
+                        for user_id in users:
+                            try:
+                                await context.bot.send_message(chat_id=user_id, text=alert_msg, parse_mode="Markdown")
+                                await asyncio.sleep(0.1)
+                            except:
+                                pass
+                    last_sent[session_key] = datetime.utcnow().date()
+        await asyncio.sleep(60)
 
 # ============================================
 # Flask Web Server
@@ -1375,85 +1154,33 @@ th{background:#667eea;color:white}
 <h1>👑 لوحة تحكم Obeida Trading</h1>
 <a href="/logout" style="background:#dc3545;color:white;padding:10px 20px;border-radius:10px;text-decoration:none">تسجيل الخروج</a>
 </div>
-
 <div class="stats">
 <div class="stat"><h3>👥 المستخدمين</h3><div class="num">{{ stats.total_users }}</div></div>
 <div class="stat"><h3>📊 التحليلات</h3><div class="num">{{ stats.total_analyses }}</div></div>
 <div class="stat"><h3>✅ وكالة</h3><div class="num">{{ stats.affiliate_users }}</div></div>
 <div class="stat"><h3>💎 مشتركين</h3><div class="num">{{ stats.paid_users }}</div></div>
 </div>
-
 <div class="section">
-<h2>📝 طلبات الوكالة ({{ pending_affiliate }})</h2>
+<h2>📝 طلبات الوكالة ({{ stats.pending_affiliate }})</h2>
 <table>
 <thead><tr><th>المعرف</th><th>الاسم</th><th>معرف الوكالة</th><th>الوقت</th><th>الإجراءات</th></tr></thead>
 <tbody>
 {% for req in affiliate_requests %}
-<tr>
-<td>{{ req.user_id }}</td>
-<td>{{ req.username or req.user_id }}</td>
-<td>{{ req.affiliate_id }}</td>
-<td>{{ req.requested_at[:16] }}</td>
-<td>
-<button class="btn btn-success" onclick="approveAffiliate({{ req.id }})">✅ قبول</button>
-<button class="btn btn-danger" onclick="rejectAffiliate({{ req.id }})">❌ رفض</button>
-</td>
-</tr>
+<tr><td>{{ req.user_id }}</td><td>{{ req.username or req.user_id }}</td><td>{{ req.affiliate_id }}</td><td>{{ req.requested_at[:16] }}</td><td><button class="btn btn-success" onclick="approve({{ req.id }})">✅ قبول</button><button class="btn btn-danger" onclick="reject({{ req.id }})">❌ رفض</button></td></tr>
 {% endfor %}
 </tbody>
 </table>
 </div>
-
-<div class="section">
-<h2>🛒 طلبات الشراء ({{ pending_purchases }})</h2>
-<table>
-<thead><tr><th>المعرف</th><th>الاسم</th><th>الاشتراك</th><th>السعر</th><th>الوقت</th><th>الإجراءات</th></tr></thead>
-<tbody>
-{% for req in purchase_requests %}
-<tr>
-<td>{{ req.user_id }}</td>
-<td>{{ req.username or req.user_id }}</td>
-<td>{{ req.subscription_type }}</td>
-<td>{{ req.price }}$</td>
-<td>{{ req.requested_at[:16] }}</td>
-<td>
-<button class="btn btn-success" onclick="approvePurchase({{ req.id }})">✅ تفعيل</button>
-<button class="btn btn-danger" onclick="rejectPurchase({{ req.id }})">❌ رفض</button>
-</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-
 <div class="section">
 <h2>📢 إذاعة</h2>
 <textarea id="broadcastMsg" rows="3" style="width:100%;padding:10px;margin:10px 0" placeholder="أدخل الرسالة..."></textarea>
 <button class="btn btn-success" onclick="broadcast()">📢 إرسال</button>
 </div>
-
-<div class="footer" style="text-align:center;color:white;margin-top:20px">
-<p>Obeida Trading - نظام إدارة الاشتراكات</p>
 </div>
-</div>
-
 <script>
-function approveAffiliate(id){
-fetch('/admin/affiliate/'+id+'/approve',{method:'POST'}).then(()=>location.reload())
-}
-function rejectAffiliate(id){
-fetch('/admin/affiliate/'+id+'/reject',{method:'POST'}).then(()=>location.reload())
-}
-function approvePurchase(id){
-fetch('/admin/purchase/'+id+'/approve',{method:'POST'}).then(()=>location.reload())
-}
-function rejectPurchase(id){
-fetch('/admin/purchase/'+id+'/reject',{method:'POST'}).then(()=>location.reload())
-}
-function broadcast(){
-let msg=document.getElementById('broadcastMsg').value
-fetch('/admin/broadcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})}).then(()=>alert('تم الإرسال'))
-}
+function approve(id){fetch('/admin/affiliate/'+id+'/approve',{method:'POST'}).then(()=>location.reload())}
+function reject(id){fetch('/admin/affiliate/'+id+'/reject',{method:'POST'}).then(()=>location.reload())}
+function broadcast(){let msg=document.getElementById('broadcastMsg').value;fetch('/admin/broadcast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})}).then(()=>alert('تم الإرسال'))}
 </script>
 </body>
 </html>
@@ -1479,30 +1206,10 @@ def logout():
 @login_required
 def admin_panel():
     stats = SubscriptionSystem.get_stats()
-    
     affiliate_reqs = []
     for req in SubscriptionSystem.get_pending_affiliate_requests():
-        affiliate_reqs.append({
-            'id': req[0], 'user_id': req[1], 'affiliate_id': req[2],
-            'requested_at': req[3], 'username': req[4] or req[5]
-        })
-    
-    purchase_reqs = []
-    for req in SubscriptionSystem.get_pending_purchases():
-        purchase_reqs.append({
-            'id': req[0], 'user_id': req[1], 'subscription_type': SUBSCRIPTION_TYPES[req[2]]['name'],
-            'price': SUBSCRIPTION_TYPES[req[2]]['price'], 'requested_at': req[5],
-            'username': req[6] or req[7]
-        })
-    
-    return render_template_string(
-        ADMIN_PANEL,
-        stats=stats,
-        pending_affiliate=stats['pending_affiliate'],
-        pending_purchases=stats['pending_purchases'],
-        affiliate_requests=affiliate_reqs,
-        purchase_requests=purchase_reqs
-    )
+        affiliate_reqs.append({'id': req[0], 'user_id': req[1], 'affiliate_id': req[2], 'requested_at': req[3], 'username': req[4] or req[5]})
+    return render_template_string(ADMIN_PANEL, stats=stats, affiliate_requests=affiliate_reqs)
 
 @app.route('/admin/affiliate/<int:req_id>/approve', methods=['POST'])
 @login_required
@@ -1516,21 +1223,9 @@ def reject_affiliate(req_id):
     success, msg = SubscriptionSystem.verify_affiliate(req_id, ADMIN_ID, False)
     return jsonify({'success': success})
 
-@app.route('/admin/purchase/<int:req_id>/approve', methods=['POST'])
-@login_required
-def approve_purchase(req_id):
-    success, msg = SubscriptionSystem.approve_purchase(req_id, ADMIN_ID)
-    return jsonify({'success': success})
-
-@app.route('/admin/purchase/<int:req_id>/reject', methods=['POST'])
-@login_required
-def reject_purchase(req_id):
-    return jsonify({'success': True})
-
 @app.route('/admin/broadcast', methods=['POST'])
 @login_required
 def broadcast():
-    # يتم الإرسال عبر البوت
     return jsonify({'success': True})
 
 @app.route('/')
@@ -1546,7 +1241,6 @@ def run_flask():
 # ============================================
 def main():
     print("🚀 Starting Obeida Trading Bot...")
-    
     init_main_db()
     SubscriptionSystem.init_db()
     
@@ -1555,18 +1249,26 @@ def main():
     
     application = Application.builder().token(TOKEN).build()
     
+    async def run_scheduler():
+        await session_alert_scheduler(application)
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.create_task(run_scheduler())
+    
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start)],
         states={
             MAIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)],
             SETTINGS_CANDLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_candle)],
             SETTINGS_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_time)],
-            ANALYZE_MODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_photo_analysis), MessageHandler(filters.PHOTO, handle_photo_analysis)],
+            ANALYZE_MODE: [MessageHandler(filters.PHOTO, handle_photo_analysis), MessageHandler(filters.TEXT & ~filters.COMMAND, handle_analyze_mode)],
             ADMIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_menu)],
             BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast)],
             TIMEZONE_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_timezone_selection)],
             REGISTER_AFFILIATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_affiliate_id)],
             SHOP_MENU: [CallbackQueryHandler(handle_callback_query)],
+            SESSION_ALERTS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_session_alerts)],
         },
         fallbacks=[CommandHandler('start', start)],
         allow_reentry=True
@@ -1574,7 +1276,7 @@ def main():
     
     application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(handle_callback_query))
-    application.add_handler(CallbackQueryHandler(handle_admin_callback, pattern="^(aff_|purchase_)"))
+    application.add_handler(CallbackQueryHandler(handle_admin_callback, pattern="^aff_"))
     
     print("✅ Bot is running...")
     application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
