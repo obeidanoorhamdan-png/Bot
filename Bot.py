@@ -165,14 +165,17 @@ class SubscriptionSystem:
         if not user:
             return False, 'غير مسجل', {'free_analyses': 3}
         
+        # التحقق من الاشتراك المدفوع
         if user['subscription_type'] != 'free' and user['subscription_end']:
             end_date = datetime.fromisoformat(user['subscription_end'])
             if end_date > datetime.now():
                 return True, user['subscription_type'], user
         
+        # التحقق من التسجيل في الوكالة
         if user['affiliate_verified']:
             return True, 'وكالة', user
         
+        # التحقق من التحليلات المجانية
         if user['free_analyses'] > 0:
             return True, 'مجاني', user
         
@@ -486,6 +489,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             welcome_msg += f"📊 **تحليلات مجانية متبقية:** {user_data['free_analyses']}\n"
     else:
         welcome_msg += f"⚠️ **الحالة:** غير مفعل\n📊 **تحليلات مجانية متبقية:** {user_data['free_analyses']}\n"
+        welcome_msg += "\n🔓 **للحصول على صلاحية:**\n• تسجيل في الوكالة (مجاني)\n• شراء اشتراك مدفوع\n"
     
     welcome_msg += (
         f"\n🌐 **الجلسة الحالية:** {current_session['name']}\n"
@@ -496,7 +500,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 **Powered by Obeida Trading**"
     )
     
+    # تحديد الأزرار حسب حالة المستخدم فقط
     if status:
+        # المستخدم مسجل أو مشترك - تظهر جميع الأزرار
         keyboard = [
             ["⚙️ إعدادات التحليل", "📊 تحليل صورة"],
             ["🔔 تنبيه بدء جلسة", "👤 معلوماتي"],
@@ -506,6 +512,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id == ADMIN_ID:
             keyboard.append(["👑 لوحة التحكم"])
     else:
+        # المستخدم غير مسجل - تظهر أزرار محدودة فقط (بدون تحليل)
         keyboard = [
             ["👤 معلوماتي"],
             ["🔔 تنبيه بدء جلسة", "🛒 المتجر"],
@@ -514,7 +521,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id == ADMIN_ID:
             keyboard.append(["👑 لوحة التحكم"])
     
-    await update.message.reply_text(welcome_msg, reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True), parse_mode="Markdown")
+    await update.message.reply_text(
+        welcome_msg,
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        parse_mode="Markdown"
+    )
     return MAIN_MENU
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -564,22 +575,46 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_message == "📝 تسجيل الوكالة":
         return await affiliate_registration_menu(update, context)
     
+    # هذه الأزرار تظهر فقط للمستخدمين المسجلين/المشتركين
     if status:
         if user_message == "⚙️ إعدادات التحليل":
             keyboard = [CANDLE_SPEEDS[i:i+3] for i in range(0, len(CANDLE_SPEEDS), 3)]
             keyboard.append(["الرجوع"])
-            await update.message.reply_text("⚙️ **إعدادات التحليل**\n\nاختر سرعة الشموع:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True), parse_mode="Markdown")
+            await update.message.reply_text(
+                "⚙️ **إعدادات التحليل**\n\nاختر سرعة الشموع:",
+                reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+                parse_mode="Markdown"
+            )
             return SETTINGS_CANDLE
         
         elif user_message == "📊 تحليل صورة":
             candle, trade_time, _, _ = get_user_setting(user_id)
             if not candle:
-                await update.message.reply_text("❌ **يجب ضبط الإعدادات أولاً**\nاستخدم زر '⚙️ إعدادات التحليل'", parse_mode="Markdown")
+                await update.message.reply_text(
+                    "❌ **يجب ضبط الإعدادات أولاً**\nاستخدم زر '⚙️ إعدادات التحليل'",
+                    parse_mode="Markdown"
+                )
                 return MAIN_MENU
-            await update.message.reply_text(f"📤 **أرسل صورة الشارت**\n\n⚙️ **الإعدادات:** {candle} | {trade_time}", reply_markup=ReplyKeyboardMarkup([["الرجوع"]], resize_keyboard=True), parse_mode="Markdown")
+            await update.message.reply_text(
+                f"📤 **أرسل صورة الشارت**\n\n⚙️ **الإعدادات:** {candle} | {trade_time}",
+                reply_markup=ReplyKeyboardMarkup([["الرجوع"]], resize_keyboard=True),
+                parse_mode="Markdown"
+            )
             return ANALYZE_MODE
+    else:
+        # إذا حاول المستخدم الضغط على أزرار غير مسموحة
+        if user_message in ["⚙️ إعدادات التحليل", "📊 تحليل صورة"]:
+            await update.message.reply_text(
+                "⚠️ **ليس لديك صلاحية للتحليل** ⚠️\n\n"
+                "🔓 **طرق الحصول على صلاحية:**\n"
+                "• تسجيل في الوكالة (مجاني) - اضغط '📝 تسجيل الوكالة'\n"
+                "• شراء اشتراك مدفوع - اضغط '🛒 المتجر'\n\n"
+                "بعد التفعيل، ستظهر لك أزرار التحليل والإعدادات.",
+                parse_mode="Markdown"
+            )
+            return MAIN_MENU
     
-    elif user_message == "الرجوع":
+    if user_message == "الرجوع":
         return await start(update, context)
     
     return MAIN_MENU
@@ -625,7 +660,10 @@ async def handle_session_alerts(update: Update, context: ContextTypes.DEFAULT_TY
                 await update.message.reply_text(f"❌ تم إلغاء تنبيه {session['name']}", parse_mode="Markdown")
             else:
                 add_user_alert(user_id, session_key)
-                await update.message.reply_text(f"✅ تم تفعيل تنبيه {session['name']}\n\nستتلقى إشعاراً فور بدء الجلسة.", parse_mode="Markdown")
+                await update.message.reply_text(
+                    f"✅ تم تفعيل تنبيه {session['name']}\n\nستتلقى إشعاراً فور بدء الجلسة.",
+                    parse_mode="Markdown"
+                )
             break
     
     return await session_alerts_menu(update, context)
@@ -640,7 +678,14 @@ async def shop_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔙 رجوع", callback_data="back_to_menu")]
     ])
     await update.message.reply_text(
-        "🛒 **متجر الاشتراكات**\n\nاختر نوع الاشتراك:\n\n📅 يوم: 5$ - تحليلات غير محدودة\n📆 أسبوع: 15$ - تحليلات غير محدودة\n📅 شهر: 40$ - تحليلات غير محدودة\n📅 سنة: 150$ - تحليلات غير محدودة\n♾️ مدى الحياة: 300$ - تحليلات غير محدودة\n\n💰 **طرق الدفع:** تحويل بنكي، USDT، باي بال\n\nبعد الدفع، أرسل الإيصال للمشرف @Sz2zv",
+        "🛒 **متجر الاشتراكات**\n\nاختر نوع الاشتراك:\n\n"
+        "📅 يوم: 5$ - تحليلات غير محدودة\n"
+        "📆 أسبوع: 15$ - تحليلات غير محدودة\n"
+        "📅 شهر: 40$ - تحليلات غير محدودة\n"
+        "📅 سنة: 150$ - تحليلات غير محدودة\n"
+        "♾️ مدى الحياة: 300$ - تحليلات غير محدودة\n\n"
+        "💰 **طرق الدفع:** تحويل بنكي، USDT، باي بال\n\n"
+        "بعد الدفع، أرسل الإيصال مع معرف المستخدم للمشرف @Sz2zv",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
@@ -651,11 +696,23 @@ async def affiliate_registration_menu(update: Update, context: ContextTypes.DEFA
     user_data = SubscriptionSystem.get_user(user_id)
     
     if user_data and user_data['affiliate_verified']:
-        await update.message.reply_text(f"✅ **أنت مسجل بالفعل في الوكالة!**\n\n🆔 **معرف الوكالة:** `{user_data['affiliate_id']}`\n\nيمكنك استخدام البوت مجاناً.", parse_mode="Markdown")
+        await update.message.reply_text(
+            f"✅ **أنت مسجل بالفعل في الوكالة!**\n\n🆔 **معرف الوكالة:** `{user_data['affiliate_id']}`\n\nيمكنك استخدام البوت مجاناً.",
+            parse_mode="Markdown"
+        )
         return MAIN_MENU
     
     await update.message.reply_text(
-        "📝 **التسجيل في وكالة Tickmill (مجاني)**\n\n🔗 **رابط التسجيل:**\nhttps://my.tickmill.com/en/sign-up/account-type?utm_campaign=ib_link&utm_content=IB96119705_MT\n\n📌 **خطوات التسجيل:**\n1️⃣ اضغط على الرابط أعلاه\n2️⃣ قم بإنشاء حساب جديد\n3️⃣ بعد الانتهاء، أرسل معرف العميل (Account ID)\n\n✅ **أرسل معرف العميل الآن:**\nمثال: `12345678`\n\nسيتم تفعيل حسابك خلال 24 ساعة",
+        "📝 **التسجيل في وكالة Tickmill (مجاني)**\n\n"
+        "🔗 **رابط التسجيل:**\n"
+        "https://my.tickmill.com/en/sign-up/account-type?utm_campaign=ib_link&utm_content=IB96119705_MT\n\n"
+        "📌 **خطوات التسجيل:**\n"
+        "1️⃣ اضغط على الرابط أعلاه\n"
+        "2️⃣ قم بإنشاء حساب جديد\n"
+        "3️⃣ بعد الانتهاء، أرسل معرف العميل (Account ID)\n\n"
+        "✅ **أرسل معرف العميل الآن:**\n"
+        "مثال: `12345678`\n\n"
+        "سيتم تفعيل حسابك خلال 24 ساعة",
         parse_mode="Markdown"
     )
     return REGISTER_AFFILIATE
@@ -665,14 +722,24 @@ async def handle_affiliate_id(update: Update, context: ContextTypes.DEFAULT_TYPE
     affiliate_id = update.message.text.strip()
     
     if not affiliate_id.isdigit() or len(affiliate_id) < 5:
-        await update.message.reply_text("❌ **معرف غير صالح**\nالرجاء إرسال معرف الحساب الصحيح (أرقام فقط)", parse_mode="Markdown")
+        await update.message.reply_text(
+            "❌ **معرف غير صالح**\nالرجاء إرسال معرف الحساب الصحيح (أرقام فقط)",
+            parse_mode="Markdown"
+        )
         return REGISTER_AFFILIATE
     
     success, msg = SubscriptionSystem.request_affiliate_registration(user_id, affiliate_id)
     
     if success:
-        await update.message.reply_text(f"✅ {msg}\n\n🆔 **المعرف المرسل:** `{affiliate_id}`\n\nسيتم إعلامك عند التفعيل.", parse_mode="Markdown")
-        await context.bot.send_message(chat_id=ADMIN_ID, text=f"📝 **طلب تسجيل وكالة جديد**\n\n👤 المستخدم: {user_id}\n🆔 المعرف: `{affiliate_id}`\n\nاستخدم لوحة التحكم للموافقة.", parse_mode="Markdown")
+        await update.message.reply_text(
+            f"✅ {msg}\n\n🆔 **المعرف المرسل:** `{affiliate_id}`\n\nسيتم إعلامك عند التفعيل.",
+            parse_mode="Markdown"
+        )
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"📝 **طلب تسجيل وكالة جديد**\n\n👤 المستخدم: {user_id}\n🆔 المعرف: `{affiliate_id}`\n\nاستخدم لوحة التحكم للموافقة.",
+            parse_mode="Markdown"
+        )
     else:
         await update.message.reply_text(f"❌ {msg}", parse_mode="Markdown")
     
@@ -690,10 +757,21 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             price = SUBSCRIPTION_TYPES[sub_type]['price']
             name = SUBSCRIPTION_TYPES[sub_type]['name']
             await query.edit_message_text(
-                f"🛒 **طلب شراء اشتراك {name}**\n\n💰 **السعر:** {price}$\n\n📝 **لإتمام الشراء:**\n1️⃣ قم بالتحويل إلى:\n   • باي بال: obeida@trading.com\n   • USDT (TRC20): TXxx...xxx\n\n2️⃣ أرسل إيصال الدفع مع معرف المستخدم `{user_id}` للمشرف @Sz2zv\n\n3️⃣ سيتم تفعيل اشتراكك خلال 24 ساعة",
+                f"🛒 **طلب شراء اشتراك {name}**\n\n"
+                f"💰 **السعر:** {price}$\n\n"
+                f"📝 **لإتمام الشراء:**\n"
+                f"1️⃣ قم بالتحويل إلى:\n"
+                f"   • باي بال: obeida@trading.com\n"
+                f"   • USDT (TRC20): TXxx...xxx\n\n"
+                f"2️⃣ أرسل إيصال الدفع مع معرف المستخدم `{user_id}` للمشرف @Sz2zv\n\n"
+                f"3️⃣ سيتم تفعيل اشتراكك خلال 24 ساعة",
                 parse_mode="Markdown"
             )
-            await context.bot.send_message(chat_id=ADMIN_ID, text=f"🛒 **طلب شراء جديد**\n\n👤 المستخدم: {user_id}\n📦 الاشتراك: {name}\n💰 السعر: {price}$", parse_mode="Markdown")
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"🛒 **طلب شراء جديد**\n\n👤 المستخدم: {user_id}\n📦 الاشتراك: {name}\n💰 السعر: {price}$",
+                parse_mode="Markdown"
+            )
     
     elif data == "back_to_menu":
         await query.edit_message_text("🏠 العودة للقائمة الرئيسية")
@@ -709,7 +787,11 @@ async def handle_settings_candle(update: Update, context: ContextTypes.DEFAULT_T
         save_user_setting(user_id, "candle", user_message)
         keyboard = [TRADE_TIMES[i:i+2] for i in range(0, len(TRADE_TIMES), 2)]
         keyboard.append(["الرجوع"])
-        await update.message.reply_text(f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n⬇️ حدد مدة الصفقة:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True), parse_mode="Markdown")
+        await update.message.reply_text(
+            f"✅ **تم تعيين سرعة الشموع:** {user_message}\n\n⬇️ حدد مدة الصفقة:",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+            parse_mode="Markdown"
+        )
         return SETTINGS_TIME
     
     await update.message.reply_text("❌ اختر سرعة صحيحة")
@@ -724,7 +806,11 @@ async def handle_settings_time(update: Update, context: ContextTypes.DEFAULT_TYP
     
     if user_message in TRADE_TIMES:
         save_user_setting(user_id, "trade_time", user_message)
-        await update.message.reply_text(f"✅ **تم حفظ الإعدادات!**\n\n📤 أرسل صورة الشارت الآن:", reply_markup=ReplyKeyboardMarkup([["📊 تحليل صورة"], ["الرجوع"]], resize_keyboard=True), parse_mode="Markdown")
+        await update.message.reply_text(
+            f"✅ **تم حفظ الإعدادات!**\n\n📤 أرسل صورة الشارت الآن:",
+            reply_markup=ReplyKeyboardMarkup([["📊 تحليل صورة"], ["الرجوع"]], resize_keyboard=True),
+            parse_mode="Markdown"
+        )
         return MAIN_MENU
     
     await update.message.reply_text("❌ اختر مدة صحيحة")
@@ -738,17 +824,25 @@ async def handle_analyze_mode(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    status, _, user_data = SubscriptionSystem.check_subscription(user_id)
+    
+    # التحقق من الصلاحية قبل التحليل
+    status, sub_type, user_data = SubscriptionSystem.check_subscription(user_id)
     
     if not status:
         await update.message.reply_text(
-            f"⚠️ **ليس لديك صلاحية للتحليل**\n\n📊 **تحليلك المجاني المتبقي:** {user_data['free_analyses']}\n\n🔓 **طرق الحصول على صلاحية:**\n• تسجيل في الوكالة (مجاني)\n• شراء اشتراك مدفوع",
+            "⚠️ **ليس لديك صلاحية للتحليل** ⚠️\n\n"
+            f"📊 **تحليلك المجاني المتبقي:** {user_data['free_analyses']}\n\n"
+            "🔓 **طرق الحصول على صلاحية:**\n"
+            "• تسجيل في الوكالة (مجاني) - اضغط '📝 تسجيل الوكالة'\n"
+            "• شراء اشتراك مدفوع - اضغط '🛒 المتجر'\n\n"
+            "بعد التفعيل، يمكنك استخدام التحليل.",
             parse_mode="Markdown"
         )
         return MAIN_MENU
     
+    # استخدام التحليل
     if not SubscriptionSystem.use_analysis(user_id):
-        await update.message.reply_text("❌ حدث خطأ", parse_mode="Markdown")
+        await update.message.reply_text("❌ حدث خطأ، يرجى المحاولة مرة أخرى", parse_mode="Markdown")
         return MAIN_MENU
     
     candle, trade_time, _, _ = get_user_setting(user_id)
@@ -844,6 +938,7 @@ async def analyze_chart_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         order_block_match = re.search(r'Order Block.*?:\s*(True|False)', analysis_result, re.IGNORECASE)
         positioning_match = re.search(r'التمركز السعري.*?:\s*([A-Z_]+)', analysis_result)
         
+        # استخراج مستويات فيبوناتشي
         fib_levels = {}
         for fib_key in ['0.236', '0.382', '0.500', '0.618', '0.786', '1.272', '1.618']:
             fib_match = re.search(f'مستوى {fib_key}.*?:\s*([\d.]+)', analysis_result)
@@ -858,6 +953,21 @@ async def analyze_chart_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         current_direction = direction_match.group(1).upper() if direction_match else "UP"
         fib_500 = fib_levels.get("0.500", current_price)
         
+        # حساب نقاط الدخول والخروج
+        if current_direction == "UP":
+            entry_price = current_price
+            tp1 = fib_levels.get("0.500", current_price * 1.005)
+            tp2 = fib_levels.get("0.236", current_price * 1.01)
+            tp3 = fib_levels.get("1.272", current_price * 1.02)
+            stop_loss = fib_levels.get("0.618", current_price * 0.995)
+        else:
+            entry_price = current_price
+            tp1 = fib_levels.get("0.500", current_price * 0.995)
+            tp2 = fib_levels.get("0.236", current_price * 0.99)
+            tp3 = fib_levels.get("1.272", current_price * 0.98)
+            stop_loss = fib_levels.get("0.618", current_price * 1.005)
+        
+        # حساب قوة الإشارة
         if breakout_force > 1.5:
             signal_strength = "عالية جدا 💥"
             confidence = 85
@@ -883,6 +993,7 @@ async def analyze_chart_image(update: Update, context: ContextTypes.DEFAULT_TYPE
             confidence -= 10
         confidence = min(100, max(0, confidence))
         
+        # تحديد القرار الفني
         if current_direction == "UP":
             if breakout_force > 1.5 and has_fvg:
                 action = "شراء 🟢"
@@ -919,39 +1030,59 @@ async def analyze_chart_image(update: Update, context: ContextTypes.DEFAULT_TYPE
         await asyncio.sleep(1)
         await wait_msg.edit_text("🤌 جاري تحليل الشارت... [🟩🟩🟩🟩🟩 100%]")
         
+        # بناء النتيجة مع الأهداف
         formatted_result = f"""
 📊 **التحليل الفني المتقدم:**
 • الوقت: {current_time.strftime('%H:%M:%S')} UTC
-• حالة النافذة: {"✅ داخل" if in_golden_window else "❌ خارج"}
-• FVG: {"موجودة" if has_fvg else "غير موجودة"}
-• Order Block: {"موجود" if has_order_block else "غير موجود"}
+• حالة النافذة: {"✅ داخل النافذة الذهبية" if in_golden_window else "❌ خارج النافذة"}
+• FVG: {"موجودة ✅" if has_fvg else "غير موجودة ❌"}
+• Order Block: {"موجود ✅" if has_order_block else "غير موجود ❌"}
 
 🎯 **الإشارة التنفيذية:**
 • السعر الحالي: {current_price:.6f}
-• حالة الشمعة: {candle_status} - متبقي: {seconds_remaining} ثانية
+• حالة الشمعة: {candle_status} - الوقت المتبقي: {seconds_remaining} ثانية
 • القرار الفني: {action}
 • قوة الإشارة: {signal_strength}
 • نوع الدخول: {entry_type}
+• نقطة الدخول: {entry_price:.6f}
+
+📈 **الأهداف الربحية:**
+• 🎯 TP1: {tp1:.6f} - (مستوى 0.500 فيبوناتشي)
+• 🎯 TP2: {tp2:.6f} - (مستوى 0.236 فيبوناتشي)
+• 🎯 TP3: {tp3:.6f} - (مستوى 1.272 فيبوناتشي)
+
+🛑 **وقف الخسارة:**
+• 🛡️ SL: {stop_loss:.6f} - (مستوى 0.618 فيبوناتشي)
 
 ⚠️ **إدارة المخاطر:**
 • مستوى الثقة: {confidence:.0f}%
-• حجم الاستثمار: {"5%" if confidence >= 85 else "3%" if confidence >= 70 else "2%"}
+• نسبة نجاح متوقعة: {"85-95%" if confidence >= 85 else "70-85%" if confidence >= 70 else "55-70%" if confidence >= 55 else "40-55%"}
+• حجم الاستثمار المقترح: {"5%" if confidence >= 85 else "3%" if confidence >= 70 else "2%" if confidence >= 55 else "1%"}
+• نسبة المخاطرة/العائد: 1:2 على الأقل
 """
         
         await wait_msg.edit_text(formatted_result, parse_mode="Markdown")
         
+        # تنظيف الملفات المؤقتة
         if os.path.exists(original_path):
             os.remove(original_path)
         if os.path.exists(compressed_path):
             os.remove(compressed_path)
         
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {str(e)[:200]}")
+        await update.message.reply_text(f"❌ خطأ: {str(e)[:200]}", parse_mode="Markdown")
 
 # ============================================
 # المناطق الزمنية
 # ============================================
-TIMEZONES = {"GMT+00:00": "لندن", "GMT+01:00": "برلين", "GMT+02:00": "القاهرة", "GMT+03:00": "الرياض", "GMT+04:00": "دبي", "GMT-05:00": "نيويورك"}
+TIMEZONES = {
+    "GMT+00:00": "لندن",
+    "GMT+01:00": "برلين",
+    "GMT+02:00": "القاهرة",
+    "GMT+03:00": "الرياض",
+    "GMT+04:00": "دبي",
+    "GMT-05:00": "نيويورك",
+}
 
 async def timezone_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -959,7 +1090,11 @@ async def timezone_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     local_time = get_localized_time(user_id)
     keyboard = [[f"{gmt} ({name})"] for gmt, name in TIMEZONES.items()]
     keyboard.append(["الرجوع"])
-    await update.message.reply_text(f"🌍 **المناطق الزمنية**\n\n🕒 **منطقتك:** {current_tz}\n⏰ **الوقت:** {local_time.strftime('%H:%M:%S')}\n\nاختر المنطقة:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True), parse_mode="Markdown")
+    await update.message.reply_text(
+        f"🌍 **المناطق الزمنية**\n\n🕒 **منطقتك:** {current_tz}\n⏰ **الوقت:** {local_time.strftime('%H:%M:%S')}\n\nاختر المنطقة:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        parse_mode="Markdown"
+    )
     return TIMEZONE_MENU
 
 async def handle_timezone_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -981,7 +1116,11 @@ async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return MAIN_MENU
     keyboard = [["👥 المستخدمين", "📝 طلبات الوكالة"], ["📊 إحصائيات", "📢 إذاعة"], ["🔙 العودة"]]
-    await update.message.reply_text("👑 **لوحة التحكم**", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True), parse_mode="Markdown")
+    await update.message.reply_text(
+        "👑 **لوحة التحكم**\n\nاختر الإجراء:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        parse_mode="Markdown"
+    )
     return ADMIN_MENU
 
 async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -996,7 +1135,9 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users = SubscriptionSystem.get_all_users()
         msg = "👥 **المستخدمين:**\n\n"
         for u in users[:20]:
-            msg += f"• {u[1] or u[0]} (`{u[0]}`)\n  📊 {u[3]}/{u[4]} | وكالة: {'نعم' if u[7] else 'لا'}\n\n"
+            status_text = "✅ مفعل" if u[7] else "⏳ غير مفعل"
+            sub_text = u[5] if u[5] != 'free' else "مجاني"
+            msg += f"• {u[1] or u[0]} (`{u[0]}`)\n  📊 تحليلات: {u[3]}/{u[4]} | {sub_text} | وكالة: {status_text}\n\n"
         for part in split_message(msg, 4000):
             await update.message.reply_text(part, parse_mode="Markdown")
         return ADMIN_MENU
@@ -1004,20 +1145,39 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_message == "📝 طلبات الوكالة":
         pending = SubscriptionSystem.get_pending_affiliate_requests()
         if not pending:
-            await update.message.reply_text("📭 لا توجد طلبات")
+            await update.message.reply_text("📭 لا توجد طلبات", parse_mode="Markdown")
             return ADMIN_MENU
         for req in pending:
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ قبول", callback_data=f"aff_approve_{req[0]}"), InlineKeyboardButton("❌ رفض", callback_data=f"aff_reject_{req[0]}")]])
-            await update.message.reply_text(f"📝 **طلب وكالة**\n\n👤 المستخدم: {req[1]} ({req[4] or req[5]})\n🆔 المعرف: `{req[2]}`\n📅 الوقت: {req[3][:16]}", reply_markup=keyboard, parse_mode="Markdown")
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ قبول", callback_data=f"aff_approve_{req[0]}"),
+                 InlineKeyboardButton("❌ رفض", callback_data=f"aff_reject_{req[0]}")]
+            ])
+            await update.message.reply_text(
+                f"📝 **طلب وكالة جديد**\n\n👤 المستخدم: {req[1]} ({req[4] or req[5]})\n🆔 المعرف: `{req[2]}`\n📅 الوقت: {req[3][:16]}",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
         return ADMIN_MENU
     
     elif user_message == "📊 إحصائيات":
         stats = SubscriptionSystem.get_stats()
-        await update.message.reply_text(f"📊 **إحصائيات**\n\n👥 المستخدمين: {stats['total_users']}\n📊 التحليلات: {stats['total_analyses']}\n✅ وكالة: {stats['affiliate_users']}\n💎 مشتركين: {stats['paid_users']}\n📝 طلبات: {stats['pending_affiliate']}", parse_mode="Markdown")
+        await update.message.reply_text(
+            f"📊 **إحصائيات النظام**\n\n"
+            f"👥 إجمالي المستخدمين: {stats['total_users']}\n"
+            f"📊 إجمالي التحليلات: {stats['total_analyses']}\n"
+            f"✅ مستخدمي الوكالة: {stats['affiliate_users']}\n"
+            f"💎 المشتركين المدفوعين: {stats['paid_users']}\n"
+            f"📝 طلبات وكالة معلقة: {stats['pending_affiliate']}\n\n"
+            f"🌐 الجلسة الحالية: {get_current_session()['name']}",
+            parse_mode="Markdown"
+        )
         return ADMIN_MENU
     
     elif user_message == "📢 إذاعة":
-        await update.message.reply_text("📢 **إذاعة**\n\nأرسل الرسالة:", parse_mode="Markdown")
+        await update.message.reply_text(
+            "📢 **إذاعة للمستخدمين**\n\nأرسل الرسالة التي تريد إذاعتها:",
+            parse_mode="Markdown"
+        )
         return BROADCAST_MESSAGE
     
     return ADMIN_MENU
@@ -1030,7 +1190,8 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     if data.startswith("aff_approve_"):
         req_id = int(data.replace("aff_approve_", ""))
         success, msg = SubscriptionSystem.verify_affiliate(req_id, ADMIN_ID, True)
-        await query.edit_message_text(f"✅ {msg}")
+        await query.edit_message_text(f"✅ {msg}", parse_mode="Markdown")
+        
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT user_id FROM affiliate_requests WHERE id = ?", (req_id,))
@@ -1038,14 +1199,18 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         conn.close()
         if row:
             try:
-                await context.bot.send_message(chat_id=row[0], text="✅ **تم تفعيل حسابك في الوكالة!**\n\nيمكنك الآن استخدام البوت مجاناً.\nأرسل /start للبدء.", parse_mode="Markdown")
+                await context.bot.send_message(
+                    chat_id=row[0],
+                    text="✅ **تم تفعيل حسابك في الوكالة!**\n\nيمكنك الآن استخدام البوت مجاناً.\nأرسل /start للبدء.",
+                    parse_mode="Markdown"
+                )
             except:
                 pass
     
     elif data.startswith("aff_reject_"):
         req_id = int(data.replace("aff_reject_", ""))
         success, msg = SubscriptionSystem.verify_affiliate(req_id, ADMIN_ID, False)
-        await query.edit_message_text(f"❌ {msg}")
+        await query.edit_message_text(f"❌ {msg}", parse_mode="Markdown")
 
 async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -1055,12 +1220,16 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent = 0
     for u in users:
         try:
-            await context.bot.send_message(chat_id=u[0], text=f"📢 **رسالة إدارية**\n\n{message}\n\nObeida Trading", parse_mode="Markdown")
+            await context.bot.send_message(
+                chat_id=u[0],
+                text=f"📢 **رسالة إدارية**\n\n{message}\n\n━━━━━━━━━━━━\nObeida Trading",
+                parse_mode="Markdown"
+            )
             sent += 1
             await asyncio.sleep(0.05)
         except:
             pass
-    await update.message.reply_text(f"✅ تم الإرسال لـ {sent} مستخدم")
+    await update.message.reply_text(f"✅ تم الإرسال لـ {sent} مستخدم", parse_mode="Markdown")
     return ADMIN_MENU
 
 # ============================================
@@ -1077,13 +1246,25 @@ async def session_alert_scheduler(context):
                 if session_key not in last_sent or last_sent[session_key] != datetime.utcnow().date():
                     users = get_users_for_session_alert(session_key)
                     if users:
-                        alert_msg = f"🔔 **{session['icon']} بدأت {session['name']}** 🔔\n\n📊 **التقلب:** {session['volatility']}\n🎯 **نسبة النجاح:** {session['success_rate']}\n💰 **الأزواج:** {session['pairs']}\n✨ **المميزات:** {session['features']}\n⏰ **التوقيت:** {session['time_range']}\n\n🚀 استخدم /start للبدء!"
+                        alert_msg = (
+                            f"🔔 **{session['icon']} بدأت {session['name']}** 🔔\n\n"
+                            f"📊 **التقلب:** {session['volatility']}\n"
+                            f"🎯 **نسبة النجاح:** {session['success_rate']}\n"
+                            f"💰 **الأزواج المناسبة:** {session['pairs']}\n"
+                            f"✨ **المميزات:** {session['features']}\n"
+                            f"⏰ **توقيت الجلسة:** {session['time_range']}\n\n"
+                            f"🚀 استخدم /start للبدء في التحليل الآن!"
+                        )
                         for user_id in users:
                             try:
-                                await context.bot.send_message(chat_id=user_id, text=alert_msg, parse_mode="Markdown")
+                                await context.bot.send_message(
+                                    chat_id=user_id,
+                                    text=alert_msg,
+                                    parse_mode="Markdown"
+                                )
                                 await asyncio.sleep(0.1)
-                            except:
-                                pass
+                            except Exception as e:
+                                print(f"⚠️ فشل إرسال تنبيه للمستخدم {user_id}: {e}")
                     last_sent[session_key] = datetime.utcnow().date()
         await asyncio.sleep(60)
 
@@ -1208,7 +1389,13 @@ def admin_panel():
     stats = SubscriptionSystem.get_stats()
     affiliate_reqs = []
     for req in SubscriptionSystem.get_pending_affiliate_requests():
-        affiliate_reqs.append({'id': req[0], 'user_id': req[1], 'affiliate_id': req[2], 'requested_at': req[3], 'username': req[4] or req[5]})
+        affiliate_reqs.append({
+            'id': req[0],
+            'user_id': req[1],
+            'affiliate_id': req[2],
+            'requested_at': req[3],
+            'username': req[4] or req[5]
+        })
     return render_template_string(ADMIN_PANEL, stats=stats, affiliate_requests=affiliate_reqs)
 
 @app.route('/admin/affiliate/<int:req_id>/approve', methods=['POST'])
