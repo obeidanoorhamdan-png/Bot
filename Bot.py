@@ -759,66 +759,6 @@ async def check_agency_required(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return False
 
-async def check_country_required(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    user_id = update.effective_user.id
-    country, _ = AgencySystem.get_user_country(user_id)
-    
-    if country:
-        return True
-    
-    countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
-    keyboard = [countries_list[i:i+2] for i in range(0, min(20, len(countries_list)), 2)]
-    keyboard.append(["🔄 تحديث", "❌ إلغاء"])
-    
-    await update.message.reply_text(
-        "🌍 **مرحباً بك في Obeida Trading** 🌍\n\n"
-        "لإكمال التسجيل، يرجى اختيار بلدك من القائمة:\n\n"
-        "سيتم ضبط المنطقة الزمنية تلقائياً حسب بلدك.",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    return False
-
-# ============================================
-# دوال معالجة البوت (المعدلة)
-# ============================================
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    
-    cleanup_user_data(context, user_id)
-    
-    # التحقق من وجود بلد مسجل للمستخدم
-    country, _ = AgencySystem.get_user_country(user_id)
-    
-    # إذا لم يكن هناك بلد مسجل، اطلب اختيار البلد أولاً
-    if not country:
-        countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
-        # ترتيب الدول العربية أولاً
-        arab_countries = ["مصر", "السعودية", "الإمارات", "الكويت", "قطر", "البحرين", "عمان", "اليمن", 
-                         "العراق", "الأردن", "لبنان", "سوريا", "فلسطين", "ليبيا", "تونس", "الجزائر", 
-                         "المغرب", "موريتانيا", "السودان", "الصومال"]
-        other_countries = [c for c in countries_list if c not in arab_countries]
-        sorted_countries = arab_countries + other_countries
-        
-        # تقسيم الدول إلى أزرار (3 أعمدة)
-        keyboard = [sorted_countries[i:i+2] for i in range(0, min(30, len(sorted_countries)), 2)]
-        keyboard.append(["🔄 تحديث", "❌ إلغاء"])
-        
-        await update.message.reply_text(
-            "🌍 **مرحباً بك في Obeida Trading** 🌍\n\n"
-            f"👤 **مرحباً:** {user.first_name}\n\n"
-            "📌 **لإكمال التسجيل، يرجى اختيار بلدك من القائمة:**\n\n"
-            "سيتم ضبط المنطقة الزمنية والجلسات تلقائياً حسب بلدك.",
-            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-            parse_mode="Markdown"
-        )
-        return SET_COUNTRY
-    
-    # إذا كان البلد موجوداً، انتقل للقائمة الرئيسية
-    return await show_main_menu(update, context)
-
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """عرض القائمة الرئيسية بعد تسجيل البلد"""
     user = update.effective_user
@@ -867,6 +807,42 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     return MAIN_MENU
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+    
+    cleanup_user_data(context, user_id)
+    
+    # التحقق من وجود بلد مسجل للمستخدم
+    country, _ = AgencySystem.get_user_country(user_id)
+    
+    # إذا لم يكن هناك بلد مسجل، اطلب اختيار البلد أولاً
+    if not country:
+        countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
+        # ترتيب الدول العربية أولاً
+        arab_countries = ["مصر", "السعودية", "الإمارات", "الكويت", "قطر", "البحرين", "عمان", "اليمن", 
+                         "العراق", "الأردن", "لبنان", "سوريا", "فلسطين", "ليبيا", "تونس", "الجزائر", 
+                         "المغرب", "موريتانيا", "السودان", "الصومال"]
+        other_countries = [c for c in countries_list if c not in arab_countries]
+        sorted_countries = arab_countries + other_countries
+        
+        # تقسيم الدول إلى أزرار (2 أعمدة)
+        keyboard = [sorted_countries[i:i+2] for i in range(0, min(30, len(sorted_countries)), 2)]
+        keyboard.append(["🔄 تحديث", "❌ إلغاء"])
+        
+        await update.message.reply_text(
+            "🌍 **مرحباً بك في Obeida Trading** 🌍\n\n"
+            f"👤 **مرحباً:** {user.first_name}\n\n"
+            "📌 **لإكمال التسجيل، يرجى اختيار بلدك من القائمة:**\n\n"
+            "سيتم ضبط المنطقة الزمنية والجلسات تلقائياً حسب بلدك.",
+            reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
+            parse_mode="Markdown"
+        )
+        return SET_COUNTRY
+    
+    # إذا كان البلد موجوداً، انتقل للقائمة الرئيسية
+    return await show_main_menu(update, context)
 
 async def handle_set_country(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة اختيار البلد"""
@@ -1533,7 +1509,7 @@ async def handle_select_agency(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     
     if user_message == "🔙 العودة":
-        return await start(update, context)
+        return await show_main_menu(update, context)
     
     if user_message.startswith("📝 "):
         agency_name = user_message.replace("📝 ", "").split(" - ")[0]
@@ -1572,7 +1548,7 @@ async def handle_register_agency(update: Update, context: ContextTypes.DEFAULT_T
         return MAIN_MENU
     
     if user_message == "🔙 العودة":
-        return await start(update, context)
+        return await show_main_menu(update, context)
     
     success, result = AgencySystem.register_user_agency(user_id, selected_agency[0], user_message)
     
@@ -1601,7 +1577,7 @@ async def handle_register_agency(update: Update, context: ContextTypes.DEFAULT_T
                 pass
         
         context.user_data.pop('selected_agency', None)
-        return await start(update, context)
+        return await show_main_menu(update, context)
     else:
         await update.message.reply_text(f"❌ فشل التسجيل: {result}")
         return SELECT_AGENCY
@@ -1777,7 +1753,7 @@ async def handle_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN_MENU
     
     if user_message == "🔙 العودة":
-        return await start(update, context)
+        return await show_main_menu(update, context)
     
     elif user_message == "➕ إضافة وكالة":
         await update.message.reply_text(
@@ -2694,12 +2670,19 @@ def complete_order():
         return jsonify({'success': False, 'error': str(e)})
 
 def run_flask_server():
-    port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    """تشغيل Flask server"""
+    try:
+        port = int(os.environ.get('PORT', 8080))
+        from werkzeug.serving import run_simple
+        run_simple('0.0.0.0', port, app, use_reloader=False, use_debugger=False)
+    except Exception as e:
+        print(f"⚠️ Flask error: {e}")
 
 # ============================================
 # التشغيل الرئيسي
 # ============================================
+
+application = None
 
 async def main():
     global application
@@ -2759,7 +2742,24 @@ async def main():
     print("📡 News Radar running...")
     print("🔔 Session Alerts active...")
     
-    await application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    # بدء البوت
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True
+    )
+    
+    # الحفاظ على التشغيل
+    try:
+        stop_signal = asyncio.Event()
+        await stop_signal.wait()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(main())
