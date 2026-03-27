@@ -1,4 +1,4 @@
-python-telegram-bot
+python-telegram-bot>=20.0
 flask
 requests
 Pillow
@@ -11,3 +11,5 @@ pytz
 pytz-deprecation-shim
 psutil
 feedparser
+werkzeug
+nest-asyncio
