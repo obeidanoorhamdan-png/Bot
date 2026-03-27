@@ -30,6 +30,10 @@ from PIL import Image
 import pytz
 import psutil
 
+# إعداد التسجيل
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # --- الإعدادات الأساسية ---
 TOKEN = os.environ.get('TOKEN', "8583903565:AAFveu3KYGkPsC8L6WyermoaZ1tI_EtFHHs")
 MISTRAL_KEY = os.environ.get('MISTRAL_KEY', "vdzRyRlSfAUr6gX7zOZXVSaQhqRTkGpH")
@@ -580,6 +584,19 @@ def init_all_dbs():
     conn.close()
     
     AgencySystem.init_db()
+    
+    # إضافة وكالة تجريبية إذا لم توجد وكالات
+    agencies = AgencySystem.get_agencies()
+    if not agencies:
+        AgencySystem.add_agency(
+            "Obeida Trading Official",
+            "Telegram Bot",
+            "شروط التسجيل: التسجيل مجاني للجميع",
+            "https://t.me/ObeidaTrading",
+            ADMIN_ID
+        )
+        print("✅ تم إضافة وكالة تجريبية")
+    
     print("✅ تم تهيئة جميع قواعد البيانات")
 
 def get_current_session():
@@ -681,15 +698,6 @@ def increment_analyses(user_id):
     conn.commit()
     conn.close()
 
-def format_trade_time_for_prompt(trade_time):
-    if trade_time == "قصير (1m-15m)":
-        return "مدة الصفقة المتوقعة: قصير الأجل (1 دقيقة إلى 15 دقيقة)"
-    elif trade_time == "متوسط (4h-Daily)":
-        return "مدة الصفقة المتوقعة: متوسط الأجل (4 ساعات إلى يومي)"
-    elif trade_time == "طويل (Weekly-Monthly)":
-        return "مدة الصفقة المتوقعة: طويل الأجل (أسبوعي إلى شهري)"
-    return f"مدة الصفقة المتوقعة: {trade_time}"
-
 def encode_image(image_path):
     try:
         with open(image_path, "rb") as image_file:
@@ -759,42 +767,15 @@ async def check_agency_required(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return False
 
-async def check_country_required(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    user_id = update.effective_user.id
-    country, _ = AgencySystem.get_user_country(user_id)
-    
-    if country:
-        return True
-    
-    countries_list = list(COUNTRY_TIMEZONE_MAP.keys())
-    keyboard = [countries_list[i:i+2] for i in range(0, min(20, len(countries_list)), 2)]
-    keyboard.append(["🔄 تحديث", "❌ إلغاء"])
-    
-    await update.message.reply_text(
-        "🌍 **مرحباً بك في Obeida Trading** 🌍\n\n"
-        "لإكمال التسجيل، يرجى اختيار بلدك من القائمة:\n\n"
-        "سيتم ضبط المنطقة الزمنية تلقائياً حسب بلدك.",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False),
-        parse_mode="Markdown"
-    )
-    return False
-
-# ============================================
-# دوال معالجة البوت (المعدلة - بدون بلد افتراضي)
-# ============================================
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """دالة بدء البوت - بدون طلب بلد"""
+    """دالة بدء البوت"""
     try:
         user = update.effective_user
         user_id = user.id
         
-        logger.info(f"User {user_id} started the bot")
+        print(f"✅ User {user_id} started the bot")
         
         cleanup_user_data(context, user_id)
-        
-        # التحقق من وجود بلد مسجل (لا نضيف بلد افتراضي)
-        country, _ = AgencySystem.get_user_country(user_id)
         
         # التحقق من التسجيل في وكالة
         if not AgencySystem.is_user_registered(user_id) and user_id != ADMIN_ID:
@@ -804,7 +785,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_main_menu(update, context)
         
     except Exception as e:
-        logger.error(f"Error in start: {e}")
+        print(f"❌ Error in start: {e}")
         traceback.print_exc()
         await update.message.reply_text("❌ حدث خطأ. يرجى المحاولة مرة أخرى.")
         return ConversationHandler.END
@@ -818,7 +799,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # الحصول على البلد (قد يكون None)
         country, _ = AgencySystem.get_user_country(user_id)
         
-        logger.info(f"Showing main menu for user {user_id}, country: {country}")
+        print(f"📱 Showing main menu for user {user_id}, country: {country}")
         
         # التحقق من التسجيل في وكالة
         if not AgencySystem.is_user_registered(user_id) and user_id != ADMIN_ID:
@@ -873,7 +854,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN_MENU
         
     except Exception as e:
-        logger.error(f"Error in show_main_menu: {e}")
+        print(f"❌ Error in show_main_menu: {e}")
         traceback.print_exc()
         await update.message.reply_text("❌ حدث خطأ. يرجى المحاولة مرة أخرى.")
         return ConversationHandler.END
@@ -1035,7 +1016,15 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_message == "👤 معلوماتي":
         user_regs = AgencySystem.get_user_registrations(user_id)
         country, tz = AgencySystem.get_user_country(user_id)
-        local_time = get_localized_time(user_id) if country else datetime.utcnow()
+        
+        if country:
+            local_time = get_localized_time(user_id)
+            time_text = local_time.strftime('%Y-%m-%d %H:%M:%S')
+            tz_text = tz
+        else:
+            local_time = datetime.utcnow()
+            time_text = local_time.strftime('%Y-%m-%d %H:%M:%S')
+            tz_text = "غير محددة (توقيت UTC)"
         
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -1049,8 +1038,8 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🆔 **المعرف:** `{user_id}`\n"
             f"👤 **اليوزر:** @{update.effective_user.username or 'لا يوجد'}\n"
             f"🌍 **البلد:** {country or 'غير محدد'}\n"
-            f"🕒 **المنطقة الزمنية:** {tz if country else 'غير محددة (توقيت UTC)'}\n"
-            f"⏰ **الوقت:** {local_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"🕒 **المنطقة الزمنية:** {tz_text}\n"
+            f"⏰ **الوقت:** {time_text}\n"
             f"📊 **إجمالي التحليلات:** {total_analyses}\n\n"
             f"🏢 **الوكالات المسجل بها:**\n"
         )
@@ -1127,7 +1116,7 @@ async def handle_set_country(update: Update, context: ContextTypes.DEFAULT_TYPE)
         user_message = update.message.text
         user_id = update.effective_user.id
         
-        logger.info(f"User {user_id} setting country: {user_message}")
+        print(f"📍 User {user_id} setting country: {user_message}")
         
         if user_message == "🔙 العودة":
             return await show_main_menu(update, context)
@@ -1154,7 +1143,7 @@ async def handle_set_country(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # تعيين البلد والمنطقة الزمنية
             timezone = AgencySystem.set_user_country(user_id, user_message)
             
-            logger.info(f"User {user_id} set country to {user_message}, timezone: {timezone}")
+            print(f"✅ User {user_id} set country to {user_message}, timezone: {timezone}")
             
             # رسالة تأكيد
             await update.message.reply_text(
@@ -1176,7 +1165,7 @@ async def handle_set_country(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return SET_COUNTRY
         
     except Exception as e:
-        logger.error(f"Error in handle_set_country: {e}")
+        print(f"❌ Error in handle_set_country: {e}")
         traceback.print_exc()
         await update.message.reply_text("❌ حدث خطأ. يرجى المحاولة مرة أخرى.")
         return ConversationHandler.END
@@ -1376,8 +1365,6 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
         
         # استخراج البيانات
         import re
-        hh_match = re.search(r'أعلى قمة.*?:\s*([\d.]+)', analysis_result)
-        ll_match = re.search(r'أدنى قاع.*?:\s*([\d.]+)', analysis_result)
         current_price_match = re.search(r'السعر الحالي.*?:\s*([\d.]+)', analysis_result)
         breakout_force_match = re.search(r'قوة الاندفاع.*?:\s*([\d.]+)', analysis_result)
         direction_match = re.search(r'اتجاه الموجة.*?:\s*([A-Z]+)', analysis_result, re.IGNORECASE)
@@ -2112,10 +2099,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     /help - عرض رسالة المساعدة
     
     ⚙️ **كيفية الاستخدام:**
-    1. قم بتسجيل بلدك أولاً
-    2. سجل في إحدى وكالاتنا
-    3. انتظر توثيق التسجيل من المشرف
-    4. استخدم التحليل الفني
+    1. سجل في إحدى وكالاتنا
+    2. انتظر توثيق التسجيل من المشرف
+    3. استخدم التحليل الفني
     
     📊 **جلسات التداول:**
     
@@ -2126,6 +2112,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     🔔 **تنبيه الجلسات:**
     يمكنك تفعيل تنبيه ليصلك إشعار عند بدء أي جلسة.
+    
+    🌍 **تعيين البلد:**
+    يمكنك تعيين بلدك من القائمة لضبط المنطقة الزمنية.
     
     🏢 **الوكالات:**
     يجب التسجيل في وكالة لاستخدام البوت.
@@ -2730,6 +2719,8 @@ def run_flask_server():
 # ============================================
 # التشغيل الرئيسي
 # ============================================
+
+application = None
 
 async def main():
     global application
