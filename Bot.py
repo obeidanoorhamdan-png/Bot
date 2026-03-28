@@ -58,7 +58,7 @@ for directory in [IMAGE_CACHE_DIR, BACKUP_DIR]:
 class ObeidaNewsRadar:
     def __init__(self, bot_token: str):
         self.bot_token = bot_token
-        self.chat_group_id = '-1003449363659'  # معرف المجموعة/القناة
+        self.chat_group_id = '-1003449363659'
         self.db_name = NEWS_RADAR_DB
         self.processed_news: Set[str] = set()
         self.init_db()
@@ -70,7 +70,7 @@ class ObeidaNewsRadar:
         "ين": "JPY 🇯🇵", "فرنك": "CHF 🇨🇭", "كندي": "CAD 🇨🇦",
         "أسترالي": "AUD 🇦🇺", "نيوزيلندي": "NZD 🇳🇿", "ذهب": "XAU 🟡",
         "فضة": "XAG ⚪", "نفط": "OIL 🛢️", "بتكوين": "BTC ₿",
-        "إيثريوم": "ETH 💎", "مؤشر": "INDEX 📊", "فوركس": "FOREX 💱"
+        "إيثريوم": "ETH 💎", "مؤشر": "INDEX 📊"
     }
 
     def init_db(self):
@@ -100,9 +100,8 @@ class ObeidaNewsRadar:
             for row in rows:
                 self.processed_news.add(row[0])
             conn.close()
-            print(f"📊 تم تحميل {len(self.processed_news)} خبر سابق")
-        except Exception as e:
-            print(f"⚠️ خطأ في تحميل الأخبار السابقة: {e}")
+        except:
+            pass
 
     def get_currency_tag(self, title: str) -> str:
         title_lower = title.lower()
@@ -110,28 +109,20 @@ class ObeidaNewsRadar:
         for currency, tag in self.CURRENCY_MAP.items():
             if currency in title_lower:
                 tags.append(tag)
-        
         if tags:
-            return " ".join(tags[:3])  # حد أقصى 3 علامات
+            return " ".join(tags[:3])
         return "#سوق_عام 🌐"
 
     def send_telegram_message(self, chat_id: str, text: str) -> bool:
         url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
-        payload = {
-            "chat_id": chat_id, 
-            "text": text, 
-            "parse_mode": "HTML", 
-            "disable_web_page_preview": False
-        }
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": False}
         try:
             response = requests.post(url, data=payload, timeout=10)
             return response.status_code == 200
-        except Exception as e:
-            print(f"⚠️ خطأ في إرسال الخبر: {e}")
+        except:
             return False
 
     async def process_news(self):
-        """جلب الأخبار من مصادر متعددة"""
         try:
             rss_urls = [
                 'https://sa.investing.com/rss/news.rss',
@@ -152,14 +143,11 @@ class ObeidaNewsRadar:
                         news_id = news.get('id', news.get('guid', news.title.strip()))
                         if news_id not in self.processed_news and news_id not in all_news:
                             all_news[news_id] = news
-                except Exception as e:
-                    print(f"⚠️ خطأ في جلب الأخبار من {rss_url}: {e}")
+                except:
                     continue
             
             for news_id, news in all_news.items():
                 currency_tag = self.get_currency_tag(news.title)
-                
-                # تنسيق الرسالة
                 message_text = (
                     f"📰 <b>🚨 خبر اقتصادي جديد:</b>\n\n"
                     f"<b>{news.title}</b>\n\n"
@@ -167,43 +155,27 @@ class ObeidaNewsRadar:
                     f"━━━━━━━━━━━━━\n"
                     f"⚡ <b>للتحليل الفوري:</b> @ObeidaTrading\n"
                     f"💬 <b>مناقشة الأخبار:</b> @ObeidaTradingchat\n"
-                    f"📅 <b>الوقت:</b> {datetime.now().strftime('%H:%M:%S')} UTC"
                 )
-                
-                # إرسال إلى المجموعة
                 self.send_telegram_message(self.chat_group_id, message_text)
-                
-                # حفظ في قاعدة البيانات
-                conn = sqlite3.connect(self.db_name)
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO sent_news (guid, title, link, published, currency_tag, chat_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (news_id, news.title, news.get('link', ''), news.get('published', ''), currency_tag, self.chat_group_id))
-                conn.commit()
-                conn.close()
-                
                 self.processed_news.add(news_id)
-                await asyncio.sleep(2)  # تأخير بين الأخبار
-                
-        except Exception as e:
-            print(f"❌ خطأ في رادار الأخبار: {e}")
+                await asyncio.sleep(2)
+        except:
+            pass
 
     async def start_radar(self):
-        """تشغيل الرادار بشكل مستمر"""
         print("📡 رادار الأخبار يعمل...")
         while True:
             try:
                 await self.process_news()
-            except Exception as e:
-                print(f"❌ خطأ في الرادار: {e}")
-            await asyncio.sleep(30)  # تحديث كل 30 ثانية
+            except:
+                pass
+            await asyncio.sleep(30)
 
 # ============================================
-# نظام الاشتراكات والمتجر
+# نظام الاشتراكات (بدون تحليلات مجانية)
 # ============================================
 SUBSCRIPTION_TYPES = {
-    'free': {'name': 'مجاني', 'duration': 0, 'price': 0, 'analyses': 3},
+    'free': {'name': 'مجاني', 'duration': 0, 'price': 0, 'analyses': 0},
     'daily': {'name': 'يوم', 'duration': 86400, 'price': 5, 'analyses': -1},
     'weekly': {'name': 'أسبوع', 'duration': 604800, 'price': 15, 'analyses': -1},
     'monthly': {'name': 'شهر', 'duration': 2592000, 'price': 40, 'analyses': -1},
@@ -222,7 +194,7 @@ class SubscriptionSystem:
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
                 first_name TEXT,
-                free_analyses INTEGER DEFAULT 3,
+                free_analyses INTEGER DEFAULT 0,
                 total_analyses INTEGER DEFAULT 0,
                 subscription_type TEXT DEFAULT 'free',
                 subscription_end TIMESTAMP,
@@ -286,7 +258,7 @@ class SubscriptionSystem:
             return {
                 'user_id': row[0],
                 'username': row[1],
-                'free_analyses': row[2],
+                'free_analyses': 0,
                 'total_analyses': row[3],
                 'subscription_type': row[4],
                 'subscription_end': row[5],
@@ -301,8 +273,8 @@ class SubscriptionSystem:
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT OR IGNORE INTO users (user_id, username, first_name)
-            VALUES (?, ?, ?)
+            INSERT OR IGNORE INTO users (user_id, username, first_name, free_analyses)
+            VALUES (?, ?, ?, 0)
         ''', (user_id, username, first_name))
         conn.commit()
         conn.close()
@@ -311,7 +283,7 @@ class SubscriptionSystem:
     def check_subscription(user_id):
         user = SubscriptionSystem.get_user(user_id)
         if not user:
-            return False, 'غير مسجل', {'free_analyses': 3}
+            return False, 'غير مسجل', {'free_analyses': 0}
         
         if user['subscription_type'] != 'free' and user['subscription_end']:
             end_date = datetime.fromisoformat(user['subscription_end'])
@@ -321,10 +293,7 @@ class SubscriptionSystem:
         if user['affiliate_verified']:
             return True, 'وكالة', user
         
-        if user['free_analyses'] > 0:
-            return True, 'مجاني', user
-        
-        return False, 'انتهت الصلاحية', user
+        return False, 'غير مفعل', user
 
     @staticmethod
     def use_analysis(user_id):
@@ -346,12 +315,6 @@ class SubscriptionSystem:
             conn.close()
             return True
         
-        if user and user['free_analyses'] > 0:
-            cursor.execute('UPDATE users SET free_analyses = free_analyses - 1, total_analyses = total_analyses + 1 WHERE user_id = ?', (user_id,))
-            conn.commit()
-            conn.close()
-            return True
-        
         conn.close()
         return False
 
@@ -359,12 +322,10 @@ class SubscriptionSystem:
     def request_affiliate_registration(user_id, affiliate_id):
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
-        
         cursor.execute('SELECT id FROM affiliate_requests WHERE user_id = ? AND status = "pending"', (user_id,))
         if cursor.fetchone():
             conn.close()
             return False, "لديك طلب قيد المراجعة بالفعل"
-        
         cursor.execute('INSERT INTO affiliate_requests (user_id, affiliate_id) VALUES (?, ?)', (user_id, affiliate_id))
         conn.commit()
         conn.close()
@@ -387,7 +348,6 @@ class SubscriptionSystem:
     def verify_affiliate(request_id, admin_id, approve):
         conn = sqlite3.connect(SUBSCRIPTION_DB_NAME)
         cursor = conn.cursor()
-        
         cursor.execute('SELECT user_id, affiliate_id FROM affiliate_requests WHERE id = ?', (request_id,))
         row = cursor.fetchone()
         if not row:
@@ -397,7 +357,7 @@ class SubscriptionSystem:
         user_id, affiliate_id = row
         
         if approve:
-            cursor.execute('UPDATE users SET affiliate_id = ?, affiliate_verified = 1, free_analyses = 3 WHERE user_id = ?', (affiliate_id, user_id))
+            cursor.execute('UPDATE users SET affiliate_id = ?, affiliate_verified = 1 WHERE user_id = ?', (affiliate_id, user_id))
             cursor.execute('UPDATE affiliate_requests SET status = "approved" WHERE id = ?', (request_id,))
             conn.commit()
             conn.close()
@@ -628,13 +588,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if status:
         if sub_type == 'وكالة':
             welcome_msg += f"✅ **الحالة:** مسجل في الوكالة (مفعل)\n"
-        elif sub_type != 'مجاني':
+        elif sub_type != 'free':
             welcome_msg += f"✅ **الاشتراك:** {SUBSCRIPTION_TYPES[sub_type]['name']}\n"
         else:
-            welcome_msg += f"📊 **تحليلات مجانية متبقية:** {user_data['free_analyses']}\n"
+            welcome_msg += f"⚠️ **الحالة:** غير مفعل\n"
     else:
-        welcome_msg += f"⚠️ **الحالة:** غير مفعل\n📊 **تحليلات مجانية متبقية:** {user_data['free_analyses']}\n"
-        welcome_msg += "\n🔓 **للحصول على صلاحية:**\n• تسجيل في الوكالة (مجاني)\n• شراء اشتراك مدفوع\n"
+        welcome_msg += f"⚠️ **الحالة:** غير مفعل\n"
     
     welcome_msg += (
         f"\n🌐 **الجلسة الحالية:** {current_session['name']}\n"
@@ -688,15 +647,15 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if status:
             if sub_type == 'وكالة':
                 info += f"✅ **الحالة:** مسجل في الوكالة\n🆔 **معرف الوكالة:** `{user_data['affiliate_id']}`\n"
-            elif sub_type != 'مجاني':
+            elif sub_type != 'free':
                 info += f"✅ **الاشتراك:** {SUBSCRIPTION_TYPES[sub_type]['name']}\n"
                 if user_data['subscription_end']:
                     end = datetime.fromisoformat(user_data['subscription_end'])
                     info += f"⏳ **ينتهي:** {end.strftime('%Y-%m-%d')}\n"
             else:
-                info += f"📊 **تحليلات مجانية:** {user_data['free_analyses']}\n"
+                info += f"⚠️ **الحالة:** غير مفعل\n"
         else:
-            info += f"⚠️ **الحالة:** غير مفعل\n📊 **تحليلات مجانية:** {user_data['free_analyses']}\n"
+            info += f"⚠️ **الحالة:** غير مفعل\n"
         info += f"📈 **إجمالي التحليلات:** {user_data['total_analyses']}\n🌍 **المنطقة:** {user_data['timezone']}\n"
         
         user_alerts = get_user_alerts(user_id)
@@ -746,9 +705,10 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_message in ["⚙️ إعدادات التحليل", "📊 تحليل صورة"]:
             await update.message.reply_text(
                 "⚠️ **ليس لديك صلاحية للتحليل** ⚠️\n\n"
-                "🔓 **طرق الحصول على صلاحية:**\n"
-                "• تسجيل في الوكالة (مجاني) - اضغط '📝 تسجيل الوكالة'\n"
-                "• شراء اشتراك مدفوع - اضغط '🛒 المتجر'\n\n"
+                "🔓 **للحصول على صلاحية مجانية:**\n"
+                "• 📝 **تسجيل في الوكالة** - اضغط '📝 تسجيل الوكالة'\n"
+                "   سجل في Tickmill عبر رابطنا وأرسل معرف العميل\n\n"
+                "🛒 **أو شراء اشتراك مدفوع** - اضغط '🛒 المتجر'\n\n"
                 "بعد التفعيل، ستظهر لك أزرار التحليل والإعدادات.",
                 parse_mode="Markdown"
             )
@@ -970,10 +930,10 @@ async def handle_photo_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     if not status:
         await update.message.reply_text(
             "⚠️ **ليس لديك صلاحية للتحليل** ⚠️\n\n"
-            f"📊 **تحليلك المجاني المتبقي:** {user_data['free_analyses']}\n\n"
-            "🔓 **طرق الحصول على صلاحية:**\n"
-            "• تسجيل في الوكالة (مجاني) - اضغط '📝 تسجيل الوكالة'\n"
-            "• شراء اشتراك مدفوع - اضغط '🛒 المتجر'\n\n"
+            "🔓 **للحصول على صلاحية مجانية:**\n"
+            "• 📝 **تسجيل في الوكالة** - اضغط '📝 تسجيل الوكالة'\n"
+            "   سجل في Tickmill عبر رابطنا وأرسل معرف العميل\n\n"
+            "🛒 **أو شراء اشتراك مدفوع** - اضغط '🛒 المتجر'\n\n"
             "بعد التفعيل، يمكنك استخدام التحليل.",
             parse_mode="Markdown"
         )
@@ -1246,7 +1206,11 @@ async def handle_timezone_selection(update: Update, context: ContextTypes.DEFAUL
 async def start_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return MAIN_MENU
-    keyboard = [["👥 المستخدمين", "📝 طلبات الوكالة"], ["📊 إحصائيات", "📢 إذاعة"], ["🔙 العودة"]]
+    keyboard = [
+        ["👥 المستخدمين", "📝 طلبات الوكالة"],
+        ["📊 إحصائيات", "📢 إذاعة"],
+        ["🔙 العودة"]
+    ]
     await update.message.reply_text(
         "👑 **لوحة التحكم**\n\nاختر الإجراء:",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
@@ -1394,8 +1358,8 @@ async def session_alert_scheduler(context):
                                     parse_mode="Markdown"
                                 )
                                 await asyncio.sleep(0.1)
-                            except Exception as e:
-                                print(f"⚠️ فشل إرسال تنبيه للمستخدم {user_id}: {e}")
+                            except:
+                                pass
                     last_sent[session_key] = datetime.utcnow().date()
         await asyncio.sleep(60)
 
@@ -1567,7 +1531,6 @@ def main():
     
     application = Application.builder().token(TOKEN).build()
     
-    # تشغيل رادار الأخبار
     news_radar = ObeidaNewsRadar(TOKEN)
     
     async def run_radar():
