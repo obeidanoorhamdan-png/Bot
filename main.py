@@ -12,7 +12,7 @@ from colorama import init, Fore, Style
 init(autoreset=True)
 
 # ======================= TELEGRAM CONFIG =======================
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8745017792:AAGs4T5CBhi3Wfrre_XLbxjirsF4cGiEu_4")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_CHAT_ID_HERE")
 TELEGRAM_API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
