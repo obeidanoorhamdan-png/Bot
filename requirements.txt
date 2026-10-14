@@ -1,13 +1,2 @@
-python-telegram-bot>=20.0
-flask
 requests
-Pillow
-python-dotenv
-aiohttp
-apscheduler
-cachetools
-emoji
-pytz
-pytz-deprecation-shim
-psutil
-feedparser
+colorama
