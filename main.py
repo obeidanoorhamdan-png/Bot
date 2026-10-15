@@ -24,7 +24,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 # ======================= CONFIG =======================
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8745017792:AAGs4T5CBhi3Wfrre_XLbxjirsF4cGiEu_4").strip()
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8745017792:AAFguOF7q9zClDCe_tojtEoCL8L8VrSCtdg").strip()
 ADMIN_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6207431030").strip()
 
 LOGIN_URL = "https://app2.chargily.net/api/v1/auth/login"
