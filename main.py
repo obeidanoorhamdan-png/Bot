@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Gates Searcher — Autonomous Telegram Bot
-Auto-start. Continuous scan. Live results. Live stats.
-Runs until /stop.
+Gates Searcher - Autonomous Telegram Bot
+Auto-start. Continuous scan. Live results.
 """
 import os
 import re
@@ -20,8 +19,7 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-from telegram import Update
-from telegram.constants import ParseMode
+from telegram import Update, Bot
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -31,27 +29,30 @@ from telegram.ext import (
 load_dotenv()
 
 # ============================================================
-#                    CONFIG
+# CONFIG
 # ============================================================
-TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "8859103411:AAHHeDZ5_7qyp6DCWoUey9U5uBhkQMjAPUM")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6207431030")
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "8859103411:AAHHeDZ5_7qyp6DCWoUey9U5uBhkQMjAPUM").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6207431030").strip()
 
 WORM_API_URL = os.getenv("WORM_API_URL", "https://apiobeida.lovable.app/api/public/v1")
-WORM_API_KEY = os.getenv("WORM_API_KEY", "")
+WORM_API_KEY = os.getenv("WORM_API_KEY", "").strip()
 WORM_MODEL   = os.getenv("WORM_MODEL", "worm-gpt-1.5-gemini-flash-latest")
 WORM_PATH    = os.getenv("WORM_PATH", "/chat/completions")
 WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "1") == "1"
 
 BRIGHTDATA_PROXY_HOST = os.getenv("BRIGHTDATA_PROXY_HOST", "brd.superproxy.io:33335")
-BRIGHTDATA_PROXY_USER = os.getenv("BRIGHTDATA_PROXY_USER", "")
-BRIGHTDATA_PROXY_PASS = os.getenv("BRIGHTDATA_PROXY_PASS", "")
+BRIGHTDATA_PROXY_USER = os.getenv("BRIGHTDATA_PROXY_USER", "").strip()
+BRIGHTDATA_PROXY_PASS = os.getenv("BRIGHTDATA_PROXY_PASS", "").strip()
 
 SEARCH_ENGINE = os.getenv("SEARCH_ENGINE", "duckduckgo").lower()
 SEARCH_MODE   = os.getenv("SEARCH_MODE", "free").lower()
 
-STATE_FILE   = Path("gates_bot_state.json")
-RESULTS_FILE = Path("gates_bot_results.json")
-DORKS_FILE   = Path("gates_bot_dorks.json")
+DATA_DIR = Path(os.getenv("DATA_DIR", "."))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+STATE_FILE   = DATA_DIR / "gates_bot_state.json"
+RESULTS_FILE = DATA_DIR / "gates_bot_results.json"
+DORKS_FILE   = DATA_DIR / "gates_bot_dorks.json"
 
 DORKS_PER_ROUND = int(os.getenv("DORKS_PER_ROUND", "3"))
 SCAN_TIMEOUT_MS = int(os.getenv("SCAN_TIMEOUT_MS", "25000"))
@@ -64,29 +65,35 @@ DEFAULT_AGENT = (
     "Chrome/122.0.0.0 Safari/537.36"
 )
 
-# PLAIN ASCII logging — safe for any platform log drain
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.INFO)
 log = logging.getLogger("gates_bot")
 
 
 # ============================================================
-#                    JSON STORE
+# JSON STORE
 # ============================================================
 def _load(path: Path, default):
-    if path.exists():
-        try:
+    try:
+        if path.exists():
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return default
+    except Exception as e:
+        log.warning("load %s failed: %s", path.name, e)
     return default
 
 def _save(path: Path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    try:
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        tmp.replace(path)
+    except Exception as e:
+        log.warning("save %s failed: %s", path.name, e)
 
 def load_state():       return _load(STATE_FILE, {})
 def save_state(s):      _save(STATE_FILE, s)
@@ -97,7 +104,7 @@ def save_used_dorks(d): _save(DORKS_FILE, d)
 
 
 # ============================================================
-#                    WORM AI CALL
+# WORM AI CALL
 # ============================================================
 EXCLUSION_BLOCK = (
     " -site:myshopify.com -inurl:checkouts -site:medium.com -site:youtube.com"
@@ -144,6 +151,7 @@ def worm_chat(prompt: str, system: str = "You output strictly valid JSON arrays.
         "temperature": 0.8,
         "max_tokens": 500,
     }
+
     if _web_search_state["enabled"]:
         payload = dict(base_payload)
         payload["tools"] = [{"google_search": {}}]
@@ -153,7 +161,7 @@ def worm_chat(prompt: str, system: str = "You output strictly valid JSON arrays.
             if content:
                 return content
         except Exception as e:
-            log.warning("web search rejected (%s), falling back to plain", e)
+            log.warning("web search rejected (%s), falling back", e)
             _web_search_state["enabled"] = False
 
     try:
@@ -196,7 +204,7 @@ def generate_dorks(used_dorks: list, num: int = DORKS_PER_ROUND) -> list:
         clean = [d.split(" -site:")[0] if " -site:" in d else d for d in used_dorks[-10:]]
         used_block = "\nDO NOT REPEAT:\n" + "\n".join(f"- {d}" for d in clean) + "\n"
 
-    prompt = f"""You are an expert Google Dorker. {('Use Google Search to verify currently active niches/TLDs in 2025-2026 e-commerce.' if _web_search_state['enabled'] else '')}
+    prompt = f"""You are an expert Google Dorker. {('Use Google Search to verify currently active niches/TLDs in 2025-2026.' if _web_search_state['enabled'] else '')}
 
 Find REAL e-commerce shops with active checkout. Generate {num} UNIQUE dorks combining:
 - SHOPPING intent: "add to cart", "buy now", "checkout", inurl:product, inurl:shop, inurl:cart, inurl:store, inurl:order, "price", "shipping", "delivery"
@@ -229,7 +237,7 @@ RULES:
 
 
 # ============================================================
-#                    SEARCH
+# SEARCH
 # ============================================================
 BLOCK_TERMS = (
     "myshopify.com", "/checkouts/", "medium.com", "blog",
@@ -291,9 +299,11 @@ def search_dork(dork: str, engine: str = "duckduckgo", mode: str = "free") -> li
     url = _engine_url(engine, dork)
     try:
         if mode == "brightdata" and _brightdata_proxies():
-            resp = requests.get(url, headers=_headers(), proxies=_brightdata_proxies(), verify=False, timeout=30)
+            resp = requests.get(url, headers=_headers(), proxies=_brightdata_proxies(),
+                                verify=False, timeout=30)
         elif engine == "duckduckgo":
-            resp = requests.post("https://html.duckduckgo.com/html/", data={"q": dork}, headers=_headers(), timeout=20)
+            resp = requests.post("https://html.duckduckgo.com/html/",
+                                 data={"q": dork}, headers=_headers(), timeout=20)
         else:
             resp = requests.get(url, headers=_headers(), timeout=20)
         resp.raise_for_status()
@@ -304,7 +314,7 @@ def search_dork(dork: str, engine: str = "duckduckgo", mode: str = "free") -> li
 
 
 # ============================================================
-#                    GATEWAY SCANNER
+# GATEWAY SCANNER
 # ============================================================
 GATEWAY_SIGNATURES = {
     "Stripe":       ["js.stripe.com", "stripe.js/v3", "checkout.stripe.com", "pk_live_", "pk_test_"],
@@ -454,7 +464,7 @@ def scan_url_with_page(page, url: str, timeout_ms: int = SCAN_TIMEOUT_MS):
 
 
 # ============================================================
-#                    SCAN STATE
+# SCAN STATE
 # ============================================================
 _scan = {
     "running": False,
@@ -462,6 +472,7 @@ _scan = {
     "started_at": None,
     "chat_id": None,
     "app": None,
+    "loop": None,
     "stats": {
         "hits": 0, "scraped": 0, "dorks": 0, "rounds": 0,
         "skipped_shopify": 0, "empty": 0, "errors": 0,
@@ -498,40 +509,29 @@ def _stats_block() -> str:
     )
 
 
-def _send(text: str, md: bool = False):
-    if not (_scan["app"] and _scan["chat_id"]):
+def _send_sync(text: str):
+    """Send from worker thread - safe."""
+    if not (_scan["loop"] and _scan["chat_id"] and _scan["app"]):
         return
     try:
-        kwargs = {"disable_web_page_preview": True}
-        if md:
-            kwargs["parse_mode"] = ParseMode.MARKDOWN
-        asyncio.run_coroutine_threadsafe(
-            _scan["app"].bot.send_message(_scan["chat_id"], text, **kwargs),
-            _scan["app"].loop,
+        fut = asyncio.run_coroutine_threadsafe(
+            _scan["app"].bot.send_message(
+                _scan["chat_id"], text, disable_web_page_preview=True
+            ),
+            _scan["loop"],
         )
+        fut.result(timeout=15)
     except Exception as e:
         log.warning("send failed: %s", e)
 
 
 # ============================================================
-#                    SCAN LOOP
+# SCAN LOOP
 # ============================================================
-async def run_scan():
+def _run_scan_worker():
     from playwright.sync_api import sync_playwright
 
-    if _scan["running"]:
-        _send("Scan already running.")
-        return
-
-    _scan["running"] = True
-    _scan["stop_requested"] = False
-    _scan["started_at"] = datetime.now()
-    _scan["stats"] = {
-        "hits": 0, "scraped": 0, "dorks": 0, "rounds": 0,
-        "skipped_shopify": 0, "empty": 0, "errors": 0,
-        "gateway_counts": {},
-    }
-
+    st = _scan["stats"]
     engine = SEARCH_ENGINE
     mode   = SEARCH_MODE
 
@@ -541,162 +541,171 @@ async def run_scan():
 
     hits_since_stats = 0
 
-    def worker():
-        nonlocal hits_since_stats
-        st = _scan["stats"]
-        pw = browser = None
+    pw = browser = None
+    try:
+        pw = sync_playwright().start()
+        browser = pw.chromium.launch(headless=True)
+        bctx = browser.new_context(user_agent=DEFAULT_AGENT, ignore_https_errors=True)
+        page = bctx.new_page()
 
-        try:
-            pw = sync_playwright().start()
-            browser = pw.chromium.launch(headless=True)
-            bctx = browser.new_context(user_agent=DEFAULT_AGENT, ignore_https_errors=True)
-            page = bctx.new_page()
+        _send_sync(
+            f"Scan started.\n"
+            f"Engine: {engine} | Mode: {mode}\n"
+            f"Model: {WORM_MODEL}\n\n"
+            f"One result per site. Full stats every {STATS_EVERY_N} hits.\n"
+            f"/stop to stop."
+        )
 
-            _send(
-                f"Scan started automatically.\n"
-                f"Engine: {engine} | Mode: {mode}\n"
-                f"Model: {WORM_MODEL}\n\n"
-                f"One result per site. Full stats every {STATS_EVERY_N} hits.\n"
-                f"/stop to stop."
+        while not _scan["stop_requested"]:
+            st["rounds"] += 1
+            _send_sync(f"Round #{st['rounds']} - hits: {st['hits']}")
+
+            try:
+                dorks_data = generate_dorks(used_dorks, num=DORKS_PER_ROUND)
+            except Exception as e:
+                st["errors"] += 1
+                log.error("generate_dorks failed: %s", e)
+                _send_sync(f"Dork generation failed: {type(e).__name__}")
+                time.sleep(5)
+                continue
+
+            dorks_data.sort(
+                key=lambda x: x.get("confidence", 0)
+                if isinstance(x.get("confidence"), int) else 0,
+                reverse=True,
             )
+            dorks = [d["dork"] for d in dorks_data if d.get("dork")]
+            new_dorks = [d for d in dorks if d not in used_dorks]
 
-            while not _scan["stop_requested"]:
-                st["rounds"] += 1
-                _send(f"Round #{st['rounds']} - hits so far: {st['hits']}")
+            if not new_dorks:
+                time.sleep(ROUND_PAUSE_SEC)
+                continue
 
+            st["dorks"] += len(new_dorks)
+            used_dorks.extend(new_dorks)
+            save_used_dorks(used_dorks)
+
+            round_urls = []
+            for d in new_dorks:
+                if _scan["stop_requested"]:
+                    break
                 try:
-                    dorks_data = generate_dorks(used_dorks, num=DORKS_PER_ROUND)
+                    round_urls.extend(search_dork(d, engine=engine, mode=mode))
                 except Exception as e:
                     st["errors"] += 1
-                    log.error("generate_dorks failed: %s", e)
-                    _send(f"Dork generation failed: {type(e).__name__}")
-                    time.sleep(5)
-                    continue
+                    log.warning("search_dork failed: %s", e)
 
-                dorks_data.sort(
-                    key=lambda x: x.get("confidence", 0)
-                    if isinstance(x.get("confidence"), int) else 0,
-                    reverse=True,
-                )
-                dorks = [d["dork"] for d in dorks_data if d.get("dork")]
-                new_dorks = [d for d in dorks if d not in used_dorks]
+            round_urls = [
+                u for u in dict.fromkeys(round_urls)
+                if u not in found_urls and not _is_blocked(u)
+            ]
+            st["scraped"] += len(round_urls)
 
-                if not new_dorks:
-                    time.sleep(ROUND_PAUSE_SEC)
-                    continue
+            if not round_urls:
+                _send_sync(f"Round #{st['rounds']} - no new URLs")
+                time.sleep(ROUND_PAUSE_SEC)
+                continue
 
-                st["dorks"] += len(new_dorks)
-                used_dorks.extend(new_dorks)
-                save_used_dorks(used_dorks)
+            _send_sync(f"{len(round_urls)} new URLs - deep scanning")
 
-                round_urls = []
-                for d in new_dorks:
-                    if _scan["stop_requested"]:
-                        break
-                    try:
-                        round_urls.extend(search_dork(d, engine=engine, mode=mode))
-                    except Exception as e:
-                        st["errors"] += 1
-                        log.warning("search_dork failed: %s", e)
-
-                round_urls = [
-                    u for u in dict.fromkeys(round_urls)
-                    if u not in found_urls and not _is_blocked(u)
-                ]
-                st["scraped"] += len(round_urls)
-
-                if not round_urls:
-                    _send(f"Round #{st['rounds']} - no new URLs")
-                    time.sleep(ROUND_PAUSE_SEC)
-                    continue
-
-                _send(f"{len(round_urls)} new URLs - deep scanning")
-
-                for url in round_urls:
-                    if _scan["stop_requested"]:
-                        break
-
-                    try:
-                        gws, shop = scan_url_with_page(page, url)
-                    except Exception as e:
-                        st["errors"] += 1
-                        log.warning("scan failed: %s", e)
-                        continue
-
-                    if shop:
-                        st["skipped_shopify"] += 1
-                        continue
-                    if not gws:
-                        st["empty"] += 1
-                        continue
-                    if url in found_urls:
-                        continue
-
-                    found_urls.add(url)
-                    st["hits"] += 1
-                    hits_since_stats += 1
-                    for g in gws:
-                        st["gateway_counts"][g] = st["gateway_counts"].get(g, 0) + 1
-
-                    entry = {
-                        "url": url,
-                        "gateways": gws,
-                        "timestamp": datetime.now().isoformat(),
-                    }
-                    all_results.append(entry)
-                    save_results(all_results)
-
-                    dom = urllib.parse.urlparse(url).netloc
-                    _send(
-                        f"Hit #{st['hits']}\n"
-                        f"Domain: {dom}\n"
-                        f"Gateways: {', '.join(gws)}\n"
-                        f"URL: {url}"
-                    )
-
-                    if hits_since_stats >= STATS_EVERY_N:
-                        hits_since_stats = 0
-                        _send(_stats_block())
-
+            for url in round_urls:
                 if _scan["stop_requested"]:
                     break
 
-                time.sleep(ROUND_PAUSE_SEC)
+                try:
+                    gws, shop = scan_url_with_page(page, url)
+                except Exception as e:
+                    st["errors"] += 1
+                    log.warning("scan failed: %s", e)
+                    continue
 
-        except Exception as outer:
-            st["errors"] += 1
-            log.error("worker crashed: %s\n%s", outer, traceback.format_exc())
-            _send(f"Worker crashed: {type(outer).__name__}: {str(outer)[:250]}")
+                if shop:
+                    st["skipped_shopify"] += 1
+                    continue
+                if not gws:
+                    st["empty"] += 1
+                    continue
+                if url in found_urls:
+                    continue
+
+                found_urls.add(url)
+                st["hits"] += 1
+                hits_since_stats += 1
+                for g in gws:
+                    st["gateway_counts"][g] = st["gateway_counts"].get(g, 0) + 1
+
+                entry = {
+                    "url": url,
+                    "gateways": gws,
+                    "timestamp": datetime.now().isoformat(),
+                }
+                all_results.append(entry)
+                save_results(all_results)
+
+                dom = urllib.parse.urlparse(url).netloc
+                _send_sync(
+                    f"Hit #{st['hits']}\n"
+                    f"Domain: {dom}\n"
+                    f"Gateways: {', '.join(gws)}\n"
+                    f"URL: {url}"
+                )
+
+                if hits_since_stats >= STATS_EVERY_N:
+                    hits_since_stats = 0
+                    _send_sync(_stats_block())
+
+            if _scan["stop_requested"]:
+                break
+
+            time.sleep(ROUND_PAUSE_SEC)
+
+    except Exception as outer:
+        st["errors"] += 1
+        log.error("worker crashed: %s\n%s", outer, traceback.format_exc())
+        _send_sync(f"Worker crashed: {type(outer).__name__}: {str(outer)[:250]}")
+    finally:
+        try:
+            if browser: browser.close()
         finally:
-            try:
-                if browser: browser.close()
-            finally:
-                if pw: pw.stop()
-                _scan["running"] = False
-                _send("Scan stopped.\n\n" + _stats_block())
+            if pw: pw.stop()
+            _scan["running"] = False
+            _send_sync("Scan stopped.\n\n" + _stats_block())
 
-    await asyncio.to_thread(worker)
+
+async def start_scan_async():
+    if _scan["running"]:
+        return
+    _scan["running"] = True
+    _scan["stop_requested"] = False
+    _scan["started_at"] = datetime.now()
+    _scan["stats"] = {
+        "hits": 0, "scraped": 0, "dorks": 0, "rounds": 0,
+        "skipped_shopify": 0, "empty": 0, "errors": 0,
+        "gateway_counts": {},
+    }
+    await asyncio.to_thread(_run_scan_worker)
 
 
 # ============================================================
-#                    BOT HANDLERS
+# BOT HANDLERS
 # ============================================================
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     _scan["chat_id"] = update.effective_chat.id
     _scan["app"] = ctx.application
+    _scan["loop"] = asyncio.get_running_loop()
 
     await update.message.reply_text(
-        f"Gates Searcher\n"
+        f"Gates Searcher active.\n"
         f"Model: {WORM_MODEL}\n"
         f"Engine: {SEARCH_ENGINE} | Mode: {SEARCH_MODE}\n\n"
-        f"Scan runs automatically.\n"
-        f"/stop - stop\n"
+        f"Commands:\n"
+        f"/stop - stop scan\n"
         f"/stats - live stats\n"
         f"/results - last hits"
     )
 
     if not _scan["running"]:
-        asyncio.create_task(run_scan())
+        asyncio.create_task(start_scan_async())
 
 
 async def cmd_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -724,58 +733,143 @@ async def cmd_results(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-#                    PREFLIGHT + BOOT
+# PREFLIGHT + BOOT
 # ============================================================
-def _preflight():
-    problems = []
-
+def _preflight_telegram():
     if not TELEGRAM_TOKEN:
-        problems.append("TELEGRAM_TOKEN missing in environment")
-    if not WORM_API_KEY:
-        problems.append("WORM_API_KEY missing in environment")
+        raise SystemExit("TELEGRAM_TOKEN missing")
+    try:
+        r = requests.get(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe", timeout=15
+        )
+        data = r.json()
+        if not data.get("ok"):
+            raise SystemExit(f"Telegram getMe failed: {data}")
+        log.info("Telegram OK - bot @%s (id %s)",
+                 data["result"].get("username"), data["result"].get("id"))
+    except SystemExit:
+        raise
+    except Exception as e:
+        raise SystemExit(f"Telegram unreachable: {e}")
 
+
+def _preflight_chat():
+    if not TELEGRAM_CHAT_ID:
+        log.info("TELEGRAM_CHAT_ID not set - will set on /start")
+        return
+    try:
+        chat_id = int(TELEGRAM_CHAT_ID)
+    except ValueError:
+        raise SystemExit(f"TELEGRAM_CHAT_ID not numeric: {TELEGRAM_CHAT_ID}")
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": "bot preflight OK"},
+            timeout=15,
+        )
+        data = r.json()
+        if not data.get("ok"):
+            raise SystemExit(
+                f"Telegram sendMessage failed: {data.get('description')}\n"
+                f"Tip: open Telegram, find your bot, press START."
+            )
+        log.info("Chat %s reachable", chat_id)
+    except SystemExit:
+        raise
+    except Exception as e:
+        raise SystemExit(f"Chat check failed: {e}")
+
+
+def _preflight_playwright():
     try:
         from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise SystemExit("playwright not installed -> pip install playwright")
+    try:
         with sync_playwright() as p:
             b = p.chromium.launch(headless=True)
             b.close()
-    except ImportError:
-        problems.append("playwright not installed -> pip install playwright && playwright install chromium")
+        log.info("Playwright OK")
     except Exception as e:
-        problems.append(f"chromium launch failed -> {e} | fix: playwright install --with-deps chromium")
-
-    if problems:
-        for p in problems:
-            log.error("PREFLIGHT: %s", p)
-        raise SystemExit("PREFLIGHT FAILED")
-
-    log.info("PREFLIGHT OK - bot ready")
+        raise SystemExit(
+            f"Chromium launch failed: {e}\n"
+            f"Fix: playwright install --with-deps chromium"
+        )
 
 
-async def _auto_boot(application: Application):
-    if not TELEGRAM_CHAT_ID:
-        log.info("TELEGRAM_CHAT_ID not set - waiting for /start")
+def _preflight_worm():
+    if not WORM_API_KEY:
+        log.warning("WORM_API_KEY missing - dorks will fall back to defaults")
         return
-    _scan["chat_id"] = int(TELEGRAM_CHAT_ID)
-    _scan["app"] = application
-    log.info("Auto-starting scan for chat %s", TELEGRAM_CHAT_ID)
-    if not _scan["running"]:
-        asyncio.create_task(run_scan())
+    try:
+        r = requests.post(
+            WORM_API_URL.rstrip("/") + WORM_PATH,
+            headers={
+                "Authorization": f"Bearer {WORM_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": WORM_MODEL,
+                "messages": [{"role": "user", "content": "Reply with: OK"}],
+                "max_tokens": 10,
+                "temperature": 0.1,
+            },
+            timeout=30,
+        )
+        if r.status_code >= 400:
+            log.warning("WORM preflight HTTP %s: %s", r.status_code, r.text[:150])
+        else:
+            log.info("WORM API OK")
+    except Exception as e:
+        log.warning("WORM preflight failed: %s", e)
+
+
+async def _post_init(app: Application):
+    """Called after bot is initialized but before polling starts."""
+    _scan["app"] = app
+    _scan["loop"] = asyncio.get_running_loop()
+
+    # Delete any webhook left behind - avoids getUpdates conflict
+    try:
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        log.info("Webhook cleared")
+    except Exception as e:
+        log.warning("delete_webhook failed: %s", e)
+
+    if TELEGRAM_CHAT_ID:
+        try:
+            _scan["chat_id"] = int(TELEGRAM_CHAT_ID)
+        except ValueError:
+            log.warning("TELEGRAM_CHAT_ID invalid: %s", TELEGRAM_CHAT_ID)
+            return
+        log.info("Auto-starting scan for chat %s", TELEGRAM_CHAT_ID)
+        asyncio.create_task(start_scan_async())
+    else:
+        log.info("No TELEGRAM_CHAT_ID - waiting for /start")
 
 
 def main():
-    _preflight()
+    log.info("=== PREFLIGHT START ===")
+    _preflight_telegram()
+    _preflight_playwright()
+    _preflight_worm()
+    _preflight_chat()
+    log.info("=== PREFLIGHT OK ===")
 
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .post_init(_post_init)
+        .build()
+    )
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("results", cmd_results))
 
-    app.post_init = _auto_boot
-
-    log.info("Bot starting - model=%s engine=%s mode=%s", WORM_MODEL, SEARCH_ENGINE, SEARCH_MODE)
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    log.info("Polling started - model=%s engine=%s mode=%s",
+             WORM_MODEL, SEARCH_ENGINE, SEARCH_MODE)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 
 if __name__ == "__main__":
