@@ -1,10 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-╔═══════════════════════════════════════════════════════════╗
-║  ⚡ Gates Searcher — Autonomous Telegram Bot             ║
-║  Auto-start · Continuous scan · Live results · Live stats║
-║  No UI · No panel · Runs until /stop                     ║
-╚═══════════════════════════════════════════════════════════╝
+Gates Searcher — Autonomous Telegram Bot
+Auto-start. Continuous scan. Live results. Live stats.
+Runs until /stop.
 """
 import os
 import re
@@ -33,10 +31,10 @@ from telegram.ext import (
 load_dotenv()
 
 # ============================================================
-#                    ⚙️ الإعدادات
+#                    CONFIG
 # ============================================================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8859103411:AAHHeDZ5_7qyp6DCWoUey9U5uBhkQMjAPUM")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6207431030")  # اختياري — البوت يبدأ تلقائياً لو موجود
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "8859103411:AAHHeDZ5_7qyp6DCWoUey9U5uBhkQMjAPUM")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6207431030")
 
 WORM_API_URL = os.getenv("WORM_API_URL", "https://apiobeida.lovable.app/api/public/v1")
 WORM_API_KEY = os.getenv("WORM_API_KEY", "")
@@ -49,16 +47,16 @@ BRIGHTDATA_PROXY_USER = os.getenv("BRIGHTDATA_PROXY_USER", "")
 BRIGHTDATA_PROXY_PASS = os.getenv("BRIGHTDATA_PROXY_PASS", "")
 
 SEARCH_ENGINE = os.getenv("SEARCH_ENGINE", "duckduckgo").lower()
-SEARCH_MODE   = os.getenv("SEARCH_MODE", "free").lower()  # free | brightdata
+SEARCH_MODE   = os.getenv("SEARCH_MODE", "free").lower()
 
 STATE_FILE   = Path("gates_bot_state.json")
 RESULTS_FILE = Path("gates_bot_results.json")
 DORKS_FILE   = Path("gates_bot_dorks.json")
 
-DORKS_PER_ROUND  = int(os.getenv("DORKS_PER_ROUND", "3"))
-SCAN_TIMEOUT_MS  = int(os.getenv("SCAN_TIMEOUT_MS", "25000"))
-STATS_EVERY_N    = int(os.getenv("STATS_EVERY_N", "5"))
-ROUND_PAUSE_SEC  = int(os.getenv("ROUND_PAUSE_SEC", "2"))
+DORKS_PER_ROUND = int(os.getenv("DORKS_PER_ROUND", "3"))
+SCAN_TIMEOUT_MS = int(os.getenv("SCAN_TIMEOUT_MS", "25000"))
+STATS_EVERY_N   = int(os.getenv("STATS_EVERY_N", "5"))
+ROUND_PAUSE_SEC = int(os.getenv("ROUND_PAUSE_SEC", "2"))
 
 DEFAULT_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -66,12 +64,16 @@ DEFAULT_AGENT = (
     "Chrome/122.0.0.0 Safari/537.36"
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# PLAIN ASCII logging — safe for any platform log drain
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 log = logging.getLogger("gates_bot")
 
 
 # ============================================================
-#                    🗄️ تخزين JSON
+#                    JSON STORE
 # ============================================================
 def _load(path: Path, default):
     if path.exists():
@@ -86,16 +88,16 @@ def _save(path: Path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
-def load_state():      return _load(STATE_FILE, {})
-def save_state(s):     _save(STATE_FILE, s)
-def load_results():    return _load(RESULTS_FILE, [])
-def save_results(r):   _save(RESULTS_FILE, r)
-def load_used_dorks(): return _load(DORKS_FILE, [])
-def save_used_dorks(d):_save(DORKS_FILE, d)
+def load_state():       return _load(STATE_FILE, {})
+def save_state(s):      _save(STATE_FILE, s)
+def load_results():     return _load(RESULTS_FILE, [])
+def save_results(r):    _save(RESULTS_FILE, r)
+def load_used_dorks():  return _load(DORKS_FILE, [])
+def save_used_dorks(d): _save(DORKS_FILE, d)
 
 
 # ============================================================
-#                    🧠 WORM AI CALL
+#                    WORM AI CALL
 # ============================================================
 EXCLUSION_BLOCK = (
     " -site:myshopify.com -inurl:checkouts -site:medium.com -site:youtube.com"
@@ -116,7 +118,7 @@ def _worm_post(payload: dict) -> dict:
     }
     r = requests.post(url, headers=headers, json=payload, timeout=90)
     if r.status_code >= 400:
-        raise RuntimeError(f"WORM {r.status_code}: {r.text[:300]}")
+        raise RuntimeError(f"WORM HTTP {r.status_code}: {r.text[:200]}")
     return r.json()
 
 
@@ -151,14 +153,14 @@ def worm_chat(prompt: str, system: str = "You output strictly valid JSON arrays.
             if content:
                 return content
         except Exception as e:
-            log.warning(f"web search rejected: {e} — falling back")
+            log.warning("web search rejected (%s), falling back to plain", e)
             _web_search_state["enabled"] = False
 
     try:
         data = _worm_post(base_payload)
         return _extract_content(data)
     except Exception as e:
-        log.error(f"worm_chat plain: {e}")
+        log.error("worm_chat plain failed: %s", e)
         return ""
 
 
@@ -227,7 +229,7 @@ RULES:
 
 
 # ============================================================
-#                    🔎 محرك البحث
+#                    SEARCH
 # ============================================================
 BLOCK_TERMS = (
     "myshopify.com", "/checkouts/", "medium.com", "blog",
@@ -297,12 +299,12 @@ def search_dork(dork: str, engine: str = "duckduckgo", mode: str = "free") -> li
         resp.raise_for_status()
         return _extract_links(resp.text, engine)
     except Exception as e:
-        log.warning(f"search_dork ({engine}): {e}")
+        log.warning("search_dork (%s) failed: %s", engine, e)
         return []
 
 
 # ============================================================
-#                    🔬 فحص البوابات
+#                    GATEWAY SCANNER
 # ============================================================
 GATEWAY_SIGNATURES = {
     "Stripe":       ["js.stripe.com", "stripe.js/v3", "checkout.stripe.com", "pk_live_", "pk_test_"],
@@ -438,7 +440,7 @@ def scan_url_with_page(page, url: str, timeout_ms: int = SCAN_TIMEOUT_MS):
                 except Exception:
                     pass
     except Exception as e:
-        log.warning(f"scan error {url}: {e}")
+        log.warning("scan failed for %s: %s", url, e)
     finally:
         for req_h, res_h in handlers:
             try:
@@ -452,7 +454,7 @@ def scan_url_with_page(page, url: str, timeout_ms: int = SCAN_TIMEOUT_MS):
 
 
 # ============================================================
-#                    🚦 حالة الفحص العالمية
+#                    SCAN STATE
 # ============================================================
 _scan = {
     "running": False,
@@ -480,24 +482,23 @@ def _stats_block() -> str:
     top_gw = sorted(s["gateway_counts"].items(), key=lambda kv: -kv[1])[:5]
     gw_line = ""
     if top_gw:
-        gw_line = "\n🏆 *أعلى البوابات:* " + ", ".join(f"{g}({c})" for g, c in top_gw)
+        gw_line = "\nTop gateways: " + ", ".join(f"{g}({c})" for g, c in top_gw)
 
     return (
-        f"📊 *إحصائية لحظية*\n"
-        f"⏱ الوقت: `{elapsed}`\n"
-        f"━━━━━━━━━━━━━━━━\n"
-        f"✅ مواقع مؤكدة: `{s['hits']}`\n"
-        f"🔗 روابط مفحوصة: `{s['scraped']}`\n"
-        f"🧠 دوركات: `{s['dorks']}` · 🔄 جولات: `{s['rounds']}`\n"
-        f"🚫 Shopify متجاهل: `{s['skipped_shopify']}`\n"
-        f"⚪ بلا بوابة: `{s['empty']}`\n"
-        f"⚠️ أخطاء: `{s['errors']}`"
+        f"Live stats\n"
+        f"Time: {elapsed}\n"
+        f"------------------\n"
+        f"Hits: {s['hits']}\n"
+        f"Scraped: {s['scraped']}\n"
+        f"Dorks: {s['dorks']} | Rounds: {s['rounds']}\n"
+        f"Shopify skipped: {s['skipped_shopify']}\n"
+        f"No gateway: {s['empty']}\n"
+        f"Errors: {s['errors']}"
         + gw_line
     )
 
 
-def _send(text: str, md: bool = True):
-    """يرسل رسالة إلى الشات المسجل — من داخل أي thread."""
+def _send(text: str, md: bool = False):
     if not (_scan["app"] and _scan["chat_id"]):
         return
     try:
@@ -509,17 +510,17 @@ def _send(text: str, md: bool = True):
             _scan["app"].loop,
         )
     except Exception as e:
-        log.warning(f"_send: {e}")
+        log.warning("send failed: %s", e)
 
 
 # ============================================================
-#                    🔄 دورة الفحص المستمرة
+#                    SCAN LOOP
 # ============================================================
 async def run_scan():
     from playwright.sync_api import sync_playwright
 
     if _scan["running"]:
-        _send("⚠️ الفحص شغّال بالفعل.")
+        _send("Scan already running.")
         return
 
     _scan["running"] = True
@@ -552,23 +553,23 @@ async def run_scan():
             page = bctx.new_page()
 
             _send(
-                f"🔥 *الفحص بدأ تلقائياً*\n"
-                f"🌐 محرك: `{engine}` · 🔌 وضع: `{mode}`\n"
-                f"🧠 موديل: `{WORM_MODEL}`\n\n"
-                f"يبعت نتيجة بعد كل موقع، وإحصائية كل {STATS_EVERY_N} نتائج.\n"
-                f"للإيقاف: /stop",
+                f"Scan started automatically.\n"
+                f"Engine: {engine} | Mode: {mode}\n"
+                f"Model: {WORM_MODEL}\n\n"
+                f"One result per site. Full stats every {STATS_EVERY_N} hits.\n"
+                f"/stop to stop."
             )
 
             while not _scan["stop_requested"]:
                 st["rounds"] += 1
-                _send(f"🔄 الجولة `#{st['rounds']}` — {st['hits']} موقع حتى الآن")
+                _send(f"Round #{st['rounds']} - hits so far: {st['hits']}")
 
                 try:
                     dorks_data = generate_dorks(used_dorks, num=DORKS_PER_ROUND)
                 except Exception as e:
                     st["errors"] += 1
-                    log.error(f"generate_dorks: {e}")
-                    _send(f"⚠️ فشل توليد الدوركات: `{type(e).__name__}`")
+                    log.error("generate_dorks failed: %s", e)
+                    _send(f"Dork generation failed: {type(e).__name__}")
                     time.sleep(5)
                     continue
 
@@ -596,7 +597,7 @@ async def run_scan():
                         round_urls.extend(search_dork(d, engine=engine, mode=mode))
                     except Exception as e:
                         st["errors"] += 1
-                        log.warning(f"search_dork: {e}")
+                        log.warning("search_dork failed: %s", e)
 
                 round_urls = [
                     u for u in dict.fromkeys(round_urls)
@@ -605,11 +606,11 @@ async def run_scan():
                 st["scraped"] += len(round_urls)
 
                 if not round_urls:
-                    _send(f"🔄 الجولة `#{st['rounds']}` — لا روابط جديدة")
+                    _send(f"Round #{st['rounds']} - no new URLs")
                     time.sleep(ROUND_PAUSE_SEC)
                     continue
 
-                _send(f"🔗 {len(round_urls)} رابط جديد — بدء الفحص العميق")
+                _send(f"{len(round_urls)} new URLs - deep scanning")
 
                 for url in round_urls:
                     if _scan["stop_requested"]:
@@ -619,7 +620,7 @@ async def run_scan():
                         gws, shop = scan_url_with_page(page, url)
                     except Exception as e:
                         st["errors"] += 1
-                        log.warning(f"scan: {e}")
+                        log.warning("scan failed: %s", e)
                         continue
 
                     if shop:
@@ -647,10 +648,10 @@ async def run_scan():
 
                     dom = urllib.parse.urlparse(url).netloc
                     _send(
-                        f"✅ *موقع #{st['hits']}*\n"
-                        f"🌐 `{dom}`\n"
-                        f"🔐 {', '.join(gws)}\n"
-                        f"🔗 {url}"
+                        f"Hit #{st['hits']}\n"
+                        f"Domain: {dom}\n"
+                        f"Gateways: {', '.join(gws)}\n"
+                        f"URL: {url}"
                     )
 
                     if hits_since_stats >= STATS_EVERY_N:
@@ -664,36 +665,34 @@ async def run_scan():
 
         except Exception as outer:
             st["errors"] += 1
-            tb = traceback.format_exc()
-            log.error(f"worker crashed: {outer}\n{tb}")
-            _send(f"💥 *توقف غير متوقع*\n`{type(outer).__name__}: {str(outer)[:250]}`")
+            log.error("worker crashed: %s\n%s", outer, traceback.format_exc())
+            _send(f"Worker crashed: {type(outer).__name__}: {str(outer)[:250]}")
         finally:
             try:
                 if browser: browser.close()
             finally:
                 if pw: pw.stop()
                 _scan["running"] = False
-                _send("🛑 *تم إيقاف الفحص.*\n\n" + _stats_block())
+                _send("Scan stopped.\n\n" + _stats_block())
 
     await asyncio.to_thread(worker)
 
 
 # ============================================================
-#                    🤖 أوامر البوت (الحد الأدنى)
+#                    BOT HANDLERS
 # ============================================================
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     _scan["chat_id"] = update.effective_chat.id
     _scan["app"] = ctx.application
 
     await update.message.reply_text(
-        "⚡ *Gates Searcher — تلقائي*\n\n"
-        f"🧠 موديل: `{WORM_MODEL}`\n"
-        f"🌐 محرك: `{SEARCH_ENGINE}` · 🔌 وضع: `{SEARCH_MODE}`\n\n"
-        "الفحص يبدأ فوراً. الأوامر المتاحة:\n"
-        "/stop — إيقاف\n"
-        "/stats — إحصائية لحظية\n"
-        "/results — آخر النتائج",
-        parse_mode=ParseMode.MARKDOWN,
+        f"Gates Searcher\n"
+        f"Model: {WORM_MODEL}\n"
+        f"Engine: {SEARCH_ENGINE} | Mode: {SEARCH_MODE}\n\n"
+        f"Scan runs automatically.\n"
+        f"/stop - stop\n"
+        f"/stats - live stats\n"
+        f"/results - last hits"
     )
 
     if not _scan["running"]:
@@ -702,44 +701,38 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _scan["running"]:
-        await update.message.reply_text("لا يوجد فحص جارٍ.")
+        await update.message.reply_text("No scan running.")
         return
     _scan["stop_requested"] = True
-    await update.message.reply_text("⛔ تم طلب الإيقاف — جاري الإنهاء النظيف.")
+    await update.message.reply_text("Stop requested - finishing current site.")
 
 
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(_stats_block(), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(_stats_block())
 
 
 async def cmd_results(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     results = load_results()
     if not results:
-        await update.message.reply_text("لا نتائج بعد.")
+        await update.message.reply_text("No results yet.")
         return
     lines = []
     for i, r in enumerate(reversed(results[-10:]), 1):
         dom = urllib.parse.urlparse(r["url"]).netloc
-        lines.append(f"{i}. `{dom}` — {', '.join(r['gateways'])}")
-    await update.message.reply_text(
-        "*آخر 10 نتائج:*\n\n" + "\n".join(lines),
-        parse_mode=ParseMode.MARKDOWN,
-        disable_web_page_preview=True,
-    )
+        lines.append(f"{i}. {dom} - {', '.join(r['gateways'])}")
+    await update.message.reply_text("Last 10 hits:\n\n" + "\n".join(lines))
 
 
 # ============================================================
-#                    ▶️ التشغيل
+#                    PREFLIGHT + BOOT
 # ============================================================
 def _preflight():
-    """تحقق صارم من البيئة قبل التشغيل — يمنع الصمت القاتل."""
     problems = []
 
     if not TELEGRAM_TOKEN:
-        problems.append("TELEGRAM_TOKEN missing in .env")
-
+        problems.append("TELEGRAM_TOKEN missing in environment")
     if not WORM_API_KEY:
-        problems.append("WORM_API_KEY missing in .env")
+        problems.append("WORM_API_KEY missing in environment")
 
     try:
         from playwright.sync_api import sync_playwright
@@ -747,30 +740,25 @@ def _preflight():
             b = p.chromium.launch(headless=True)
             b.close()
     except ImportError:
-        problems.append(
-            "playwright not installed → pip install playwright && playwright install chromium"
-        )
+        problems.append("playwright not installed -> pip install playwright && playwright install chromium")
     except Exception as e:
-        problems.append(
-            f"chromium launch failed → {e}\n  fix: playwright install --with-deps chromium"
-        )
+        problems.append(f"chromium launch failed -> {e} | fix: playwright install --with-deps chromium")
 
     if problems:
         for p in problems:
-            log.error(f"PREFLIGHT: {p}")
-        raise SystemExit("\n".join(problems))
+            log.error("PREFLIGHT: %s", p)
+        raise SystemExit("PREFLIGHT FAILED")
 
-    log.info("PREFLIGHT OK — bot ready")
+    log.info("PREFLIGHT OK - bot ready")
 
 
 async def _auto_boot(application: Application):
-    """يشغّل الفحص تلقائياً لو TELEGRAM_CHAT_ID موجود في .env."""
     if not TELEGRAM_CHAT_ID:
-        log.info("TELEGRAM_CHAT_ID not set — waiting for /start to receive chat id.")
+        log.info("TELEGRAM_CHAT_ID not set - waiting for /start")
         return
     _scan["chat_id"] = int(TELEGRAM_CHAT_ID)
     _scan["app"] = application
-    log.info(f"Auto-starting scan for chat {TELEGRAM_CHAT_ID}")
+    log.info("Auto-starting scan for chat %s", TELEGRAM_CHAT_ID)
     if not _scan["running"]:
         asyncio.create_task(run_scan())
 
@@ -786,7 +774,7 @@ def main():
 
     app.post_init = _auto_boot
 
-    log.info(f"Bot starting — model={WORM_MODEL} engine={SEARCH_ENGINE} mode={SEARCH_MODE}")
+    log.info("Bot starting - model=%s engine=%s mode=%s", WORM_MODEL, SEARCH_ENGINE, SEARCH_MODE)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
