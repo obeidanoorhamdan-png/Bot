@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 ╔═══════════════════════════════════════════════════════════╗
-║  ⚡ Gates Searcher — Telegram Bot · Continuous Mode     ║
-║  Single-file · Gemini Flash · Playwright scanner         ║
-║  Runs until stopped · Live results · Live stats          ║
+║  ⚡ Gates Searcher — Autonomous Telegram Bot             ║
+║  Auto-start · Continuous scan · Live results · Live stats║
+║  No UI · No panel · Runs until /stop                     ║
 ╚═══════════════════════════════════════════════════════════╝
 """
 import os
@@ -14,6 +14,7 @@ import time
 import asyncio
 import logging
 import urllib.parse
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -21,12 +22,11 @@ import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
     CommandHandler,
-    CallbackQueryHandler,
     ContextTypes,
 )
 
@@ -36,9 +36,10 @@ load_dotenv()
 #                    ⚙️ الإعدادات
 # ============================================================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "8859103411:AAHHeDZ5_7qyp6DCWoUey9U5uBhkQMjAPUM")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6207431030")  # اختياري — البوت يبدأ تلقائياً لو موجود
 
 WORM_API_URL = os.getenv("WORM_API_URL", "https://apiobeida.lovable.app/api/public/v1")
-WORM_API_KEY = os.getenv("WORM_API_KEY", "on-sk-af8b6aabc4d9695e39b1922fbc920707744e221189f45a34")
+WORM_API_KEY = os.getenv("WORM_API_KEY", "")
 WORM_MODEL   = os.getenv("WORM_MODEL", "worm-gpt-1.5-gemini-flash-latest")
 WORM_PATH    = os.getenv("WORM_PATH", "/chat/completions")
 WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "1") == "1"
@@ -47,14 +48,19 @@ BRIGHTDATA_PROXY_HOST = os.getenv("BRIGHTDATA_PROXY_HOST", "brd.superproxy.io:33
 BRIGHTDATA_PROXY_USER = os.getenv("BRIGHTDATA_PROXY_USER", "")
 BRIGHTDATA_PROXY_PASS = os.getenv("BRIGHTDATA_PROXY_PASS", "")
 
+SEARCH_ENGINE = os.getenv("SEARCH_ENGINE", "duckduckgo").lower()
+SEARCH_MODE   = os.getenv("SEARCH_MODE", "free").lower()  # free | brightdata
+
 STATE_FILE   = Path("gates_bot_state.json")
 RESULTS_FILE = Path("gates_bot_results.json")
 DORKS_FILE   = Path("gates_bot_dorks.json")
 
-DORKS_PER_ROUND  = 3
-SCAN_TIMEOUT_MS  = 25000
-STATS_EVERY_N    = 5      # نبعت ملخّص كل N نتيجة (نتيجة فردية دائمًا)
-DEFAULT_AGENT    = (
+DORKS_PER_ROUND  = int(os.getenv("DORKS_PER_ROUND", "3"))
+SCAN_TIMEOUT_MS  = int(os.getenv("SCAN_TIMEOUT_MS", "25000"))
+STATS_EVERY_N    = int(os.getenv("STATS_EVERY_N", "5"))
+ROUND_PAUSE_SEC  = int(os.getenv("ROUND_PAUSE_SEC", "2"))
+
+DEFAULT_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/122.0.0.0 Safari/537.36"
@@ -446,46 +452,43 @@ def scan_url_with_page(page, url: str, timeout_ms: int = SCAN_TIMEOUT_MS):
 
 
 # ============================================================
-#                    🤖 حالة الفحص المشتركة
+#                    🚦 حالة الفحص العالمية
 # ============================================================
-_scan_control = {
+_scan = {
     "running": False,
     "stop_requested": False,
     "started_at": None,
+    "chat_id": None,
+    "app": None,
     "stats": {
-        "hits": 0,
-        "scraped": 0,
-        "dorks": 0,
-        "rounds": 0,
-        "skipped_shopify": 0,
-        "empty": 0,
-        "errors": 0,
+        "hits": 0, "scraped": 0, "dorks": 0, "rounds": 0,
+        "skipped_shopify": 0, "empty": 0, "errors": 0,
         "gateway_counts": {},
     },
 }
 
 
 def _stats_block() -> str:
-    s = _scan_control["stats"]
-    elapsed = ""
-    if _scan_control["started_at"]:
-        secs = int((datetime.now() - _scan_control["started_at"]).total_seconds())
-        m, sec = divmod(secs, 60)
-        h, m = divmod(m, 60)
+    s = _scan["stats"]
+    elapsed = "00:00:00"
+    if _scan["started_at"]:
+        secs = int((datetime.now() - _scan["started_at"]).total_seconds())
+        h, rem = divmod(secs, 3600)
+        m, sec = divmod(rem, 60)
         elapsed = f"{h:02d}:{m:02d}:{sec:02d}"
 
     top_gw = sorted(s["gateway_counts"].items(), key=lambda kv: -kv[1])[:5]
     gw_line = ""
     if top_gw:
-        gw_line = "\n*أعلى البوابات:* " + ", ".join(f"{g}({c})" for g, c in top_gw)
+        gw_line = "\n🏆 *أعلى البوابات:* " + ", ".join(f"{g}({c})" for g, c in top_gw)
 
     return (
         f"📊 *إحصائية لحظية*\n"
-        f"⏱ الوقت: `{elapsed or '00:00:00'}`\n"
+        f"⏱ الوقت: `{elapsed}`\n"
         f"━━━━━━━━━━━━━━━━\n"
         f"✅ مواقع مؤكدة: `{s['hits']}`\n"
         f"🔗 روابط مفحوصة: `{s['scraped']}`\n"
-        f"🧠 دوركات: `{s['dorks']}`  ·  🔄 جولات: `{s['rounds']}`\n"
+        f"🧠 دوركات: `{s['dorks']}` · 🔄 جولات: `{s['rounds']}`\n"
         f"🚫 Shopify متجاهل: `{s['skipped_shopify']}`\n"
         f"⚪ بلا بوابة: `{s['empty']}`\n"
         f"⚠️ أخطاء: `{s['errors']}`"
@@ -493,155 +496,43 @@ def _stats_block() -> str:
     )
 
 
-# ============================================================
-#                    🤖 بوت تيليجرام
-# ============================================================
-SEARCH_ENGINES = ["duckduckgo", "google", "bing", "yahoo", "yandex", "ask"]
-PROXY_MODES = ["free", "brightdata"]
-
-
-def _kb(state: dict):
-    engine = state.get("engine", "duckduckgo")
-    mode   = state.get("mode", "free")
-    running = _scan_control["running"]
-
-    buttons = [
-        [InlineKeyboardButton(f"🌐 محرك: {engine}", callback_data="cycle_engine")],
-        [InlineKeyboardButton(f"🔌 وضع: {mode}",   callback_data="cycle_mode")],
-    ]
-    if running:
-        buttons.append([InlineKeyboardButton("⛔ إيقاف الفحص", callback_data="stop_scan")])
-    else:
-        buttons.append([InlineKeyboardButton("🚀 ابدأ الفحص (مستمر)", callback_data="start_scan")])
-    return InlineKeyboardMarkup(buttons)
-
-
-async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    state = load_state()
-    state["telegram_chat_id"] = update.effective_chat.id
-    save_state(state)
-    await update.message.reply_text(
-        "⚡ *Gates Searcher — Continuous*\n\n"
-        f"الموديل: `{WORM_MODEL}`\n"
-        "الفحص مستمر حتى تضغط /stop أو زر الإيقاف.\n\n"
-        "*الأوامر:*\n"
-        "/panel — لوحة التحكم\n"
-        "/scan — بدء الفحص\n"
-        "/stop — إيقاف\n"
-        "/stats — إحصائيات لحظية\n"
-        "/results — آخر النتائج\n"
-        "/reset — تصفير الحالة\n"
-        "/wipe — مسح كل النتائج\n",
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-
-async def cmd_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🎛 *لوحة التحكم*\nاضبط ثم ابدأ. زر الإيقاف يظهر أثناء الفحص.",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=_kb(load_state()),
-    )
-
-
-async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(_stats_block(), parse_mode=ParseMode.MARKDOWN)
-
-
-async def cmd_results(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    results = load_results()
-    if not results:
-        await update.message.reply_text("لا نتائج بعد."); return
-    lines = []
-    for i, r in enumerate(reversed(results[-10:]), 1):
-        dom = urllib.parse.urlparse(r["url"]).netloc
-        gws = ", ".join(r["gateways"])
-        lines.append(f"{i}. `{dom}` — {gws}")
-    await update.message.reply_text(
-        "*آخر 10 نتائج:*\n\n" + "\n".join(lines),
-        parse_mode=ParseMode.MARKDOWN,
-        disable_web_page_preview=True,
-    )
-
-
-async def cmd_reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    s = load_state(); s.pop("scanning", None); save_state(s)
-    _scan_control["running"] = False
-    _scan_control["stop_requested"] = False
-    await update.message.reply_text("✅ تم التصفير (النتائج محفوظة).")
-
-
-async def cmd_wipe(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    save_results([]); save_used_dorks([])
-    await update.message.reply_text("🧹 مسح كامل للنتائج والدوركات.")
-
-
-async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await cmd_start(update, ctx)
-
-
-async def cmd_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if _scan_control["running"]:
-        await update.message.reply_text("⚠️ الفحص شغّال بالفعل."); return
-    await update.message.reply_text("🚀 بدء الفحص المستمر... أوقفه بـ /stop.")
-    asyncio.create_task(run_scan(ctx.application, update.effective_chat.id))
-
-
-async def cmd_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _scan_control["running"]:
-        await update.message.reply_text("لا يوجد فحص جارٍ."); return
-    _scan_control["stop_requested"] = True
-    await update.message.reply_text(
-        "⛔ تم طلب الإيقاف — يتوقف بعد الموقع الحالي.",
-        reply_markup=None,
-    )
-
-
-async def on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    s = load_state()
-
-    if q.data == "cycle_engine":
-        idx = SEARCH_ENGINES.index(s.get("engine", "duckduckgo"))
-        s["engine"] = SEARCH_ENGINES[(idx + 1) % len(SEARCH_ENGINES)]
-        save_state(s); await q.edit_message_reply_markup(_kb(s))
-    elif q.data == "cycle_mode":
-        idx = PROXY_MODES.index(s.get("mode", "free"))
-        s["mode"] = PROXY_MODES[(idx + 1) % len(PROXY_MODES)]
-        save_state(s); await q.edit_message_reply_markup(_kb(s))
-    elif q.data == "start_scan":
-        if _scan_control["running"]:
-            await q.edit_message_text("⚠️ الفحص شغّال بالفعل.")
-            return
-        await q.edit_message_text("🚀 بدء الفحص المستمر...")
-        asyncio.create_task(run_scan(ctx.application, update.effective_chat.id))
-    elif q.data == "stop_scan":
-        _scan_control["stop_requested"] = True
-        await q.edit_message_text("⛔ تم طلب الإيقاف — جاري الإنهاء النظيف.")
+def _send(text: str, md: bool = True):
+    """يرسل رسالة إلى الشات المسجل — من داخل أي thread."""
+    if not (_scan["app"] and _scan["chat_id"]):
+        return
+    try:
+        kwargs = {"disable_web_page_preview": True}
+        if md:
+            kwargs["parse_mode"] = ParseMode.MARKDOWN
+        asyncio.run_coroutine_threadsafe(
+            _scan["app"].bot.send_message(_scan["chat_id"], text, **kwargs),
+            _scan["app"].loop,
+        )
+    except Exception as e:
+        log.warning(f"_send: {e}")
 
 
 # ============================================================
 #                    🔄 دورة الفحص المستمرة
 # ============================================================
-async def run_scan(app: Application, chat_id: int):
+async def run_scan():
     from playwright.sync_api import sync_playwright
 
-    if _scan_control["running"]:
-        await app.bot.send_message(chat_id, "⚠️ الفحص شغّال بالفعل.")
+    if _scan["running"]:
+        _send("⚠️ الفحص شغّال بالفعل.")
         return
 
-    _scan_control["running"] = True
-    _scan_control["stop_requested"] = False
-    _scan_control["started_at"] = datetime.now()
-    _scan_control["stats"] = {
+    _scan["running"] = True
+    _scan["stop_requested"] = False
+    _scan["started_at"] = datetime.now()
+    _scan["stats"] = {
         "hits": 0, "scraped": 0, "dorks": 0, "rounds": 0,
         "skipped_shopify": 0, "empty": 0, "errors": 0,
         "gateway_counts": {},
     }
 
-    s = load_state()
-    engine = s.get("engine", "duckduckgo")
-    mode   = s.get("mode", "free")
+    engine = SEARCH_ENGINE
+    mode   = SEARCH_MODE
 
     used_dorks  = load_used_dorks()
     all_results = load_results()
@@ -649,50 +540,36 @@ async def run_scan(app: Application, chat_id: int):
 
     hits_since_stats = 0
 
-    def emit(msg: str):
-        try:
-            asyncio.run_coroutine_threadsafe(
-                app.bot.send_message(chat_id, msg, disable_web_page_preview=True),
-                app.loop,
-            )
-        except Exception as e:
-            log.warning(f"emit: {e}")
-
-    def emit_md(msg: str):
-        try:
-            asyncio.run_coroutine_threadsafe(
-                app.bot.send_message(
-                    chat_id, msg,
-                    parse_mode=ParseMode.MARKDOWN,
-                    disable_web_page_preview=True,
-                ),
-                app.loop,
-            )
-        except Exception as e:
-            log.warning(f"emit_md: {e}")
-
     def worker():
         nonlocal hits_since_stats
-        st = _scan_control["stats"]
-        pw = sync_playwright().start()
-        browser = pw.chromium.launch(headless=True)
-        bctx = browser.new_context(user_agent=DEFAULT_AGENT, ignore_https_errors=True)
-        page = bctx.new_page()
+        st = _scan["stats"]
+        pw = browser = None
 
         try:
-            emit("🔥 الفحص بدأ. أنا شغّال لحد ما توقفني بـ /stop.")
+            pw = sync_playwright().start()
+            browser = pw.chromium.launch(headless=True)
+            bctx = browser.new_context(user_agent=DEFAULT_AGENT, ignore_https_errors=True)
+            page = bctx.new_page()
 
-            while not _scan_control["stop_requested"]:
+            _send(
+                f"🔥 *الفحص بدأ تلقائياً*\n"
+                f"🌐 محرك: `{engine}` · 🔌 وضع: `{mode}`\n"
+                f"🧠 موديل: `{WORM_MODEL}`\n\n"
+                f"يبعت نتيجة بعد كل موقع، وإحصائية كل {STATS_EVERY_N} نتائج.\n"
+                f"للإيقاف: /stop",
+            )
+
+            while not _scan["stop_requested"]:
                 st["rounds"] += 1
-                round_no = st["rounds"]
-                emit(f"━━ الجولة #{round_no} ━━  مواقع: {st['hits']}")
+                _send(f"🔄 الجولة `#{st['rounds']}` — {st['hits']} موقع حتى الآن")
 
                 try:
                     dorks_data = generate_dorks(used_dorks, num=DORKS_PER_ROUND)
                 except Exception as e:
                     st["errors"] += 1
                     log.error(f"generate_dorks: {e}")
-                    time.sleep(3)
+                    _send(f"⚠️ فشل توليد الدوركات: `{type(e).__name__}`")
+                    time.sleep(5)
                     continue
 
                 dorks_data.sort(
@@ -704,17 +581,16 @@ async def run_scan(app: Application, chat_id: int):
                 new_dorks = [d for d in dorks if d not in used_dorks]
 
                 if not new_dorks:
-                    emit("↺ دوركات مكررة — جولة جديدة.")
-                    time.sleep(2)
+                    time.sleep(ROUND_PAUSE_SEC)
                     continue
 
                 st["dorks"] += len(new_dorks)
                 used_dorks.extend(new_dorks)
-                emit(f"🧠 {len(new_dorks)} دورك جديد")
+                save_used_dorks(used_dorks)
 
                 round_urls = []
                 for d in new_dorks:
-                    if _scan_control["stop_requested"]:
+                    if _scan["stop_requested"]:
                         break
                     try:
                         round_urls.extend(search_dork(d, engine=engine, mode=mode))
@@ -727,10 +603,16 @@ async def run_scan(app: Application, chat_id: int):
                     if u not in found_urls and not _is_blocked(u)
                 ]
                 st["scraped"] += len(round_urls)
-                emit(f"🔗 {len(round_urls)} رابط جديد — فحص عميق")
 
-                for i, url in enumerate(round_urls, 1):
-                    if _scan_control["stop_requested"]:
+                if not round_urls:
+                    _send(f"🔄 الجولة `#{st['rounds']}` — لا روابط جديدة")
+                    time.sleep(ROUND_PAUSE_SEC)
+                    continue
+
+                _send(f"🔗 {len(round_urls)} رابط جديد — بدء الفحص العميق")
+
+                for url in round_urls:
+                    if _scan["stop_requested"]:
                         break
 
                     try:
@@ -755,66 +637,156 @@ async def run_scan(app: Application, chat_id: int):
                     for g in gws:
                         st["gateway_counts"][g] = st["gateway_counts"].get(g, 0) + 1
 
-                    all_results.append({
+                    entry = {
                         "url": url,
                         "gateways": gws,
                         "timestamp": datetime.now().isoformat(),
-                    })
+                    }
+                    all_results.append(entry)
                     save_results(all_results)
 
                     dom = urllib.parse.urlparse(url).netloc
-                    emit_md(
+                    _send(
                         f"✅ *موقع #{st['hits']}*\n"
                         f"🌐 `{dom}`\n"
                         f"🔐 {', '.join(gws)}\n"
                         f"🔗 {url}"
                     )
 
-                    # إحصائية تفصيلية كل STATS_EVERY_N نتيجة
                     if hits_since_stats >= STATS_EVERY_N:
                         hits_since_stats = 0
-                        emit_md(_stats_block())
+                        _send(_stats_block())
 
-                save_used_dorks(used_dorks)
-
-                if _scan_control["stop_requested"]:
+                if _scan["stop_requested"]:
                     break
 
+                time.sleep(ROUND_PAUSE_SEC)
+
+        except Exception as outer:
+            st["errors"] += 1
+            tb = traceback.format_exc()
+            log.error(f"worker crashed: {outer}\n{tb}")
+            _send(f"💥 *توقف غير متوقع*\n`{type(outer).__name__}: {str(outer)[:250]}`")
         finally:
             try:
-                browser.close()
+                if browser: browser.close()
             finally:
-                pw.stop()
-                _scan_control["running"] = False
-                final = _stats_block()
-                emit_md("🛑 *تم الإيقاف النهائي.*\n\n" + final)
-                st = load_state()
-                st["scanning"] = False
-                save_state(st)
+                if pw: pw.stop()
+                _scan["running"] = False
+                _send("🛑 *تم إيقاف الفحص.*\n\n" + _stats_block())
 
     await asyncio.to_thread(worker)
 
 
 # ============================================================
+#                    🤖 أوامر البوت (الحد الأدنى)
+# ============================================================
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    _scan["chat_id"] = update.effective_chat.id
+    _scan["app"] = ctx.application
+
+    await update.message.reply_text(
+        "⚡ *Gates Searcher — تلقائي*\n\n"
+        f"🧠 موديل: `{WORM_MODEL}`\n"
+        f"🌐 محرك: `{SEARCH_ENGINE}` · 🔌 وضع: `{SEARCH_MODE}`\n\n"
+        "الفحص يبدأ فوراً. الأوامر المتاحة:\n"
+        "/stop — إيقاف\n"
+        "/stats — إحصائية لحظية\n"
+        "/results — آخر النتائج",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+    if not _scan["running"]:
+        asyncio.create_task(run_scan())
+
+
+async def cmd_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _scan["running"]:
+        await update.message.reply_text("لا يوجد فحص جارٍ.")
+        return
+    _scan["stop_requested"] = True
+    await update.message.reply_text("⛔ تم طلب الإيقاف — جاري الإنهاء النظيف.")
+
+
+async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(_stats_block(), parse_mode=ParseMode.MARKDOWN)
+
+
+async def cmd_results(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    results = load_results()
+    if not results:
+        await update.message.reply_text("لا نتائج بعد.")
+        return
+    lines = []
+    for i, r in enumerate(reversed(results[-10:]), 1):
+        dom = urllib.parse.urlparse(r["url"]).netloc
+        lines.append(f"{i}. `{dom}` — {', '.join(r['gateways'])}")
+    await update.message.reply_text(
+        "*آخر 10 نتائج:*\n\n" + "\n".join(lines),
+        parse_mode=ParseMode.MARKDOWN,
+        disable_web_page_preview=True,
+    )
+
+
+# ============================================================
 #                    ▶️ التشغيل
 # ============================================================
-def main():
+def _preflight():
+    """تحقق صارم من البيئة قبل التشغيل — يمنع الصمت القاتل."""
+    problems = []
+
     if not TELEGRAM_TOKEN:
-        raise SystemExit("TELEGRAM_TOKEN missing in .env")
+        problems.append("TELEGRAM_TOKEN missing in .env")
+
+    if not WORM_API_KEY:
+        problems.append("WORM_API_KEY missing in .env")
+
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            b = p.chromium.launch(headless=True)
+            b.close()
+    except ImportError:
+        problems.append(
+            "playwright not installed → pip install playwright && playwright install chromium"
+        )
+    except Exception as e:
+        problems.append(
+            f"chromium launch failed → {e}\n  fix: playwright install --with-deps chromium"
+        )
+
+    if problems:
+        for p in problems:
+            log.error(f"PREFLIGHT: {p}")
+        raise SystemExit("\n".join(problems))
+
+    log.info("PREFLIGHT OK — bot ready")
+
+
+async def _auto_boot(application: Application):
+    """يشغّل الفحص تلقائياً لو TELEGRAM_CHAT_ID موجود في .env."""
+    if not TELEGRAM_CHAT_ID:
+        log.info("TELEGRAM_CHAT_ID not set — waiting for /start to receive chat id.")
+        return
+    _scan["chat_id"] = int(TELEGRAM_CHAT_ID)
+    _scan["app"] = application
+    log.info(f"Auto-starting scan for chat {TELEGRAM_CHAT_ID}")
+    if not _scan["running"]:
+        asyncio.create_task(run_scan())
+
+
+def main():
+    _preflight()
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("panel", cmd_panel))
-    app.add_handler(CommandHandler("scan", cmd_scan))
     app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("results", cmd_results))
-    app.add_handler(CommandHandler("reset", cmd_reset))
-    app.add_handler(CommandHandler("wipe", cmd_wipe))
-    app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CallbackQueryHandler(on_callback))
 
-    log.info(f"Bot starting — model={WORM_MODEL}")
+    app.post_init = _auto_boot
+
+    log.info(f"Bot starting — model={WORM_MODEL} engine={SEARCH_ENGINE} mode={SEARCH_MODE}")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
