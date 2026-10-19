@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Gates Searcher - Stable Edition
-No AI. No WORM. Static gateway dorks. Bing search. Playwright scan.
+Gates Searcher - Final Edition
+Google Custom Search (10 pages) + Playwright deep scan.
+Auto-start Telegram bot.
 """
 import os
 import re
@@ -11,7 +12,6 @@ import asyncio
 import logging
 import urllib.parse
 import traceback
-import random
 from datetime import datetime
 from pathlib import Path
 
@@ -27,14 +27,19 @@ load_dotenv()
 # ============================================================
 # CONFIG
 # ============================================================
-TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "8859103411:AAHHeDZ5_7qyp6DCWoUey9U5uBhkQMjAPUM").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "6207431030").strip()
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-SEARCH_ENGINE   = os.getenv("SEARCH_ENGINE", "bing").lower()
-SCAN_TIMEOUT_MS = int(os.getenv("SCAN_TIMEOUT_MS", "45000"))
-STATS_EVERY_N   = int(os.getenv("STATS_EVERY_N", "3"))
-ROUND_PAUSE_SEC = int(os.getenv("ROUND_PAUSE_SEC", "3"))
-DORKS_PER_ROUND = int(os.getenv("DORKS_PER_ROUND", "2"))
+# Google CSE - direct keys
+GOOGLE_CSE_KEY   = os.getenv("GOOGLE_CSE_KEY", "AIzaSyCxBFcawOclW9DRGt-lDNavzvzYFFsKykU").strip()
+GOOGLE_CSE_CX    = os.getenv("GOOGLE_CSE_CX", "464c96d9e9f4d4eae").strip()
+CSE_NUM_PAGES    = int(os.getenv("CSE_NUM_PAGES", "10"))
+CSE_PER_PAGE     = 10
+
+SCAN_TIMEOUT_MS  = int(os.getenv("SCAN_TIMEOUT_MS", "45000"))
+STATS_EVERY_N    = int(os.getenv("STATS_EVERY_N", "3"))
+ROUND_PAUSE_SEC  = int(os.getenv("ROUND_PAUSE_SEC", "30"))
+DORKS_PER_ROUND  = int(os.getenv("DORKS_PER_ROUND", "1"))
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "."))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -47,13 +52,16 @@ DEFAULT_AGENT = (
     "Chrome/122.0.0.0 Safari/537.36"
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("gates_bot")
 
 
 # ============================================================
-# STATIC DORKS - targeted at gateway signatures
+# STATIC DORK POOL
 # ============================================================
 STATIC_DORKS = [
     'inurl:checkout "stripe" -site:stripe.com',
@@ -86,22 +94,43 @@ STATIC_DORKS = [
     '"paystack" inurl:checkout site:*.ng',
     '"flutterwave" inurl:checkout site:*.ke',
     '"adyen" inurl:checkout site:*.nl',
+    '"stripe" "add to cart" site:*.ca',
+    '"paypal" "checkout" site:*.au',
+    '"braintree" inurl:cart site:*.it',
+    '"square" inurl:checkout site:*.es',
+    '"klarna" inurl:cart site:*.no',
+    '"checkout.com" inurl:checkout site:*.dk',
+    '"adyen" inurl:checkout site:*.at',
+    '"stripe" "buy now" site:*.ch',
+    '"paypal" "order" site:*.ie',
+    '"stripe" "cart" site:*.nz',
+    '"tabby" inurl:checkout site:*.ae',
+    '"tamara" inurl:checkout site:*.sa',
+    '"paymob" inurl:checkout site:*.eg',
+    '"fawry" inurl:checkout site:*.eg',
+    '"razorpay" inurl:cart site:*.in',
+    '"paytm" inurl:checkout site:*.in',
+    '"mercadopago" inurl:cart site:*.ar',
+    '"mercadopago" inurl:checkout site:*.mx',
+    '"webpay" inurl:checkout site:*.cl',
+    '"flow" inurl:checkout site:*.cl',
 ]
 
 
 # ============================================================
 # JSON store
 # ============================================================
-def _load(path, default):
+def _load(path: Path, default):
     try:
         if path.exists():
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("load %s failed: %s", path.name, e)
     return default
 
-def _save(path, data):
+
+def _save(path: Path, data):
     try:
         tmp = path.with_suffix(path.suffix + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
@@ -110,6 +139,7 @@ def _save(path, data):
     except Exception as e:
         log.warning("save %s failed: %s", path.name, e)
 
+
 def load_results():     return _load(RESULTS_FILE, [])
 def save_results(r):    _save(RESULTS_FILE, r)
 def load_used_dorks():  return _load(DORKS_FILE, [])
@@ -117,86 +147,119 @@ def save_used_dorks(d): _save(DORKS_FILE, d)
 
 
 # ============================================================
-# SEARCH
+# GOOGLE CSE
 # ============================================================
-def _headers():
-    return {
-        "User-Agent": DEFAULT_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
+_cse_quota_exhausted = False
 
 
-def _engine_url(engine: str, dork: str) -> str:
-    q = urllib.parse.quote_plus(dork)
-    return {
-        "bing":   f"https://www.bing.com/search?q={q}&count=30",
-        "yahoo":  f"https://search.yahoo.com/search?p={q}",
-        "google": f"https://www.google.com/search?q={q}&num=30",
-    }.get(engine, f"https://www.bing.com/search?q={q}&count=30")
+def search_dork(dork: str, num_pages: int = None) -> list:
+    global _cse_quota_exhausted
 
-
-def _extract_links(html: str) -> list:
-    soup = BeautifulSoup(html, "html.parser")
-    urls = []
-    for a in soup.find_all("a"):
-        href = a.get("href", "")
-        if href.startswith("/url?q="):
-            clean = href.split("/url?q=")[1].split("&")[0]
-            if clean.startswith("http") and "bing.com" not in clean and "microsoft.com" not in clean:
-                urls.append(clean)
-        elif href.startswith("http"):
-            low = href.lower()
-            if any(t in low for t in (
-                "bing.com", "microsoft.com", "go.microsoft",
-                "facebook.com", "instagram.com", "twitter.com",
-                "linkedin.com", "youtube.com", "pinterest.com",
-                "tiktok.com", "reddit.com",
-            )):
-                continue
-            urls.append(href)
-    return list(set(urls))
-
-
-def search_dork(dork: str) -> list:
-    url = _engine_url(SEARCH_ENGINE, dork)
-    try:
-        r = requests.get(url, headers=_headers(), timeout=25)
-        r.raise_for_status()
-        links = _extract_links(r.text)
-        log.info("dork ok: %d links from %s", len(links), dork[:50])
-        return links
-    except Exception as e:
-        log.warning("search failed (%s): %s", SEARCH_ENGINE, e)
+    if not (GOOGLE_CSE_KEY and GOOGLE_CSE_CX):
+        log.warning("GOOGLE_CSE_KEY or GOOGLE_CSE_CX missing")
         return []
 
+    if _cse_quota_exhausted:
+        return []
+
+    pages = num_pages or CSE_NUM_PAGES
+    all_links = []
+    pages_done = 0
+
+    for page in range(1, pages + 1):
+        start_index = (page - 1) * CSE_PER_PAGE + 1
+        try:
+            r = requests.get(
+                "https://www.googleapis.com/customsearch/v1",
+                params={
+                    "q": dork,
+                    "cx": GOOGLE_CSE_CX,
+                    "key": GOOGLE_CSE_KEY,
+                    "start": start_index,
+                    "num": CSE_PER_PAGE,
+                },
+                timeout=25,
+            )
+
+            if r.status_code == 429:
+                _cse_quota_exhausted = True
+                log.warning("CSE quota exhausted at page %d", page)
+                break
+
+            r.raise_for_status()
+            data = r.json()
+
+            if "error" in data:
+                msg = data["error"].get("message", "")[:150]
+                log.warning("CSE error page %d: %s", page, msg)
+                if data["error"].get("code") == 429:
+                    _cse_quota_exhausted = True
+                break
+
+            items = data.get("items", [])
+            if not items:
+                log.info("CSE: empty page %d for %s", page, dork[:50])
+                break
+
+            for item in items:
+                link = item.get("link")
+                if link:
+                    all_links.append(link)
+
+            pages_done = page
+
+        except Exception as e:
+            log.warning("CSE page %d failed: %s", page, e)
+            break
+
+    unique = list(dict.fromkeys(all_links))
+    log.info("CSE: %d unique URLs (%d pages) for %s",
+             len(unique), pages_done, dork[:60])
+    return unique
+
 
 # ============================================================
-# GATEWAY SCANNER
+# GATEWAY SIGNATURES
 # ============================================================
 GATEWAY_SIGNATURES = {
-    "Stripe":       ["js.stripe.com", "stripe.js/v3", "checkout.stripe.com", "pk_live_", "pk_test_"],
-    "PayPal":       ["paypalobjects.com", "paypal.com/sdk/js", "paypal.buttons("],
-    "Square":       ["squareup.com", "squarecdn.com", "sq-payment-form"],
-    "Braintree":    ["js.braintreegateway.com", "braintree-web"],
-    "Adyen":        ["checkoutshopper-live.adyen.com", "adyen-checkout"],
-    "Authorize.Net":["js.authorize.net", "accept.authorize.net"],
-    "Checkout.com": ["cdn.checkout.com", "js.checkout.com"],
-    "Klarna":       ["js.klarna.com", "klarna-payments"],
-    "Afterpay":     ["js.afterpay.com", "afterpay.js"],
-    "Apple Pay":    ["apple-pay-button", "applepaysession"],
-    "Google Pay":   ["pay.google.com/gp/p", "google-pay-button"],
-    "Amazon Pay":   ["static-na.payments-amazon.com", "amazon-pay-button"],
-    "Razorpay":     ["checkout.razorpay.com", "razorpay.js", "rzp_live_"],
-    "Mollie":       ["js.mollie.com", "mollie-components"],
-    "Mercado Pago": ["sdk.mercadopago.com", "mercadopago.js"],
-    "PayU":         ["secure.payu.com", "jssdk.payu.in"],
-    "Flutterwave":  ["checkout.flutterwave.com", "flw-inline"],
-    "Paystack":     ["js.paystack.co", "paystack.pop.setup("],
-    "Tabby":        ["checkout.tabby.ai", "cdn.tabby.ai"],
-    "Tamara":       ["cdn.tamara.co", "tamara-widget"],
-    "PayMob":       ["accept.paymob.com"],
-    "Fawry":        ["atfawry.com", "fawrypay-sdk"],
+    "Stripe":         ["js.stripe.com", "stripe.js/v3", "checkout.stripe.com", "pk_live_", "pk_test_"],
+    "PayPal":         ["paypalobjects.com", "paypal.com/sdk/js", "paypal.buttons("],
+    "Square":         ["squareup.com", "squarecdn.com", "sq-payment-form"],
+    "Braintree":      ["js.braintreegateway.com", "braintree-web"],
+    "Adyen":          ["checkoutshopper-live.adyen.com", "adyen-checkout"],
+    "Authorize.Net":  ["js.authorize.net", "accept.authorize.net"],
+    "Checkout.com":   ["cdn.checkout.com", "js.checkout.com"],
+    "Klarna":         ["js.klarna.com", "klarna-payments"],
+    "Afterpay":       ["js.afterpay.com", "afterpay.js"],
+    "Apple Pay":      ["apple-pay-button", "applepaysession"],
+    "Google Pay":     ["pay.google.com/gp/p", "google-pay-button"],
+    "Amazon Pay":     ["static-na.payments-amazon.com", "amazon-pay-button"],
+    "Razorpay":       ["checkout.razorpay.com", "razorpay.js", "rzp_live_"],
+    "Mollie":         ["js.mollie.com", "mollie-components"],
+    "Mercado Pago":   ["sdk.mercadopago.com", "mercadopago.js"],
+    "PayU":           ["secure.payu.com", "jssdk.payu.in"],
+    "Flutterwave":    ["checkout.flutterwave.com", "flw-inline"],
+    "Paystack":       ["js.paystack.co", "paystack.pop.setup("],
+    "Tabby":          ["checkout.tabby.ai", "cdn.tabby.ai"],
+    "Tamara":         ["cdn.tamara.co", "tamara-widget"],
+    "PayMob":         ["accept.paymob.com"],
+    "Fawry":          ["atfawry.com", "fawrypay-sdk"],
+    "PayJunction":    ["payjunction.com", "payjunctionlabs.com", "pjcheckout"],
+    "Worldpay":       ["worldpay.com", "secure.worldpay.com"],
+    "GoCardless":     ["gocardless.com", "pay.gocardless.com"],
+    "2Checkout":      ["2checkout.com", "secure.2co.com"],
+    "Paysafe":        ["paysafe.com", "hosted.paysafe.com"],
+    "Payoneer":       ["payoneer.com", "checkout.payoneer.com"],
+    "Skrill":         ["skrill.com", "pay.skrill.com"],
+    "Neteller":       ["neteller.com", "pay.neteller.com"],
+    "BitPay":         ["bitpay.com", "bitpay-checkout"],
+    "Coinbase":       ["commerce.coinbase.com", "coinbase-commerce"],
+    "Iyzico":         ["iyzico.com", "iyzipay"],
+    "PayTR":          ["paytr.com", "paytr-checkout"],
+    "Sberbank":       ["sberbank.ru", "sberpay"],
+    "YooKassa":       ["yookassa.ru", "yoomoney"],
+    "Robokassa":      ["robokassa.ru", "auth.robokassa"],
+    "Perfect Money":  ["perfectmoney.com", "perfectmoney.is"],
 }
 
 SHOPIFY_SIGNATURES = (
@@ -207,12 +270,26 @@ SHOPIFY_SIGNATURES = (
 COMMON_CHECKOUT_PATHS = [
     "/checkout", "/cart", "/basket", "/payment", "/pay",
     "/order", "/kasse", "/panier", "/carrello", "/warenkorb",
+    "/cesta", "/module/checkout", "/index.php/checkout",
 ]
 
 CHECKOUT_LINK_RE = re.compile(
-    r'href=["\']([^"\']*(?:checkout|cart|basket|payment|order)[^"\']*)["\']',
+    r'href=["\']([^"\']*(?:checkout|cart|basket|payment|order|kasse|panier)[^"\']*)["\']',
     re.IGNORECASE,
 )
+
+
+def _is_boring_host(url: str) -> bool:
+    try:
+        host = urllib.parse.urlparse(url).netloc.lower()
+    except Exception:
+        return True
+    return any(b in host for b in (
+        "google.", "bing.", "yahoo.", "yandex.", "duckduckgo.",
+        "facebook.", "instagram.", "twitter.", "x.com", "linkedin.",
+        "youtube.", "pinterest.", "tiktok.", "reddit.", "medium.",
+        "github.", "stackoverflow.", "wikipedia.", "microsoft.com",
+    ))
 
 
 def scan_url_with_page(page, url: str, timeout_ms: int = SCAN_TIMEOUT_MS):
@@ -220,7 +297,8 @@ def scan_url_with_page(page, url: str, timeout_ms: int = SCAN_TIMEOUT_MS):
     shopify = [False]
 
     def check(text):
-        if not text: return
+        if not text:
+            return
         low = text.lower()
         for sig in SHOPIFY_SIGNATURES:
             if sig in low:
@@ -234,12 +312,15 @@ def scan_url_with_page(page, url: str, timeout_ms: int = SCAN_TIMEOUT_MS):
 
     def on_request(req):
         check(req.url)
-        if req.post_data: check(req.post_data)
-        for v in req.headers.values(): check(v)
+        if req.post_data:
+            check(req.post_data)
+        for v in req.headers.values():
+            check(v)
 
     def on_response(resp):
         check(resp.url)
-        for v in resp.headers.values(): check(v)
+        for v in resp.headers.values():
+            check(v)
 
     page.on("request", on_request)
     page.on("response", on_response)
@@ -323,11 +404,12 @@ def _stats_block() -> str:
         m, sec = divmod(rem, 60)
         elapsed = f"{h:02d}:{m:02d}:{sec:02d}"
 
-    top_gw = sorted(s["gateway_counts"].items(), key=lambda kv: -kv[1])[:5]
-    gw_line = "\nTop: " + ", ".join(f"{g}({c})" for g, c in top_gw) if top_gw else ""
+    top_gw = sorted(s["gateway_counts"].items(), key=lambda kv: -kv[1])[:6]
+    gw_line = ("\nTop gateways:\n" + "\n".join(f"  {g}: {c}" for g, c in top_gw)) if top_gw else ""
+    quota_note = "\n[CSE quota exhausted - searching stopped]" if _cse_quota_exhausted else ""
 
     return (
-        f"Stats\n"
+        f"Live stats\n"
         f"Time: {elapsed}\n"
         f"------------------\n"
         f"Hits: {s['hits']}\n"
@@ -336,7 +418,8 @@ def _stats_block() -> str:
         f"Shopify skipped: {s['skipped_shopify']}\n"
         f"No gateway: {s['empty']}\n"
         f"Errors: {s['errors']}"
-        + gw_line
+        f"{gw_line}"
+        f"{quota_note}"
     )
 
 
@@ -350,13 +433,13 @@ def _send_sync(text: str):
             ),
             _scan["loop"],
         )
-        fut.result(timeout=15)
+        fut.result(timeout=20)
     except Exception as e:
         log.warning("send failed: %s", e)
 
 
 # ============================================================
-# MAIN LOOP
+# SCAN LOOP
 # ============================================================
 def _run_scan_worker():
     from playwright.sync_api import sync_playwright
@@ -366,8 +449,7 @@ def _run_scan_worker():
     all_results = load_results()
     found_urls = {r["url"] for r in all_results}
 
-    available_dorks = [d for d in STATIC_DORKS if d not in used_dorks]
-    random.shuffle(available_dorks)
+    pool = [d for d in STATIC_DORKS if d not in used_dorks]
     hits_since_stats = 0
 
     pw = browser = None
@@ -378,33 +460,41 @@ def _run_scan_worker():
         page = bctx.new_page()
 
         _send_sync(
-            f"Scan started (static gateway dorks - no AI).\n"
-            f"Engine: {SEARCH_ENGINE}\n"
-            f"Gateway pool: {len(available_dorks)} dorks\n\n"
-            f"/stop to stop."
+            f"Gates Searcher started.\n"
+            f"CSE pages/dork: {CSE_NUM_PAGES}\n"
+            f"Dorks in pool: {len(pool)}\n"
+            f"Dorks/round: {DORKS_PER_ROUND}\n\n"
+            f"/stop /stats"
         )
 
         while not _scan["stop_requested"]:
-            if not available_dorks:
-                _send_sync("All dorks used. Recycling with 50% overlap.")
-                random.shuffle(STATIC_DORKS)
-                available_dorks = STATIC_DORKS[-len(STATIC_DORKS) // 2:]
+            if not pool:
+                _send_sync("Dork pool finished. Recycling oldest 30.")
+                used_dorks = used_dorks[-30:] if len(used_dorks) > 30 else []
+                save_used_dorks(used_dorks)
+                pool = [d for d in STATIC_DORKS if d not in used_dorks]
+
+            if _cse_quota_exhausted:
+                _send_sync("Google CSE daily quota exhausted.\n"
+                           "Search paused until restart.")
+                time.sleep(600)
+                continue
 
             st["rounds"] += 1
-            batch = available_dorks[:DORKS_PER_ROUND]
-            available_dorks = available_dorks[DORKS_PER_ROUND:]
+            batch = pool[:DORKS_PER_ROUND]
+            pool = pool[DORKS_PER_ROUND:]
 
             for d in batch:
                 if d not in used_dorks:
                     used_dorks.append(d)
                     st["dorks"] += 1
-
             save_used_dorks(used_dorks)
-            _send_sync(f"Round #{st['rounds']} - {len(batch)} dorks - hits: {st['hits']}")
+
+            _send_sync(f"Round #{st['rounds']} - {len(batch)} dork - hits: {st['hits']}")
 
             round_urls = []
             for d in batch:
-                if _scan["stop_requested"]:
+                if _scan["stop_requested"] or _cse_quota_exhausted:
                     break
                 try:
                     round_urls.extend(search_dork(d))
@@ -413,15 +503,16 @@ def _run_scan_worker():
                     log.warning("search_dork failed: %s", e)
 
             round_urls = list(dict.fromkeys(round_urls))
-            round_urls = [u for u in round_urls if u not in found_urls]
+            round_urls = [u for u in round_urls
+                          if u not in found_urls and not _is_boring_host(u)]
             st["scraped"] += len(round_urls)
 
             if not round_urls:
-                _send_sync(f"Round #{st['rounds']} - no URLs returned")
+                _send_sync(f"Round #{st['rounds']} - no new URLs")
                 time.sleep(ROUND_PAUSE_SEC)
                 continue
 
-            _send_sync(f"Scraping {len(round_urls)} URLs")
+            _send_sync(f"Scanning {len(round_urls)} URLs")
 
             for url in round_urls:
                 if _scan["stop_requested"]:
@@ -476,9 +567,11 @@ def _run_scan_worker():
         _send_sync(f"Worker crashed: {type(outer).__name__}: {str(outer)[:250]}")
     finally:
         try:
-            if browser: browser.close()
+            if browser:
+                browser.close()
         finally:
-            if pw: pw.stop()
+            if pw:
+                pw.stop()
             _scan["running"] = False
             _send_sync("Scan stopped.\n\n" + _stats_block())
 
@@ -506,11 +599,13 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     _scan["loop"] = asyncio.get_running_loop()
 
     await update.message.reply_text(
-        f"Gates Searcher (static dorks, no AI).\n"
-        f"Engine: {SEARCH_ENGINE}\n"
-        f"Dorks: {len(STATIC_DORKS)} pre-loaded\n\n"
+        f"Gates Searcher\n"
+        f"CSE pages/dork: {CSE_NUM_PAGES}\n"
+        f"Dork pool: {len(STATIC_DORKS)}\n"
+        f"Gateways tracked: {len(GATEWAY_SIGNATURES)}\n\n"
         f"/stop /stats /results"
     )
+
     if not _scan["running"]:
         asyncio.create_task(start_scan_async())
 
@@ -536,7 +631,7 @@ async def cmd_results(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for i, r in enumerate(reversed(results[-10:]), 1):
         dom = urllib.parse.urlparse(r["url"]).netloc
         lines.append(f"{i}. {dom} - {', '.join(r['gateways'])}")
-    await update.message.reply_text("Last 10:\n\n" + "\n".join(lines))
+    await update.message.reply_text("Last 10 hits:\n\n" + "\n".join(lines))
 
 
 # ============================================================
@@ -546,7 +641,9 @@ def _preflight():
     if not TELEGRAM_TOKEN:
         raise SystemExit("TELEGRAM_TOKEN missing")
     try:
-        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe", timeout=15)
+        r = requests.get(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe", timeout=15
+        )
         if not r.json().get("ok"):
             raise SystemExit(f"Telegram getMe failed: {r.json()}")
         log.info("Telegram OK")
@@ -554,6 +651,9 @@ def _preflight():
         raise
     except Exception as e:
         raise SystemExit(f"Telegram unreachable: {e}")
+
+    if not (GOOGLE_CSE_KEY and GOOGLE_CSE_CX):
+        log.warning("CSE keys missing - search will fail")
 
     try:
         from playwright.sync_api import sync_playwright
@@ -593,7 +693,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("results", cmd_results))
 
-    log.info("Polling - engine=%s", SEARCH_ENGINE)
+    log.info("Polling started")
     app.run_polling(drop_pending_updates=True)
 
 
