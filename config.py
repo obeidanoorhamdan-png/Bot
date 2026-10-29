@@ -18,7 +18,7 @@ ADMIN_IDS.discard(0)
 API_URL = os.environ.get("API_URL", "https://w0rmgpt.lovable.app/api/public/subscriptions")
 SITE_URL = os.environ.get("SITE_URL", "https://w0rmgpt.lovable.app/")
 CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "engtopwln").lstrip("@")   # قناة افتراضية تُزرع عند أول تشغيل
-INITIAL_API_KEY = os.environ.get("INITIAL_API_KEY", "").strip()
+INITIAL_API_KEY = os.environ.get("INITIAL_API_KEY", "wsk_0c4d9994396f4b27a464dfc1c43e244be0fb58c6").strip()
 INITIAL_API_KEY_LABEL = os.environ.get("INITIAL_API_KEY_LABEL", "المفتاح الأساسي")
 
 POINTS_INVITE = int(os.environ.get("POINTS_INVITE", "1"))
