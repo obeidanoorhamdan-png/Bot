@@ -201,14 +201,18 @@ def reset_flow(context, state="main"):
 
 
 def user_locked(fn):
-    """يمنع تداخل رسائل نفس المستخدم (مهم مع concurrent_updates)"""
+    """يمنع تداخل رسائل نفس المستخدم (مهم مع concurrent_updates).
+    🔧 الأقفال تُحفظ في app.bot_data (لا تُمسح بـ reset_flow) بدل user_data."""
     import functools
 
     @functools.wraps(fn)
     async def wrapper(update, context, *a, **kw):
-        if context.user_data is None:
+        app = getattr(context, "application", None)
+        if app is None:                       # لا يوجد application (حالة نادرة) — نفّذ بدون قفل
             return await fn(update, context, *a, **kw)
-        lock = context.user_data.setdefault("_lock", asyncio.Lock())
+        locks = app.bot_data.setdefault("_locks", {})
+        uid = update.effective_user.id if update.effective_user else 0
+        lock = locks.setdefault(uid, asyncio.Lock())
         async with lock:
             return await fn(update, context, *a, **kw)
     return wrapper
