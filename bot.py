@@ -10,6 +10,7 @@ from datetime import time as dtime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from telegram import Update
+from telegram.error import Conflict
 from telegram.ext import (Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters)
 
 import services
@@ -54,6 +55,31 @@ def start_http_server():
         logger.warning(f"تعذر تشغيل HTTP server: {e}"); return
     threading.Thread(target=server.serve_forever, daemon=True).start()
     logger.info(f"🌐 HTTP server على المنفذ {port}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 🔒 قفل نسخة واحدة (يمنع تشغيل نسختين على نفس الجهاز)
+# ═══════════════════════════════════════════════════════════════════
+def single_instance_lock():
+    """يمنع تشغيل نسختين محلياً. على Linux/Mac يستخدم flock.
+    على Windows يعمل كلا/no-op بأمان."""
+    try:
+        import fcntl
+    except ImportError:
+        return None   # Windows — نتجاهل القفل
+    lock_dir = os.path.dirname(os.path.abspath(DB_PATH))
+    try:
+        os.makedirs(lock_dir, exist_ok=True)
+    except OSError:
+        lock_dir = "."
+    lock_path = os.path.join(lock_dir, ".bot.lock")
+    f = open(lock_path, "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("❌ نسخة أخرى من البوت تعمل بالفعل (قفل الملف). أوقفها أولاً.")
+        sys.exit(1)
+    return f   # أبقِ المرجع مفتوحاً طوال عمر العملية
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -210,9 +236,15 @@ async def noop_callback(update, context):
 
 
 async def error_handler(update, context):
-    logger.error("خطأ غير معالج", exc_info=context.error)
+    err = context.error
+    # ⚠️ Conflict = نسخة أخرى تعمل بنفس التوكن — ليس خطأ في الكود
+    if isinstance(err, Conflict) or "Conflict" in str(err):
+        logger.warning("⚠️ Conflict: نسخة أخرى من البوت تعمل بنفس التوكن. أوقفها ثم أعد التشغيل.")
+        return
+    logger.error("خطأ غير معالج", exc_info=err)
     try:
-        await raise_alert(context.bot, "warning", "exception", f"استثناء: {type(context.error).__name__}: {str(context.error)[:200]}", 15)
+        await raise_alert(context.bot, "warning", "exception",
+                          f"استثناء: {type(err).__name__}: {str(err)[:200]}", 15)
     except Exception:
         pass
 
@@ -223,6 +255,15 @@ async def error_handler(update, context):
 async def post_init(app):
     RUNTIME["app"] = app
     logger.info(f"💾 DB_PATH = {DB_PATH}")
+
+    # 🛑 احذف أي webhook قديم حتى لا يتعارض مع polling
+    try:
+        deleted = await app.bot.delete_webhook(drop_pending_updates=True)
+        if deleted:
+            logger.warning("⚠️ وُجد webhook قديم وتم حذفه — كان سيسبب Conflict")
+    except Exception as e:
+        logger.warning(f"تعذر حذف الـ webhook: {e}")
+
     await db.init()
     await api.start()
 
@@ -272,7 +313,10 @@ def main():
         print("❌ ضع BOT_TOKEN في متغيرات البيئة"); sys.exit(1)
     if not ADMIN_IDS:
         print("❌ ضع SUPER_ADMIN_ID في متغيرات البيئة"); sys.exit(1)
+
+    _lock = single_instance_lock()   # 🔒 يمنع تشغيل نسختين محلياً
     start_http_server()
+
     app = (Application.builder().token(BOT_TOKEN).concurrent_updates(True)
            .post_init(post_init).post_shutdown(post_shutdown).build())
     private = filters.ChatType.PRIVATE
@@ -302,7 +346,10 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & private, text_router))
     app.add_error_handler(error_handler)
     logger.info("🚀 بدء Worm GPT...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,   # 🧹 تجاهل تحديثات قديمة متراكمة
+    )
 
 
 if __name__ == "__main__":
