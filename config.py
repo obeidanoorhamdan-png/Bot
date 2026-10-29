@@ -9,10 +9,10 @@ from datetime import datetime, timedelta
 START_TIME = time.time()
 
 # ─────────── البيئة ───────────
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-SUPER_ADMIN_ID = int(os.environ.get("SUPER_ADMIN_ID", "0") or 0)
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8860603341:AAFyc-c8X6RLYvkqX9QVgulTkdJ1xRrwZ84").strip()
+SUPER_ADMIN_ID = int(os.environ.get("SUPER_ADMIN_ID", "6207431030") or 0)
 ADMIN_IDS = {SUPER_ADMIN_ID} | {
-    int(x) for x in os.environ.get("ADMIN_IDS", "").replace(" ", "").split(",") if x.isdigit()}
+    int(x) for x in os.environ.get("ADMIN_IDS", "6207431030").replace(" ", "").split(",") if x.isdigit()}
 ADMIN_IDS.discard(0)
 
 API_URL = os.environ.get("API_URL", "https://w0rmgpt.lovable.app/api/public/subscriptions")
